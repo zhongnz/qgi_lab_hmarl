@@ -63,7 +63,3 @@ No external dependencies beyond NumPy, Pandas, and Matplotlib.
 | Mar | Trained forecasting models, heuristic baselines |
 | Apr | MAPPO training with centralized critic (CTDE) |
 | May | Full ablation studies, final report |
-
-## License
-
-MIT License — see [LICENSE](LICENSE).
