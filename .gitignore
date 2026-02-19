@@ -36,3 +36,6 @@ desktop.ini
 wandb/
 logs/
 runs/
+
+# Local notebook extraction scratch files
+_tmp_notebook_*
