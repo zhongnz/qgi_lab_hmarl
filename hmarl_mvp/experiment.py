@@ -17,6 +17,7 @@ from .metrics import (
     compute_port_metrics,
     compute_vessel_metrics,
 )
+from .multi_coordinator import assign_vessels_to_coordinators
 from .policies import (
     FleetCoordinatorPolicy,
     PortPolicy,
@@ -27,6 +28,7 @@ from .rewards import (
     compute_port_reward,
     compute_vessel_reward,
 )
+from .scheduling import DecisionCadence
 from .state import initialize_ports, initialize_vessels, make_rng
 
 VALID_POLICIES = {"independent", "reactive", "forecast", "oracle"}
@@ -70,7 +72,11 @@ def run_experiment(
         nominal_speed=cfg["nominal_speed"],
         rng=rng,
     )
-    coordinator_agent = FleetCoordinatorAgent(config=cfg, coordinator_id=0)
+    num_coordinators = max(1, int(cfg.get("num_coordinators", 1)))
+    coordinator_agents = [
+        FleetCoordinatorAgent(config=cfg, coordinator_id=i)
+        for i in range(num_coordinators)
+    ]
     vessel_agents = [VesselAgent(v, cfg) for v in vessels]
     port_agents = [PortAgent(p, cfg) for p in ports]
     coordinator_policy = FleetCoordinatorPolicy(config=cfg, mode=policy_type)
@@ -82,10 +88,53 @@ def run_experiment(
         medium_horizon_days=cfg["medium_horizon_days"],
         short_horizon_hours=forecast_horizon,
     )
+    cadence = DecisionCadence.from_config(cfg)
+    latency = cadence.message_latency_steps
+
+    directive_queue: list[tuple[int, int, dict[str, Any]]] = []
+    arrival_request_queue: list[tuple[int, int, int]] = []
+    slot_response_queue: list[tuple[int, int, bool, int]] = []
+    pending_port_requests: dict[int, list[int]] = {
+        port_id: [] for port_id in range(cfg["num_ports"])
+    }
+    awaiting_slot_response: set[int] = set()
+    latest_directive_by_vessel: dict[int, dict[str, Any]] = {}
+    last_port_actions: list[dict[str, Any]] = [dict(a.last_action) for a in port_agents]
 
     log: list[dict[str, Any]] = []
 
     for t in range(steps):
+        due = cadence.due(t)
+
+        delivered_responses: dict[int, dict[str, Any]] = {}
+        remaining_directive_queue: list[tuple[int, int, dict[str, Any]]] = []
+        for deliver_step, vessel_id, directive in directive_queue:
+            if deliver_step <= t:
+                latest_directive_by_vessel[vessel_id] = directive
+            else:
+                remaining_directive_queue.append((deliver_step, vessel_id, directive))
+        directive_queue = remaining_directive_queue
+
+        remaining_arrival_queue: list[tuple[int, int, int]] = []
+        for deliver_step, vessel_id, destination in arrival_request_queue:
+            if deliver_step <= t:
+                if 0 <= destination < cfg["num_ports"]:
+                    pending_port_requests[destination].append(vessel_id)
+            else:
+                remaining_arrival_queue.append((deliver_step, vessel_id, destination))
+        arrival_request_queue = remaining_arrival_queue
+
+        remaining_response_queue: list[tuple[int, int, bool, int]] = []
+        for deliver_step, vessel_id, accepted, destination in slot_response_queue:
+            if deliver_step <= t:
+                delivered_responses[vessel_id] = {
+                    "accepted": bool(accepted),
+                    "dest_port": int(destination),
+                }
+            else:
+                remaining_response_queue.append((deliver_step, vessel_id, accepted, destination))
+        slot_response_queue = remaining_response_queue
+
         if policy_type == "oracle":
             medium, short = oracle_forecaster.predict(ports)
         else:
@@ -97,42 +146,139 @@ def run_experiment(
                 medium = np.clip(medium, 0, None)
                 short = np.clip(short, 0, None)
 
-        directive = coordinator_policy.act(
-            agent=coordinator_agent,
-            medium_forecast=medium,
-            vessels=vessels,
-            ports=ports,
-            rng=rng,
-        )
+        assignments = assign_vessels_to_coordinators(vessels, num_coordinators)
+        vessel_to_coordinator = {
+            vessel_id: coordinator_id
+            for coordinator_id, vessel_ids in assignments.items()
+            for vessel_id in vessel_ids
+        }
+
+        if due["coordinator"]:
+            for coordinator_id, coordinator_agent in enumerate(coordinator_agents):
+                local_ids = assignments.get(coordinator_id, [])
+                vessels_by_id = {v.vessel_id: v for v in vessels}
+                local_vessels = [vessels_by_id[i] for i in local_ids if i in vessels_by_id]
+                if not local_vessels:
+                    local_vessels = vessels
+                directive = coordinator_policy.act(
+                    agent=coordinator_agent,
+                    medium_forecast=medium,
+                    vessels=local_vessels,
+                    ports=ports,
+                    rng=rng,
+                )
+                enriched = {
+                    **directive,
+                    "coordinator_id": coordinator_id,
+                    "assigned_vessel_ids": local_ids,
+                }
+                for vessel_id in local_ids:
+                    directive_queue.append((t + latency, vessel_id, dict(enriched)))
 
         forecast_for_vessels = short if share_forecasts else np.zeros_like(short)
-        vessel_actions = [
-            vessel_policy.act(vessel_agent, forecast_for_vessels, directive)
-            for vessel_agent in vessel_agents
-        ]
-
-        for vessel_agent, action in zip(vessel_agents, vessel_actions):
+        vessel_actions: list[dict[str, Any]] = []
+        vessel_actions_for_metrics: list[dict[str, Any]] = []
+        for vessel_agent in vessel_agents:
             vessel = vessel_agent.state
-            if not vessel.at_sea:
-                dispatch_vessel(vessel, directive["dest_port"], action["target_speed"], cfg)
+            vessel_id = vessel.vessel_id
+            coordinator_id = vessel_to_coordinator.get(vessel_id, 0)
+            fallback_directive = {
+                **coordinator_agents[coordinator_id].last_action,
+                "coordinator_id": coordinator_id,
+                "assigned_vessel_ids": assignments.get(coordinator_id, []),
+            }
+            directive = latest_directive_by_vessel.get(vessel_id, fallback_directive)
+
+            if due["vessel"]:
+                action = vessel_policy.act(vessel_agent, forecast_for_vessels, directive)
+            else:
+                action = dict(vessel_agent.last_action)
+
+            requested_now = False
+            if (
+                due["vessel"]
+                and action.get("request_arrival_slot", False)
+                and not vessel.at_sea
+                and vessel_id not in awaiting_slot_response
+            ):
+                destination = int(directive.get("dest_port", vessel.destination))
+                arrival_request_queue.append((t + latency, vessel_id, destination))
+                awaiting_slot_response.add(vessel_id)
+                requested_now = True
+
+            response = delivered_responses.get(vessel_id)
+            if response is not None:
+                if response["accepted"] and not vessel.at_sea:
+                    dispatch_vessel(vessel, int(response["dest_port"]), action["target_speed"], cfg)
+                elif not response["accepted"] and not vessel.at_sea:
+                    vessel.delay_hours += 1.0
+                awaiting_slot_response.discard(vessel_id)
+            elif vessel_id in awaiting_slot_response and not vessel.at_sea:
+                vessel.delay_hours += 1.0
+
+            vessel_actions.append(action)
+            vessel_actions_for_metrics.append({"request_arrival_slot": requested_now})
+
+        pre_step_at_sea = {v.vessel_id: v.at_sea for v in vessels}
 
         step_vessels(vessels, distance_nm=distance_nm, config=cfg, dt_hours=1.0)
 
         for vessel in vessels:
-            if not vessel.at_sea and vessel.location == vessel.destination:
+            if (
+                pre_step_at_sea.get(vessel.vessel_id, False)
+                and not vessel.at_sea
+                and vessel.location == vessel.destination
+            ):
                 ports[vessel.location].queue += 1
 
-        incoming = sum(1 for a in vessel_actions if a.get("request_arrival_slot", False))
         forecast_for_ports = short if share_forecasts else np.zeros_like(short)
-        port_actions = [
-            port_policy.act(port_agent, incoming, forecast_for_ports[i])
-            for i, port_agent in enumerate(port_agents)
+        accepted_this_step = [0 for _ in ports]
+        if due["port"]:
+            incoming = sum(len(queue) for queue in pending_port_requests.values())
+            current_port_actions: list[dict[str, Any]] = []
+            for i, port_agent in enumerate(port_agents):
+                action = port_policy.act(port_agent, incoming, forecast_for_ports[i])
+                current_port_actions.append(action)
+                backlog = pending_port_requests.get(i, [])
+                available_slots = max(port_agent.state.docks - port_agent.state.occupied, 0)
+                accept_limit = min(
+                    len(backlog),
+                    max(int(action.get("accept_requests", 0)), 0),
+                    available_slots,
+                )
+                accepted = backlog[:accept_limit]
+                rejected = backlog[accept_limit:]
+                accepted_this_step[i] = len(accepted)
+                pending_port_requests[i] = []
+                response_step = t + latency
+                for vessel_id in accepted:
+                    slot_response_queue.append((response_step, vessel_id, True, i))
+                for vessel_id in rejected:
+                    slot_response_queue.append((response_step, vessel_id, False, i))
+            last_port_actions = current_port_actions
+
+        service_rates = [
+            int(action.get("service_rate", 1))
+            for action in (
+                last_port_actions if last_port_actions else [agent.last_action for agent in port_agents]
+            )
         ]
-        step_ports(ports, [a["service_rate"] for a in port_actions], dt_hours=1.0)
+        step_ports(ports, service_rates, dt_hours=1.0)
+
+        port_actions_for_metrics = [
+            {
+                **last_port_actions[i],
+                "accept_requests": int(accepted_this_step[i]) if due["port"] else 0,
+            }
+            for i in range(len(last_port_actions))
+        ]
 
         vessel_metrics = compute_vessel_metrics(vessels)
         port_metrics = compute_port_metrics(ports)
-        coordination_metrics = compute_coordination_metrics(vessel_actions, port_actions)
+        coordination_metrics = compute_coordination_metrics(
+            vessel_actions_for_metrics,
+            port_actions_for_metrics,
+        )
         economic_metrics = compute_economic_metrics(vessels, cfg)
 
         rewards_vessel = [compute_vessel_reward(v, cfg) for v in vessels]
@@ -146,6 +292,11 @@ def run_experiment(
                 "forecast_horizon": forecast_horizon,
                 "forecast_noise": forecast_noise,
                 "share_forecasts": int(bool(share_forecasts)),
+                "num_coordinators": num_coordinators,
+                "coordinator_updates": int(due["coordinator"]),
+                "pending_arrival_requests": float(
+                    sum(len(queue) for queue in pending_port_requests.values())
+                ),
                 **vessel_metrics,
                 **port_metrics,
                 **coordination_metrics,
