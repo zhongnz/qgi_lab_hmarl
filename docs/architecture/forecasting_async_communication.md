@@ -35,12 +35,12 @@ sequenceDiagram
     participant V as Vessel
     participant P as Port
 
-    Note over C,V,P: t=0
+    Note over C,P: t=0
     C->>V: Directive (medium forecast informed)
     V->>P: Arrival requests (short forecast informed)
     P->>V: Service availability
 
-    Note over C,V,P: t=1..k
+    Note over C,P: t=1..k
     V->>P: Fast-loop updates
     P->>V: Fast-loop responses
     C-->>V: Update only on cadence boundary
@@ -52,4 +52,3 @@ sequenceDiagram
 2. Timestamp messages with publish step and consume step.
 3. Apply `message_latency_steps` before a receiver can consume messages.
 4. Test cadence with deterministic seeds and fixed intervals.
-
