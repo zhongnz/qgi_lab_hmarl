@@ -21,6 +21,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 ├── hmarl_mvp/
 │   ├── __init__.py
 │   ├── config.py
+│   ├── agents.py
 │   ├── state.py
 │   ├── dynamics.py
 │   ├── forecasts.py
@@ -29,13 +30,37 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── metrics.py
 │   ├── env.py
 │   ├── experiment.py
+│   ├── scheduling.py
+│   ├── multi_coordinator.py
 │   └── plotting.py
 ├── scripts/
 │   └── run_baselines.py
 ├── tests/
 │   └── test_smoke.py
+├── docs/
+│   ├── README.md
+│   ├── meetings/
+│   ├── decisions/
+│   ├── reports/
+│   └── templates/
 └── colab_mvp_hmarl_maritime.ipynb
 ```
+
+## Documentation
+
+Project docs live under `docs/`.
+
+- `docs/meetings/`: meeting notes and minutes
+- `docs/decisions/`: architecture/project decisions (ADR-style)
+- `docs/architecture/`: design diagrams and technical task plans
+- `docs/reports/`: experiment writeups and summaries
+- `docs/templates/`: reusable documentation templates
+
+Start with:
+
+- `docs/README.md`
+- `docs/templates/meeting_minutes_template.md`
+- `docs/architecture/meeting-03_task-plan.md`
 
 ## Why This Refactor
 

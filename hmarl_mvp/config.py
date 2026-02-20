@@ -13,10 +13,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Fleet topology
     "num_ports": 5,
     "num_vessels": 8,
+    "num_coordinators": 1,
     "docks_per_port": 3,
     # Forecast horizons
     "medium_horizon_days": 5,
     "short_horizon_hours": 12,
+    # Asynchronous cadence (simulation steps)
+    "coord_decision_interval_steps": 12,
+    "vessel_decision_interval_steps": 1,
+    "port_decision_interval_steps": 1,
+    "message_latency_steps": 1,
     # Reward weights (alpha, beta, gamma, lambda)
     "fuel_weight": 1.0,
     "delay_weight": 1.5,
@@ -57,4 +63,3 @@ def get_default_config(**overrides: Any) -> dict[str, Any]:
     cfg = deepcopy(DEFAULT_CONFIG)
     cfg.update(overrides)
     return cfg
-

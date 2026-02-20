@@ -7,9 +7,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent
 from .config import DISTANCE_NM, SEED, get_default_config
 from .dynamics import dispatch_vessel, step_ports, step_vessels
-from .forecasts import medium_term_forecast, oracle_forecasts, short_term_forecast
+from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
 from .metrics import (
     compute_coordination_metrics,
     compute_economic_metrics,
@@ -17,14 +18,9 @@ from .metrics import (
     compute_vessel_metrics,
 )
 from .policies import (
-    fleet_coordinator_policy,
-    independent_port_policy,
-    independent_vessel_policy,
-    port_policy,
-    reactive_coordinator_policy,
-    reactive_port_policy,
-    reactive_vessel_policy,
-    vessel_policy,
+    FleetCoordinatorPolicy,
+    PortPolicy,
+    VesselPolicy,
 )
 from .rewards import (
     compute_coordinator_reward,
@@ -74,55 +70,49 @@ def run_experiment(
         nominal_speed=cfg["nominal_speed"],
         rng=rng,
     )
+    coordinator_agent = FleetCoordinatorAgent(config=cfg, coordinator_id=0)
+    vessel_agents = [VesselAgent(v, cfg) for v in vessels]
+    port_agents = [PortAgent(p, cfg) for p in ports]
+    coordinator_policy = FleetCoordinatorPolicy(config=cfg, mode=policy_type)
+    vessel_policy = VesselPolicy(config=cfg, mode=policy_type)
+    port_policy = PortPolicy(config=cfg, mode=policy_type)
+    medium_forecaster = MediumTermForecaster(cfg["medium_horizon_days"])
+    short_forecaster = ShortTermForecaster(forecast_horizon)
+    oracle_forecaster = OracleForecaster(
+        medium_horizon_days=cfg["medium_horizon_days"],
+        short_horizon_hours=forecast_horizon,
+    )
 
     log: list[dict[str, Any]] = []
 
     for t in range(steps):
         if policy_type == "oracle":
-            medium, short = oracle_forecasts(
-                ports=ports,
-                medium_horizon_days=cfg["medium_horizon_days"],
-                short_horizon_hours=forecast_horizon,
-            )
+            medium, short = oracle_forecaster.predict(ports)
         else:
-            medium = medium_term_forecast(
-                num_ports=cfg["num_ports"],
-                horizon_days=cfg["medium_horizon_days"],
-                rng=rng,
-            )
-            short = short_term_forecast(
-                num_ports=cfg["num_ports"],
-                horizon_hours=forecast_horizon,
-                rng=rng,
-            )
+            medium = medium_forecaster.predict(num_ports=cfg["num_ports"], rng=rng)
+            short = short_forecaster.predict(num_ports=cfg["num_ports"], rng=rng)
             if policy_type == "forecast" and forecast_noise > 0:
                 medium += rng.normal(0, forecast_noise, medium.shape)
                 short += rng.normal(0, forecast_noise, short.shape)
                 medium = np.clip(medium, 0, None)
                 short = np.clip(short, 0, None)
 
-        if policy_type == "independent":
-            directive = {
-                "dest_port": int(rng.integers(0, cfg["num_ports"])),
-                "departure_window_hours": 12,
-                "emission_budget": 50.0,
-            }
-        elif policy_type == "reactive":
-            directive = reactive_coordinator_policy(ports)
-        else:
-            directive = fleet_coordinator_policy(medium, vessels)
+        directive = coordinator_policy.act(
+            agent=coordinator_agent,
+            medium_forecast=medium,
+            vessels=vessels,
+            ports=ports,
+            rng=rng,
+        )
 
-        if policy_type == "independent":
-            vessel_actions = [independent_vessel_policy(cfg) for _ in vessels]
-        elif policy_type == "reactive":
-            vessel_actions = [reactive_vessel_policy(cfg) for _ in vessels]
-        else:
-            forecast_for_vessels = short if share_forecasts else np.zeros_like(short)
-            vessel_actions = [
-                vessel_policy(v, forecast_for_vessels, directive, cfg) for v in vessels
-            ]
+        forecast_for_vessels = short if share_forecasts else np.zeros_like(short)
+        vessel_actions = [
+            vessel_policy.act(vessel_agent, forecast_for_vessels, directive)
+            for vessel_agent in vessel_agents
+        ]
 
-        for vessel, action in zip(vessels, vessel_actions):
+        for vessel_agent, action in zip(vessel_agents, vessel_actions):
+            vessel = vessel_agent.state
             if not vessel.at_sea:
                 dispatch_vessel(vessel, directive["dest_port"], action["target_speed"], cfg)
 
@@ -133,15 +123,11 @@ def run_experiment(
                 ports[vessel.location].queue += 1
 
         incoming = sum(1 for a in vessel_actions if a.get("request_arrival_slot", False))
-        if policy_type == "independent":
-            port_actions = [independent_port_policy() for _ in ports]
-        elif policy_type == "reactive":
-            port_actions = [reactive_port_policy(p) for p in ports]
-        else:
-            forecast_for_ports = short if share_forecasts else np.zeros_like(short)
-            port_actions = [
-                port_policy(p, incoming, forecast_for_ports[i]) for i, p in enumerate(ports)
-            ]
+        forecast_for_ports = short if share_forecasts else np.zeros_like(short)
+        port_actions = [
+            port_policy.act(port_agent, incoming, forecast_for_ports[i])
+            for i, port_agent in enumerate(port_agents)
+        ]
         step_ports(ports, [a["service_rate"] for a in port_actions], dt_hours=1.0)
 
         vessel_metrics = compute_vessel_metrics(vessels)

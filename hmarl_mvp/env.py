@@ -6,10 +6,11 @@ from typing import Any
 
 import numpy as np
 
+from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent
 from .config import DEFAULT_CONFIG, DISTANCE_NM, SEED, get_default_config
 from .dynamics import dispatch_vessel, observe_port_metrics, step_ports, step_vessels
-from .forecasts import medium_term_forecast, short_term_forecast
-from .policies import fleet_coordinator_policy, port_policy, vessel_policy
+from .forecasts import MediumTermForecaster, ShortTermForecaster
+from .policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
 from .rewards import (
     compute_coordinator_reward,
     compute_port_reward,
@@ -45,8 +46,16 @@ class MaritimeEnv:
 
         self.ports: list[PortState] = []
         self.vessels: list[VesselState] = []
+        self.coordinator: FleetCoordinatorAgent | None = None
+        self.port_agents: list[PortAgent] = []
+        self.vessel_agents: list[VesselAgent] = []
         self.medium_forecast: np.ndarray | None = None
         self.short_forecast: np.ndarray | None = None
+        self.medium_forecaster = MediumTermForecaster(self.cfg["medium_horizon_days"])
+        self.short_forecaster = ShortTermForecaster(self.cfg["short_horizon_hours"])
+        self.coordinator_policy = FleetCoordinatorPolicy(self.cfg, mode="forecast")
+        self.vessel_policy = VesselPolicy(self.cfg, mode="forecast")
+        self.port_policy = PortPolicy(self.cfg, mode="forecast")
 
         self.obs_shapes = {
             "coordinator": (
@@ -78,6 +87,9 @@ class MaritimeEnv:
             nominal_speed=self.cfg["nominal_speed"],
             rng=self.rng,
         )
+        self.coordinator = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
+        self.vessel_agents = [VesselAgent(v, self.cfg) for v in self.vessels]
+        self.port_agents = [PortAgent(p, self.cfg) for p in self.ports]
         self._refresh_forecasts()
         return self._get_observations()
 
@@ -89,13 +101,19 @@ class MaritimeEnv:
         coord_action = actions["coordinator"]
         vessel_actions = actions["vessels"]
         port_actions = actions["ports"]
+        if self.coordinator is None:
+            self.coordinator = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
+        coord_action = self.coordinator.apply_action(coord_action)
 
-        for vessel, action in zip(self.vessels, vessel_actions):
-            if not vessel.at_sea:
+        normalized_vessel_actions = []
+        for vessel_agent, action in zip(self.vessel_agents, vessel_actions):
+            normalized = vessel_agent.apply_action(action)
+            normalized_vessel_actions.append(normalized)
+            if not vessel_agent.state.at_sea:
                 dispatch_vessel(
-                    vessel=vessel,
+                    vessel=vessel_agent.state,
                     destination=coord_action["dest_port"],
-                    speed=action["target_speed"],
+                    speed=normalized["target_speed"],
                     config=self.cfg,
                 )
 
@@ -106,11 +124,16 @@ class MaritimeEnv:
             dt_hours=1.0,
         )
 
-        for vessel in self.vessels:
+        for vessel_agent in self.vessel_agents:
+            vessel = vessel_agent.state
             if not vessel.at_sea and vessel.location == vessel.destination:
                 self.ports[vessel.location].queue += 1
 
-        service_rates = [int(a["service_rate"]) for a in port_actions]
+        normalized_port_actions = [
+            port_agent.apply_action(action)
+            for port_agent, action in zip(self.port_agents, port_actions)
+        ]
+        service_rates = [int(a["service_rate"]) for a in normalized_port_actions]
         step_ports(self.ports, service_rates, dt_hours=1.0)
 
         rewards = self._compute_rewards()
@@ -128,13 +151,23 @@ class MaritimeEnv:
             self._refresh_forecasts()
         medium = self.medium_forecast
         short = self.short_forecast
-        directive = fleet_coordinator_policy(medium, self.vessels)
+        if self.coordinator is None:
+            self.coordinator = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
+        directive = self.coordinator_policy.act(
+            agent=self.coordinator,
+            medium_forecast=medium,
+            vessels=self.vessels,
+            ports=self.ports,
+            rng=self.rng,
+        )
         vessel_actions = [
-            vessel_policy(v, short, directive, config=self.cfg) for v in self.vessels
+            self.vessel_policy.act(vessel_agent, short, directive)
+            for vessel_agent in self.vessel_agents
         ]
         incoming = sum(1 for a in vessel_actions if a["request_arrival_slot"])
         port_actions = [
-            port_policy(p, incoming, short[i]) for i, p in enumerate(self.ports)
+            self.port_policy.act(port_agent, incoming, short[i])
+            for i, port_agent in enumerate(self.port_agents)
         ]
         return {
             "coordinator": directive,
@@ -144,16 +177,8 @@ class MaritimeEnv:
 
     def _refresh_forecasts(self) -> None:
         """Refresh cached forecasts exactly once per environment tick."""
-        self.medium_forecast = medium_term_forecast(
-            num_ports=self.num_ports,
-            horizon_days=self.cfg["medium_horizon_days"],
-            rng=self.rng,
-        )
-        self.short_forecast = short_term_forecast(
-            num_ports=self.num_ports,
-            horizon_hours=self.cfg["short_horizon_hours"],
-            rng=self.rng,
-        )
+        self.medium_forecast = self.medium_forecaster.predict(self.num_ports, self.rng)
+        self.short_forecast = self.short_forecaster.predict(self.num_ports, self.rng)
 
     def _get_observations(self) -> dict[str, Any]:
         if self.medium_forecast is None or self.short_forecast is None:
@@ -161,43 +186,21 @@ class MaritimeEnv:
         medium = self.medium_forecast
         short = self.short_forecast
 
-        vessel_summaries = np.array(
-            [[v.location, v.speed, v.fuel, v.emissions] for v in self.vessels]
-        )
-        total_emissions = sum(v.emissions for v in self.vessels)
-        coord_obs = np.concatenate(
-            [
-                medium.flatten(),
-                vessel_summaries.flatten() if vessel_summaries.size else np.array([]),
-                np.array([total_emissions], dtype=float),
-            ]
-        )
+        if self.coordinator is None:
+            self.coordinator = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
+        coord_obs = self.coordinator.get_obs(medium, self.vessels)
 
         vessel_obs = []
-        for vessel in self.vessels:
+        directive = self.coordinator.last_action if self.coordinator is not None else None
+        for vessel_agent in self.vessel_agents:
+            vessel = vessel_agent.state
             dest = vessel.destination if vessel.destination < self.num_ports else 0
-            dest_forecast = short[dest]
-            v_obs = np.concatenate(
-                [
-                    np.array(
-                        [vessel.location, vessel.speed, vessel.fuel, vessel.emissions],
-                        dtype=float,
-                    ),
-                    dest_forecast,
-                    np.array([0.0, 0.0, 0.0], dtype=float),
-                ]
-            )
+            v_obs = vessel_agent.get_obs(short[dest], directive=directive)
             vessel_obs.append(v_obs)
 
         port_obs = []
-        for i, port in enumerate(self.ports):
-            p_obs = np.concatenate(
-                [
-                    np.array([port.queue, port.docks, port.occupied], dtype=float),
-                    short[i],
-                    np.array([0.0], dtype=float),
-                ]
-            )
+        for i, port_agent in enumerate(self.port_agents):
+            p_obs = port_agent.get_obs(short[i], incoming_requests=0)
             port_obs.append(p_obs)
 
         return {"coordinator": coord_obs, "vessels": vessel_obs, "ports": port_obs}

@@ -2,9 +2,54 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from .state import PortState
+
+
+@dataclass
+class MediumTermForecaster:
+    """Strategic forecaster (3-7 day horizon in the current MVP)."""
+
+    horizon_days: int
+
+    def predict(self, num_ports: int, rng: np.random.Generator) -> np.ndarray:
+        return medium_term_forecast(
+            num_ports=num_ports,
+            horizon_days=self.horizon_days,
+            rng=rng,
+        )
+
+
+@dataclass
+class ShortTermForecaster:
+    """Operational forecaster (6-24 hour horizon in the current MVP)."""
+
+    horizon_hours: int
+
+    def predict(self, num_ports: int, rng: np.random.Generator) -> np.ndarray:
+        return short_term_forecast(
+            num_ports=num_ports,
+            horizon_hours=self.horizon_hours,
+            rng=rng,
+        )
+
+
+@dataclass
+class OracleForecaster:
+    """Oracle forecaster derived from realized queue state."""
+
+    medium_horizon_days: int
+    short_horizon_hours: int
+
+    def predict(self, ports: list[PortState]) -> tuple[np.ndarray, np.ndarray]:
+        return oracle_forecasts(
+            ports=ports,
+            medium_horizon_days=self.medium_horizon_days,
+            short_horizon_hours=self.short_horizon_hours,
+        )
 
 
 def medium_term_forecast(
@@ -40,4 +85,3 @@ def oracle_forecasts(
     medium = np.repeat(current_q, medium_horizon_days, axis=1)
     short = np.repeat(current_q, short_horizon_hours, axis=1)
     return medium, short
-
