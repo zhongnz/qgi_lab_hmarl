@@ -51,71 +51,65 @@ class HMARLConfig:
     seed: int = SEED
 
     def validate(self) -> None:
-        """Validate logical and numerical consistency."""
-        int_fields = {
-            "num_ports": self.num_ports,
-            "num_vessels": self.num_vessels,
-            "num_coordinators": self.num_coordinators,
-            "docks_per_port": self.docks_per_port,
-            "medium_horizon_days": self.medium_horizon_days,
-            "short_horizon_hours": self.short_horizon_hours,
-            "coord_decision_interval_steps": self.coord_decision_interval_steps,
-            "vessel_decision_interval_steps": self.vessel_decision_interval_steps,
-            "port_decision_interval_steps": self.port_decision_interval_steps,
-            "message_latency_steps": self.message_latency_steps,
-            "rollout_steps": self.rollout_steps,
-            "seed": self.seed,
-        }
-        for name, value in int_fields.items():
-            if not isinstance(value, int):
-                raise TypeError(f"{name} must be int, got {type(value).__name__}")
+        """Validate logical and numerical consistency.
 
-        positive_int_fields = {
-            "num_ports": self.num_ports,
-            "num_vessels": self.num_vessels,
-            "num_coordinators": self.num_coordinators,
-            "docks_per_port": self.docks_per_port,
-            "medium_horizon_days": self.medium_horizon_days,
-            "short_horizon_hours": self.short_horizon_hours,
-            "coord_decision_interval_steps": self.coord_decision_interval_steps,
-            "vessel_decision_interval_steps": self.vessel_decision_interval_steps,
-            "port_decision_interval_steps": self.port_decision_interval_steps,
-            "message_latency_steps": self.message_latency_steps,
-            "rollout_steps": self.rollout_steps,
+        Each field is checked against one constraint:
+        - ``"int>=1"`` — must be int ≥ 1
+        - ``"int>=0"`` — must be int ≥ 0
+        - ``"float>=0"`` — must be float/int ≥ 0
+        - ``"float>0"`` — must be float/int > 0
+        """
+        _rules: dict[str, str] = {
+            # Fleet topology
+            "num_ports": "int>=1",
+            "num_vessels": "int>=1",
+            "num_coordinators": "int>=1",
+            "docks_per_port": "int>=1",
+            # Forecast horizons
+            "medium_horizon_days": "int>=1",
+            "short_horizon_hours": "int>=1",
+            # Asynchronous cadence
+            "coord_decision_interval_steps": "int>=1",
+            "vessel_decision_interval_steps": "int>=1",
+            "port_decision_interval_steps": "int>=1",
+            "message_latency_steps": "int>=1",
+            # Simulation
+            "rollout_steps": "int>=1",
+            "seed": "int>=0",
+            # Reward weights
+            "fuel_weight": "float>=0",
+            "delay_weight": "float>=0",
+            "emission_weight": "float>=0",
+            "emission_lambda": "float>=0",
+            "dock_idle_weight": "float>=0",
+            # Economic parameters
+            "fuel_price_per_ton": "float>=0",
+            "delay_penalty_per_hour": "float>=0",
+            "carbon_price_per_ton": "float>=0",
+            "cargo_value_per_vessel": "float>=0",
+            # Physics
+            "fuel_rate_coeff": "float>0",
+            "emission_factor": "float>0",
+            "speed_min": "float>0",
+            "speed_max": "float>0",
+            "nominal_speed": "float>0",
+            "initial_fuel": "float>0",
+            "service_time_hours": "float>0",
         }
-        for name, value in positive_int_fields.items():
-            if value < 1:
-                raise ValueError(f"{name} must be >= 1, got {value}")
-        if self.seed < 0:
-            raise ValueError("seed must be >= 0")
-
-        non_negative_float_fields = {
-            "fuel_weight": self.fuel_weight,
-            "delay_weight": self.delay_weight,
-            "emission_weight": self.emission_weight,
-            "emission_lambda": self.emission_lambda,
-            "dock_idle_weight": self.dock_idle_weight,
-            "fuel_price_per_ton": self.fuel_price_per_ton,
-            "delay_penalty_per_hour": self.delay_penalty_per_hour,
-            "carbon_price_per_ton": self.carbon_price_per_ton,
-            "cargo_value_per_vessel": self.cargo_value_per_vessel,
-        }
-        for field_name, field_value in non_negative_float_fields.items():
-            if field_value < 0:
-                raise ValueError(f"{field_name} must be >= 0, got {field_value}")
-
-        positive_float_fields = {
-            "fuel_rate_coeff": self.fuel_rate_coeff,
-            "emission_factor": self.emission_factor,
-            "speed_min": self.speed_min,
-            "speed_max": self.speed_max,
-            "nominal_speed": self.nominal_speed,
-            "initial_fuel": self.initial_fuel,
-            "service_time_hours": self.service_time_hours,
-        }
-        for field_name, field_value in positive_float_fields.items():
-            if field_value <= 0:
-                raise ValueError(f"{field_name} must be > 0, got {field_value}")
+        for name, rule in _rules.items():
+            value = getattr(self, name)
+            if rule.startswith("int"):
+                if not isinstance(value, int):
+                    raise TypeError(f"{name} must be int, got {type(value).__name__}")
+                bound = int(rule.split(">=")[1])
+                if value < bound:
+                    raise ValueError(f"{name} must be >= {bound}, got {value}")
+            elif rule == "float>=0":
+                if value < 0:
+                    raise ValueError(f"{name} must be >= 0, got {value}")
+            elif rule == "float>0":
+                if value <= 0:
+                    raise ValueError(f"{name} must be > 0, got {value}")
 
         if self.speed_min > self.speed_max:
             raise ValueError(
@@ -154,9 +148,6 @@ def _build_validated_config(overrides: Mapping[str, Any]) -> dict[str, Any]:
     cfg = HMARLConfig(**merged)
     cfg.validate()
     return cfg.to_dict()
-
-
-DEFAULT_CONFIG: dict[str, Any] = _build_validated_config({})
 
 
 def validate_distance_matrix(distance_nm: np.ndarray, num_ports: int) -> np.ndarray:
@@ -215,3 +206,45 @@ def get_default_config(**overrides: Any) -> dict[str, Any]:
 def validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and normalize a config mapping against the typed schema."""
     return _build_validated_config(config)
+
+
+# ---------------------------------------------------------------------------
+# Decision cadence
+# ---------------------------------------------------------------------------
+
+
+def should_update(step: int, interval: int) -> bool:
+    """Return True when an agent with *interval* is due at *step*."""
+    if interval <= 0:
+        raise ValueError("interval must be >= 1")
+    if step < 0:
+        raise ValueError("step must be >= 0")
+    return step % interval == 0
+
+
+@dataclass(frozen=True)
+class DecisionCadence:
+    """Cadence for coordinator, vessel, and port decision loops."""
+
+    coordinator_steps: int
+    vessel_steps: int
+    port_steps: int
+    message_latency_steps: int = 1
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "DecisionCadence":
+        """Construct from a validated config dictionary."""
+        return cls(
+            coordinator_steps=max(1, int(config["coord_decision_interval_steps"])),
+            vessel_steps=max(1, int(config["vessel_decision_interval_steps"])),
+            port_steps=max(1, int(config["port_decision_interval_steps"])),
+            message_latency_steps=max(1, int(config.get("message_latency_steps", 1))),
+        )
+
+    def due(self, step: int) -> dict[str, bool]:
+        """Return which agent classes should update at this step."""
+        return {
+            "coordinator": should_update(step, self.coordinator_steps),
+            "vessel": should_update(step, self.vessel_steps),
+            "port": should_update(step, self.port_steps),
+        }

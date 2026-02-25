@@ -6,10 +6,10 @@ import unittest
 
 import numpy as np
 
+from hmarl_mvp.agents import assign_vessels_to_coordinators
 from hmarl_mvp.config import get_default_config
 from hmarl_mvp.dynamics import step_ports
 from hmarl_mvp.env import MaritimeEnv
-from hmarl_mvp.multi_coordinator import assign_vessels_to_coordinators
 from hmarl_mvp.state import PortState, VesselState
 
 

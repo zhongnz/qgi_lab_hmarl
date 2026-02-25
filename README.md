@@ -18,36 +18,38 @@ The codebase now follows a module-first layout. The notebook remains for explora
 
 ```
 .
-├── hmarl_mvp/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── agents.py
-│   ├── state.py
-│   ├── dynamics.py
-│   ├── forecasts.py
-│   ├── policies.py
-│   ├── rewards.py
-│   ├── metrics.py
-│   ├── env.py
-│   ├── experiment.py
-│   ├── scheduling.py
-│   ├── multi_coordinator.py
-│   └── plotting.py
+├── hmarl_mvp/          # Core simulator package
+│   ├── __init__.py     # Public API re-exports
+│   ├── config.py       # Typed config, validation, decision cadence
+│   ├── state.py        # Port/vessel state dataclasses, initializers
+│   ├── agents.py       # Agent wrappers, vessel-coordinator assignment
+│   ├── dynamics.py     # Physics: fuel, emissions, vessel/port ticks
+│   ├── forecasts.py    # Medium-term, short-term, oracle forecasters
+│   ├── policies.py     # Heuristic policy stubs (placeholder for PPO)
+│   ├── rewards.py      # Reward functions for all agent types
+│   ├── metrics.py      # Operational, forecast, and economic metrics
+│   ├── message_bus.py  # Asynchronous inter-agent message queues
+│   ├── env.py          # Gym-style multi-agent environment
+│   ├── experiment.py   # Experiment runner, sweeps, summaries
+│   └── plotting.py     # Matplotlib plot helpers
 ├── scripts/
 │   └── run_baselines.py
 ├── tests/
 │   ├── test_smoke.py
-│   ├── test_arch_scaffolding.py
-│   ├── test_agent_policy_forecaster.py
+│   ├── test_components.py
 │   ├── test_config_schema.py
-│   └── test_model_correctness.py
+│   ├── test_message_bus.py
+│   ├── test_model_correctness.py
+│   └── test_rewards_metrics.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml
+├── requirements.txt
 ├── requirements-dev.txt
 ├── CONTRIBUTING.md
 ├── docs/
 │   ├── README.md
+│   ├── architecture/
 │   ├── meetings/
 │   ├── decisions/
 │   ├── reports/

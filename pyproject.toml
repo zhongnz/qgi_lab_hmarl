@@ -14,3 +14,6 @@ check_untyped_defs = true
 warn_unused_configs = true
 pretty = true
 show_error_codes = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

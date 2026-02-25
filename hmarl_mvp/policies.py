@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 
-from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent
 from .state import PortState, VesselState
 
 
@@ -41,30 +40,19 @@ class FleetCoordinatorPolicy:
                 "emission_budget": 50.0,
             }
         port_scores = medium_forecast.mean(axis=1)
-        dest_port = int(np.argmin(port_scores))
+        sorted_ports = [int(p) for p in np.argsort(port_scores)]
+        dest_port = sorted_ports[0]
         total_emissions = sum(v.emissions for v in vessels)
+        per_vessel_dest: dict[int, int] = {}
+        if vessels and len(sorted_ports) > 1:
+            for i, v in enumerate(vessels):
+                per_vessel_dest[v.vessel_id] = sorted_ports[i % len(sorted_ports)]
         return {
             "dest_port": dest_port,
+            "per_vessel_dest": per_vessel_dest,
             "departure_window_hours": 12,
             "emission_budget": max(50.0 - total_emissions * 0.1, 10.0),
         }
-
-    def act(
-        self,
-        agent: FleetCoordinatorAgent,
-        medium_forecast: np.ndarray,
-        vessels: list[VesselState],
-        ports: list[PortState],
-        rng: np.random.Generator | None = None,
-    ) -> dict[str, Any]:
-        """Produce strategic directive for one step."""
-        action = self.propose_action(
-            medium_forecast=medium_forecast,
-            vessels=vessels,
-            ports=ports,
-            rng=rng,
-        )
-        return agent.apply_action(action)
 
 
 class VesselPolicy:
@@ -103,16 +91,6 @@ class VesselPolicy:
             "request_arrival_slot": True,
         }
 
-    def act(
-        self,
-        agent: VesselAgent,
-        short_forecast: np.ndarray,
-        directive: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Produce local vessel action for one step."""
-        action = self.propose_action(short_forecast=short_forecast, directive=directive)
-        return agent.apply_action(action)
-
 
 class PortPolicy:
     """Port policy container (heuristic placeholder for PPO actor)."""
@@ -150,16 +128,3 @@ class PortPolicy:
             ),
         }
 
-    def act(
-        self,
-        agent: PortAgent,
-        incoming_requests: int,
-        short_forecast_row: np.ndarray,
-    ) -> dict[str, Any]:
-        """Produce local port action for one step."""
-        action = self.propose_action(
-            port_state=agent.state,
-            incoming_requests=incoming_requests,
-            short_forecast_row=short_forecast_row,
-        )
-        return agent.apply_action(action)

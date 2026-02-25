@@ -10,14 +10,17 @@ from .state import PortState, VesselState
 
 
 def forecast_mae(predicted: np.ndarray, actual: np.ndarray) -> float:
+    """Mean absolute error between predicted and actual arrays."""
     return float(np.mean(np.abs(predicted - actual)))
 
 
 def forecast_rmse(predicted: np.ndarray, actual: np.ndarray) -> float:
+    """Root mean squared error between predicted and actual arrays."""
     return float(np.sqrt(np.mean((predicted - actual) ** 2)))
 
 
 def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
+    """Aggregate fleet-level metrics: speed, fuel, emissions, delay, on-time rate."""
     avg_speed = float(np.mean([v.speed for v in vessels])) if vessels else 0.0
     avg_fuel = float(np.mean([v.fuel for v in vessels])) if vessels else 0.0
     total_fuel_used = float(sum(max(v.initial_fuel - v.fuel, 0.0) for v in vessels))
@@ -36,6 +39,7 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
 
 
 def compute_port_metrics(ports: list[PortState]) -> dict[str, float]:
+    """Aggregate port-level metrics: queue, utilization, wait, throughput."""
     avg_queue = float(np.mean([p.queue for p in ports])) if ports else 0.0
     dock_util = float(np.mean([p.occupied / p.docks for p in ports])) if ports else 0.0
     total_wait = float(sum(p.cumulative_wait_hours for p in ports))
@@ -53,6 +57,7 @@ def compute_economic_metrics(
     vessels: list[VesselState],
     config: dict[str, Any],
 ) -> dict[str, float]:
+    """End-of-episode economic costs: fuel, delay, carbon, and reliability."""
     fuel_cost_total = sum(
         max(v.initial_fuel - v.fuel, 0.0) * config["fuel_price_per_ton"]
         for v in vessels
@@ -74,3 +79,22 @@ def compute_economic_metrics(
         "price_per_vessel_usd": float(price_per_vessel),
         "cost_reliability": float(reliability),
     }
+
+
+def compute_economic_step_deltas(
+    step_fuel_used: float,
+    step_co2_emitted: float,
+    step_delay_hours: float,
+    config: dict[str, Any],
+) -> dict[str, float]:
+    """Per-step economic cost deltas from step-level physical quantities."""
+    fuel_cost = step_fuel_used * config["fuel_price_per_ton"]
+    delay_cost = step_delay_hours * config["delay_penalty_per_hour"]
+    carbon_cost = step_co2_emitted * config["carbon_price_per_ton"]
+    return {
+        "step_fuel_cost_usd": float(fuel_cost),
+        "step_delay_cost_usd": float(delay_cost),
+        "step_carbon_cost_usd": float(carbon_cost),
+        "step_total_ops_cost_usd": float(fuel_cost + delay_cost + carbon_cost),
+    }
+

@@ -64,7 +64,12 @@ def step_ports(
     dt_hours: float = 1.0,
     service_time_hours: float = 6.0,
 ) -> None:
-    """Advance port service state, admit queued vessels, and accumulate waiting time."""
+    """Advance port service state, admit queued vessels, and accumulate waiting time.
+
+    ``service_rates`` acts as a per-port *admission cap* — the maximum
+    number of queued vessels that may be admitted to a berth this tick,
+    subject to available dock capacity.
+    """
     for port, rate in zip(ports, service_rates):
         # Normalize potentially stale manual test overrides of occupied/service_times.
         if len(port.service_times) != int(port.occupied):
@@ -94,22 +99,16 @@ def dispatch_vessel(
     speed: float,
     config: dict[str, Any],
 ) -> None:
-    """Send a vessel to a destination at a clipped speed."""
+    """Send a vessel to a destination at a clipped speed.
+
+    If *destination* equals the vessel's current location the call is a
+    no-op — dispatching to the same port would produce a zero-distance
+    leg that arrives instantly and re-queues the vessel.
+    """
+    if int(destination) == vessel.location:
+        return
     vessel.destination = int(destination)
     vessel.speed = float(np.clip(speed, config["speed_min"], config["speed_max"]))
     vessel.position_nm = 0.0
     vessel.at_sea = True
 
-
-def observe_port_metrics(ports: list[PortState]) -> dict[str, float]:
-    """Compact helper used by env info outputs."""
-    avg_queue = float(np.mean([p.queue for p in ports])) if ports else 0.0
-    dock_util = (
-        float(np.mean([p.occupied / p.docks for p in ports])) if ports else 0.0
-    )
-    total_wait = float(sum(p.cumulative_wait_hours for p in ports))
-    return {
-        "avg_queue": avg_queue,
-        "dock_utilization": dock_util,
-        "total_wait_hours": total_wait,
-    }

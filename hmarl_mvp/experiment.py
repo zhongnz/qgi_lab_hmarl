@@ -12,6 +12,7 @@ from .env import MaritimeEnv
 from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
 from .metrics import (
     compute_economic_metrics,
+    compute_economic_step_deltas,
     compute_port_metrics,
     compute_vessel_metrics,
 )
@@ -75,8 +76,8 @@ def run_experiment(
         if policy_type == "oracle":
             medium, short = oracle_forecaster.predict(env.ports)
         else:
-            medium = medium_forecaster.predict(num_ports=cfg["num_ports"], rng=rng)
-            short = short_forecaster.predict(num_ports=cfg["num_ports"], rng=rng)
+            medium = medium_forecaster.predict(ports=env.ports, rng=rng)
+            short = short_forecaster.predict(ports=env.ports, rng=rng)
             if policy_type == "forecast" and forecast_noise > 0:
                 medium += rng.normal(0, forecast_noise, medium.shape)
                 short += rng.normal(0, forecast_noise, short.shape)
@@ -139,6 +140,12 @@ def run_experiment(
         vessel_metrics = compute_vessel_metrics(env.vessels)
         port_metrics = compute_port_metrics(env.ports)
         economic_metrics = compute_economic_metrics(env.vessels, cfg)
+        step_economic = compute_economic_step_deltas(
+            step_fuel_used=float(info.get("step_fuel_used", 0.0)),
+            step_co2_emitted=float(info.get("step_co2_emitted", 0.0)),
+            step_delay_hours=float(info.get("step_delay_hours", 0.0)),
+            config=cfg,
+        )
         step_requests = float(info.get("requests_submitted", 0.0))
         step_accepted = float(info.get("requests_accepted", 0.0))
         cumulative_vessel_requests += step_requests
@@ -169,6 +176,7 @@ def run_experiment(
                 **port_metrics,
                 **coordination_metrics,
                 **economic_metrics,
+                **step_economic,
                 "avg_vessel_reward": float(np.mean(rewards["vessels"])) if rewards["vessels"] else 0.0,
                 "avg_port_reward": float(np.mean(rewards["ports"])) if rewards["ports"] else 0.0,
                 "coordinator_reward": float(rewards["coordinator"]),
@@ -283,8 +291,3 @@ def save_result_dict(results: dict[Any, pd.DataFrame], out_dir: str, prefix: str
     for key, df in results.items():
         safe_key = str(key).replace(" ", "_")
         df.to_csv(f"{out_dir}/{prefix}_{safe_key}.csv", index=False)
-
-
-def default_config() -> dict[str, Any]:
-    """Expose a mutable copy of default config."""
-    return get_default_config()

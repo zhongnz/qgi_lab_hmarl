@@ -11,30 +11,29 @@ from .state import PortState
 
 @dataclass
 class MediumTermForecaster:
-    """Strategic forecaster (3-7 day horizon in the current MVP)."""
+    """State-dependent strategic forecaster (3-7 day horizon)."""
 
     horizon_days: int
 
-    def predict(self, num_ports: int, rng: np.random.Generator) -> np.ndarray:
-        return medium_term_forecast(
-            num_ports=num_ports,
-            horizon_days=self.horizon_days,
-            rng=rng,
-        )
+    def predict(self, ports: list[PortState], rng: np.random.Generator) -> np.ndarray:
+        """State-dependent strategic forecast: current queue + trend + noise."""
+        current_q = np.array([p.queue for p in ports], dtype=float)[:, None]
+        trend = np.linspace(0, 1.5, self.horizon_days)[None, :]
+        noise = rng.normal(0, 0.3, size=(len(ports), self.horizon_days))
+        return np.clip(current_q + trend + noise, 0, None)
 
 
 @dataclass
 class ShortTermForecaster:
-    """Operational forecaster (6-24 hour horizon in the current MVP)."""
+    """State-dependent operational forecaster (6-24 hour horizon)."""
 
     horizon_hours: int
 
-    def predict(self, num_ports: int, rng: np.random.Generator) -> np.ndarray:
-        return short_term_forecast(
-            num_ports=num_ports,
-            horizon_hours=self.horizon_hours,
-            rng=rng,
-        )
+    def predict(self, ports: list[PortState], rng: np.random.Generator) -> np.ndarray:
+        """State-dependent operational forecast: current queue + noise."""
+        current_q = np.array([p.queue for p in ports], dtype=float)[:, None]
+        noise = rng.normal(0, 0.5, size=(len(ports), self.horizon_hours))
+        return np.clip(current_q + noise, 0, None)
 
 
 @dataclass
@@ -45,43 +44,8 @@ class OracleForecaster:
     short_horizon_hours: int
 
     def predict(self, ports: list[PortState]) -> tuple[np.ndarray, np.ndarray]:
-        return oracle_forecasts(
-            ports=ports,
-            medium_horizon_days=self.medium_horizon_days,
-            short_horizon_hours=self.short_horizon_hours,
-        )
-
-
-def medium_term_forecast(
-    num_ports: int,
-    horizon_days: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Mock strategic forecast with trend + noise."""
-    base = rng.uniform(2, 8, size=(num_ports, 1))
-    trend = np.linspace(0, 1.5, horizon_days)[None, :]
-    noise = rng.normal(0, 0.3, size=(num_ports, horizon_days))
-    return np.clip(base + trend + noise, 0, None)
-
-
-def short_term_forecast(
-    num_ports: int,
-    horizon_hours: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Mock operational forecast with local noise."""
-    base = rng.uniform(1, 6, size=(num_ports, 1))
-    noise = rng.normal(0, 0.5, size=(num_ports, horizon_hours))
-    return np.clip(base + noise, 0, None)
-
-
-def oracle_forecasts(
-    ports: list[PortState],
-    medium_horizon_days: int,
-    short_horizon_hours: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Deterministic oracle-like forecast from current realized queue state."""
-    current_q = np.array([p.queue for p in ports], dtype=float)[:, None]
-    medium = np.repeat(current_q, medium_horizon_days, axis=1)
-    short = np.repeat(current_q, short_horizon_hours, axis=1)
-    return medium, short
+        """Deterministic oracle-like forecast from current realized queue state."""
+        current_q = np.array([p.queue for p in ports], dtype=float)[:, None]
+        medium = np.repeat(current_q, self.medium_horizon_days, axis=1)
+        short = np.repeat(current_q, self.short_horizon_hours, axis=1)
+        return medium, short
