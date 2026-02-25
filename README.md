@@ -25,22 +25,41 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── agents.py       # Agent wrappers, vessel-coordinator assignment
 │   ├── dynamics.py     # Physics: fuel, emissions, vessel/port ticks
 │   ├── forecasts.py    # Medium-term, short-term, oracle forecasters
+│   ├── learned_forecaster.py  # Trainable MLP queue forecaster
+│   ├── networks.py     # Actor-critic neural networks (MAPPO/CTDE)
+│   ├── buffer.py       # Rollout buffer for on-policy RL training
+│   ├── mappo.py        # MAPPO trainer (PPO + CTDE multi-agent training)
+│   ├── checkpointing.py # Training checkpoints and early stopping
 │   ├── policies.py     # Heuristic policy stubs (placeholder for PPO)
 │   ├── rewards.py      # Reward functions for all agent types
 │   ├── metrics.py      # Operational, forecast, and economic metrics
 │   ├── message_bus.py  # Asynchronous inter-agent message queues
 │   ├── env.py          # Gym-style multi-agent environment
-│   ├── experiment.py   # Experiment runner, sweeps, summaries
+│   ├── experiment.py   # Experiment runner, sweeps, multi-seed eval
 │   └── plotting.py     # Matplotlib plot helpers
 ├── scripts/
-│   └── run_baselines.py
+│   ├── run_baselines.py
+│   ├── train_forecaster.py
+│   └── train_mappo.py
 ├── tests/
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
 │   ├── test_message_bus.py
 │   ├── test_model_correctness.py
-│   └── test_rewards_metrics.py
+│   ├── test_rewards_metrics.py
+│   ├── test_buffer.py
+│   ├── test_networks.py
+│   ├── test_learned_forecaster.py
+│   ├── test_learned_forecast_integration.py
+│   ├── test_mappo.py
+│   ├── test_mappo_advanced.py
+│   ├── test_training_infra.py
+│   ├── test_scenarios.py
+│   ├── test_plotting.py
+│   ├── test_coverage_gaps.py
+│   ├── test_new_features.py
+│   └── test_state.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml
@@ -118,7 +137,36 @@ make install-dev
 make check
 ```
 
-### 4) Use notebook for analysis
+### 4) Train learned forecaster
+
+```bash
+cd qgi_lab_hmarl
+python scripts/train_forecaster.py --episodes 20 --steps 40 --epochs 200 --verbose
+```
+
+This collects queue traces from heuristic rollouts, trains an MLP forecaster,
+and writes model weights + evaluation metrics to `runs/forecaster/`.
+
+### 5) Train MAPPO (multi-agent PPO with CTDE)
+
+```bash
+cd qgi_lab_hmarl
+python scripts/train_mappo.py --iterations 50 --rollout-length 64
+```
+
+This runs the full MAPPO training loop: collecting rollouts with neural-network
+policies, computing GAE advantages, and performing PPO clipped updates. Outputs
+model checkpoints and reward curves to `outputs/mappo/`.
+
+### 6) Multi-seed evaluation
+
+```python
+from hmarl_mvp import run_multi_seed_policy_sweep, summarize_multi_seed
+df = run_multi_seed_policy_sweep(seeds=[42, 123, 256, 512, 1024], steps=20)
+summary = summarize_multi_seed(df)
+```
+
+### 7) Use notebook for analysis
 
 Use `colab_mvp_hmarl_maritime.ipynb` for presentation and visual inspection. Prefer module imports for any new logic.
 
@@ -141,7 +189,7 @@ Project config is now validated through a typed schema (`HMARLConfig`) in
 
 | Month | Milestone |
 |-------|-----------|
-| Feb | MVP simulator, rewards, metrics, baseline runner |
-| Mar | Train forecasting models, add heuristic baselines |
-| Apr | MAPPO with CTDE |
+| Feb | ✅ MVP simulator, rewards, metrics, baseline runner |
+| Mar | ✅ Trained forecasting models, heuristic baselines, RL infrastructure |
+| Apr | ✅ MAPPO with CTDE (training loop, integration) — tune & ablate |
 | May | Full ablation suite, final report |

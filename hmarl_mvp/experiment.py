@@ -10,6 +10,7 @@ import pandas as pd
 from .config import SEED, get_default_config
 from .env import MaritimeEnv
 from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+from .learned_forecaster import LearnedForecaster
 from .metrics import (
     compute_economic_metrics,
     compute_economic_step_deltas,
@@ -23,7 +24,7 @@ from .policies import (
 )
 from .state import make_rng
 
-VALID_POLICIES = {"independent", "reactive", "forecast", "oracle"}
+VALID_POLICIES = {"independent", "reactive", "forecast", "oracle", "learned_forecast"}
 
 
 def run_experiment(
@@ -35,6 +36,7 @@ def run_experiment(
     seed: int = SEED,
     config: dict[str, Any] | None = None,
     distance_nm: np.ndarray | None = None,
+    learned_forecaster: LearnedForecaster | None = None,
 ) -> pd.DataFrame:
     """
     Run one episode and return per-step metrics.
@@ -44,9 +46,15 @@ def run_experiment(
     - reactive: coordination using current state only (no forecast)
     - forecast: forecast-informed coordination with noisy forecasts
     - oracle: forecast-informed coordination with perfect queue knowledge
+    - learned_forecast: uses a trained ``LearnedForecaster`` for predictions
     """
     if policy_type not in VALID_POLICIES:
         raise ValueError(f"Unknown policy_type={policy_type!r}. Expected one of {VALID_POLICIES}")
+    if policy_type == "learned_forecast" and learned_forecaster is None:
+        raise ValueError("learned_forecaster must be provided when policy_type='learned_forecast'")
+
+    # For learned_forecast, use the same heuristic policy logic but with learned predictions
+    effective_mode = "forecast" if policy_type == "learned_forecast" else policy_type
 
     cfg = get_default_config(**(config or {}))
     steps = cfg["rollout_steps"] if steps is None else steps
@@ -56,9 +64,9 @@ def run_experiment(
     env.reset()
 
     num_coordinators = env.num_coordinators
-    coordinator_policy = FleetCoordinatorPolicy(config=cfg, mode=policy_type)
-    vessel_policy = VesselPolicy(config=cfg, mode=policy_type)
-    port_policy = PortPolicy(config=cfg, mode=policy_type)
+    coordinator_policy = FleetCoordinatorPolicy(config=cfg, mode=effective_mode)
+    vessel_policy = VesselPolicy(config=cfg, mode=effective_mode)
+    port_policy = PortPolicy(config=cfg, mode=effective_mode)
     medium_forecaster = MediumTermForecaster(cfg["medium_horizon_days"])
     short_forecaster = ShortTermForecaster(forecast_horizon)
     oracle_forecaster = OracleForecaster(
@@ -75,6 +83,10 @@ def run_experiment(
         step_context = env.peek_step_context()
         if policy_type == "oracle":
             medium, short = oracle_forecaster.predict(env.ports)
+        elif policy_type == "learned_forecast" and learned_forecaster is not None:
+            # Use the trained model for both medium and short forecasts
+            medium = learned_forecaster.predict(env.ports, rng=rng)
+            short = learned_forecaster.predict(env.ports, rng=rng)
         else:
             medium = medium_forecaster.predict(ports=env.ports, rng=rng)
             short = short_forecaster.predict(ports=env.ports, rng=rng)
@@ -286,8 +298,456 @@ def summarize_policy_results(results: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return summary
 
 
+def run_multi_seed(
+    policy_type: str = "forecast",
+    seeds: list[int] | None = None,
+    steps: int | None = None,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> pd.DataFrame:
+    """Run the same experiment across multiple seeds and tag each row.
+
+    Returns a single DataFrame with an extra ``seed`` column.  This
+    makes it easy to compute mean ± std statistics for publication-quality
+    comparisons.
+    """
+    seeds = seeds or [42, 123, 256, 512, 1024]
+    frames: list[pd.DataFrame] = []
+    for seed in seeds:
+        df = run_experiment(
+            policy_type=policy_type,
+            steps=steps,
+            seed=seed,
+            config=config,
+            **kwargs,
+        )
+        df["seed"] = seed
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True)
+
+
+def summarize_multi_seed(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate multi-seed results into mean ± std per policy per step.
+
+    Expects a DataFrame produced by :func:`run_multi_seed` containing
+    ``seed``, ``t``, and ``policy`` columns.
+    """
+    numeric_cols = [
+        "avg_queue",
+        "dock_utilization",
+        "total_emissions_co2",
+        "total_fuel_used",
+        "on_time_rate",
+        "total_ops_cost_usd",
+        "cost_reliability",
+        "avg_vessel_reward",
+        "avg_port_reward",
+        "coordinator_reward",
+        "policy_agreement_rate",
+        "step_fuel_cost_usd",
+        "step_delay_cost_usd",
+        "step_carbon_cost_usd",
+        "step_total_ops_cost_usd",
+    ]
+    present = [c for c in numeric_cols if c in df.columns]
+    grouped = df.groupby(["policy", "t"])[present]
+    mean_df = grouped.mean().round(4)
+    std_df = grouped.std().round(4)
+    mean_df.columns = [f"{c}_mean" for c in mean_df.columns]
+    std_df.columns = [f"{c}_std" for c in std_df.columns]
+    return pd.concat([mean_df, std_df], axis=1).reset_index()
+
+
+def run_multi_seed_policy_sweep(
+    policies: list[str] | None = None,
+    seeds: list[int] | None = None,
+    steps: int | None = None,
+    config: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Run all baseline policies across multiple seeds.
+
+    Returns a single DataFrame containing all policies × seeds.
+    """
+    policies = policies or ["independent", "reactive", "forecast", "oracle"]
+    frames: list[pd.DataFrame] = []
+    for policy in policies:
+        df = run_multi_seed(
+            policy_type=policy,
+            seeds=seeds,
+            steps=steps,
+            config=config,
+        )
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True)
+
+
 def save_result_dict(results: dict[Any, pd.DataFrame], out_dir: str, prefix: str) -> None:
     """Write each DataFrame from a dict into CSV files."""
     for key, df in results.items():
         safe_key = str(key).replace(" ", "_")
         df.to_csv(f"{out_dir}/{prefix}_{safe_key}.csv", index=False)
+
+
+# ---------------------------------------------------------------------------
+# MAPPO vs heuristic comparison
+# ---------------------------------------------------------------------------
+
+
+def run_mappo_comparison(
+    train_iterations: int = 50,
+    rollout_length: int = 64,
+    eval_steps: int | None = None,
+    baselines: list[str] | None = None,
+    seed: int = SEED,
+    config: dict[str, Any] | None = None,
+    mappo_kwargs: dict[str, Any] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Train a MAPPO agent and compare its evaluation against heuristic baselines.
+
+    Returns a dict mapping policy name → per-step metrics DataFrame,
+    including a ``"mappo"`` entry from evaluation of the trained agent.
+
+    Parameters
+    ----------
+    train_iterations:
+        Number of MAPPO train iterations (collect + update).
+    rollout_length:
+        Rollout length per training iteration.
+    eval_steps:
+        Steps for evaluation episodes.  Defaults to ``rollout_length``.
+    baselines:
+        List of heuristic policy names to compare against.
+    seed:
+        Random seed for reproducibility.
+    config:
+        Environment configuration overrides.
+    mappo_kwargs:
+        Extra kwargs forwarded to ``MAPPOConfig``.
+    """
+    from .mappo import MAPPOConfig, MAPPOTrainer
+
+    cfg = get_default_config(**(config or {}))
+    eval_steps = eval_steps or rollout_length
+    baselines = baselines or ["independent", "reactive", "forecast", "oracle"]
+
+    # --- Train MAPPO ---
+    extra = dict(mappo_kwargs or {})
+    extra.setdefault("rollout_length", rollout_length)
+    mappo_cfg = MAPPOConfig(**extra)
+    trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=seed)
+
+    train_log: list[dict[str, float]] = []
+    for iteration in range(1, train_iterations + 1):
+        rollout_info = trainer.collect_rollout()
+        update_info = trainer.update()
+        row: dict[str, float] = {
+            "iteration": float(iteration),
+            "mean_reward": rollout_info["mean_reward"],
+        }
+        for agent_type, result in update_info.items():
+            row[f"{agent_type}_value_loss"] = result.value_loss
+        train_log.append(row)
+
+    # --- Evaluate MAPPO ---
+    from .metrics import compute_economic_step_deltas as _ced
+
+    mappo_rows: list[dict[str, Any]] = []
+    obs = trainer.env.reset()
+
+    import torch
+
+    vessel_ac = trainer.actor_critics["vessel"]
+    port_ac = trainer.actor_critics["port"]
+    coord_ac = trainer.actor_critics["coordinator"]
+    vessel_ac.eval()
+    port_ac.eval()
+    coord_ac.eval()
+    device = trainer.device
+
+    for step_i in range(eval_steps):
+        global_state = trainer.env.get_global_state()
+        gs_tensor = torch.as_tensor(
+            global_state, dtype=torch.float32, device=device
+        ).unsqueeze(0)
+
+        from .mappo import _nn_to_coordinator_action, _nn_to_port_action, _nn_to_vessel_action
+
+        with torch.no_grad():
+            vessel_actions = []
+            for v_obs in obs["vessels"]:
+                v_t = torch.as_tensor(v_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                a, _, _ = vessel_ac.get_action_and_value(v_t, gs_tensor, deterministic=True)
+                vessel_actions.append(_nn_to_vessel_action(a.squeeze(0), trainer.cfg))
+
+            port_actions = []
+            for i, p_obs in enumerate(obs["ports"]):
+                p_t = torch.as_tensor(p_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                a, _, _ = port_ac.get_action_and_value(p_t, gs_tensor, deterministic=True)
+                port_actions.append(_nn_to_port_action(a.squeeze(0), i, trainer.env))
+
+            assignments = trainer.env._build_assignments()
+            coord_actions = []
+            for i, c_obs in enumerate(obs["coordinators"]):
+                c_t = torch.as_tensor(c_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                a, _, _ = coord_ac.get_action_and_value(c_t, gs_tensor, deterministic=True)
+                coord_actions.append(
+                    _nn_to_coordinator_action(a.squeeze(0), i, trainer.env, assignments)
+                )
+
+        env_actions = {
+            "coordinator": coord_actions[0] if coord_actions else {},
+            "coordinators": coord_actions,
+            "vessels": vessel_actions,
+            "ports": port_actions,
+        }
+        obs, rewards, done, info = trainer.env.step(env_actions)
+        vessel_metrics = compute_vessel_metrics(trainer.env.vessels)
+        port_metrics = compute_port_metrics(trainer.env.ports)
+        economic_metrics = compute_economic_metrics(trainer.env.vessels, trainer.cfg)
+        step_economic = _ced(
+            step_fuel_used=float(info.get("step_fuel_used", 0.0)),
+            step_co2_emitted=float(info.get("step_co2_emitted", 0.0)),
+            step_delay_hours=float(info.get("step_delay_hours", 0.0)),
+            config=trainer.cfg,
+        )
+        mappo_rows.append({
+            "t": step_i,
+            "policy": "mappo",
+            **vessel_metrics,
+            **port_metrics,
+            **economic_metrics,
+            **step_economic,
+            "avg_vessel_reward": float(np.mean(rewards["vessels"])),
+            "avg_port_reward": float(np.mean(rewards["ports"])),
+            "coordinator_reward": float(rewards["coordinator"]),
+        })
+        if done:
+            break
+
+    results: dict[str, pd.DataFrame] = {"mappo": pd.DataFrame(mappo_rows)}
+
+    # --- Run heuristic baselines ---
+    for policy in baselines:
+        results[policy] = run_experiment(
+            policy_type=policy, steps=eval_steps, seed=seed, config=config
+        )
+
+    # Attach training log
+    results["_train_log"] = pd.DataFrame(train_log)
+    return results
+
+
+def run_multi_seed_mappo_comparison(
+    train_iterations: int = 50,
+    rollout_length: int = 64,
+    eval_steps: int | None = None,
+    baselines: list[str] | None = None,
+    seeds: list[int] | None = None,
+    config: dict[str, Any] | None = None,
+    mappo_kwargs: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Train MAPPO and evaluate against baselines across multiple seeds.
+
+    For each seed, independently trains MAPPO and runs all baselines.
+    Returns a single DataFrame with ``seed`` and ``policy`` columns for
+    statistical comparison (mean +/- std).
+
+    Parameters
+    ----------
+    train_iterations:
+        Number of MAPPO train iterations per seed.
+    rollout_length:
+        Rollout length per training iteration.
+    eval_steps:
+        Steps for evaluation episodes (defaults to ``rollout_length``).
+    baselines:
+        Heuristic policy names to compare against.
+    seeds:
+        Random seeds for reproducibility.
+    config:
+        Environment configuration overrides.
+    mappo_kwargs:
+        Extra kwargs forwarded to ``MAPPOConfig``.
+    """
+    seeds = seeds or [42, 123, 256]
+    frames: list[pd.DataFrame] = []
+    for seed in seeds:
+        results = run_mappo_comparison(
+            train_iterations=train_iterations,
+            rollout_length=rollout_length,
+            eval_steps=eval_steps,
+            baselines=baselines,
+            seed=seed,
+            config=config,
+            mappo_kwargs=mappo_kwargs,
+        )
+        for name, df in results.items():
+            if name.startswith("_"):
+                continue
+            df_copy = df.copy()
+            df_copy["seed"] = seed
+            frames.append(df_copy)
+    return pd.concat(frames, ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
+# MAPPO hyper-parameter sweep
+# ---------------------------------------------------------------------------
+
+
+def run_mappo_hyperparam_sweep(
+    param_grid: dict[str, list[Any]],
+    train_iterations: int = 30,
+    rollout_length: int = 64,
+    eval_steps: int | None = None,
+    seed: int = SEED,
+    config: dict[str, Any] | None = None,
+    base_mappo_kwargs: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Sweep over MAPPO hyper-parameter combinations.
+
+    ``param_grid`` maps ``MAPPOConfig`` field names to lists of values.
+    All combinations are evaluated (grid search) and the results are
+    returned in a single DataFrame with one row per combination carrying
+    the evaluation metrics and training statistics.
+
+    Example::
+
+        df = run_mappo_hyperparam_sweep(
+            param_grid={"lr": [1e-4, 3e-4, 1e-3], "entropy_coeff": [0.01, 0.05]},
+            train_iterations=30,
+        )
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per configuration.  Columns include each swept param,
+        training curve summary (``final_mean_reward``, ``best_mean_reward``),
+        and evaluation metrics (``eval_total_reward``, ``eval_mean_vessel_reward``,
+        ``eval_mean_port_reward``, ``eval_mean_coordinator_reward``).
+    """
+    from .mappo import MAPPOConfig, MAPPOTrainer
+
+    cfg = get_default_config(**(config or {}))
+    eval_steps = eval_steps or rollout_length
+    base = dict(base_mappo_kwargs or {})
+    base.setdefault("rollout_length", rollout_length)
+
+    # Build grid (cartesian product)
+    keys = list(param_grid.keys())
+    value_lists = [param_grid[k] for k in keys]
+
+    def _product(lists: list[list[Any]]) -> list[list[Any]]:
+        if not lists:
+            return [[]]
+        result: list[list[Any]] = []
+        for item in lists[0]:
+            for rest in _product(lists[1:]):
+                result.append([item, *rest])
+        return result
+
+    combos = _product(value_lists)
+    rows: list[dict[str, Any]] = []
+
+    for combo in combos:
+        overrides = dict(zip(keys, combo))
+        run_kwargs = {**base, **overrides}
+        mappo_cfg = MAPPOConfig(**run_kwargs)
+        trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=seed)
+
+        # Train
+        for _ in range(train_iterations):
+            trainer.collect_rollout()
+            trainer.update()
+
+        # Evaluate
+        eval_result = trainer.evaluate(num_steps=eval_steps, deterministic=True)
+        history = trainer.reward_history
+
+        row: dict[str, Any] = dict(overrides)
+        row["final_mean_reward"] = history[-1] if history else 0.0
+        row["best_mean_reward"] = max(history) if history else 0.0
+        row.update(eval_result)
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# MAPPO ablation runner
+# ---------------------------------------------------------------------------
+
+
+def run_mappo_ablation(
+    ablations: dict[str, dict[str, Any]],
+    train_iterations: int = 30,
+    rollout_length: int = 64,
+    eval_steps: int | None = None,
+    seed: int = SEED,
+    config: dict[str, Any] | None = None,
+    base_mappo_kwargs: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Run named ablation experiments varying MAPPO configuration.
+
+    ``ablations`` maps human-readable labels to dicts of ``MAPPOConfig``
+    overrides.  Each ablation is trained and evaluated independently.
+
+    Example::
+
+        df = run_mappo_ablation({
+            "baseline":         {},
+            "no_reward_norm":   {"normalize_rewards": False},
+            "high_entropy":     {"entropy_coeff": 0.05},
+            "no_value_clip":    {"value_clip_eps": 0.0},
+        })
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per ablation.  Columns include ``ablation`` label,
+        training summary, and evaluation metrics.
+    """
+    from .mappo import MAPPOConfig, MAPPOTrainer
+
+    cfg = get_default_config(**(config or {}))
+    eval_steps = eval_steps or rollout_length
+    base = dict(base_mappo_kwargs or {})
+    base.setdefault("rollout_length", rollout_length)
+
+    rows: list[dict[str, Any]] = []
+    for label, overrides in ablations.items():
+        run_kwargs = {**base, **overrides}
+        mappo_cfg = MAPPOConfig(**run_kwargs)
+        trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=seed)
+
+        # Train
+        train_log: list[dict[str, float]] = []
+        for iteration in range(1, train_iterations + 1):
+            rollout_info = trainer.collect_rollout()
+            update_info = trainer.update()
+            entry: dict[str, float] = {
+                "iteration": float(iteration),
+                "mean_reward": rollout_info["mean_reward"],
+            }
+            for agent_type, result in update_info.items():
+                entry[f"{agent_type}_policy_loss"] = result.policy_loss
+                entry[f"{agent_type}_value_loss"] = result.value_loss
+                entry[f"{agent_type}_entropy"] = result.entropy
+                entry[f"{agent_type}_grad_norm"] = result.grad_norm
+            train_log.append(entry)
+
+        # Evaluate
+        eval_result = trainer.evaluate(num_steps=eval_steps, deterministic=True)
+        history = trainer.reward_history
+        diagnostics = trainer.get_diagnostics()
+
+        row: dict[str, Any] = {"ablation": label}
+        row["final_mean_reward"] = history[-1] if history else 0.0
+        row["best_mean_reward"] = max(history) if history else 0.0
+        row.update(eval_result)
+        # Include final diagnostics
+        for dk, dv in diagnostics.items():
+            row[f"diag_{dk}"] = dv
+        rows.append(row)
+
+    return pd.DataFrame(rows)

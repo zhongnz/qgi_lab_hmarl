@@ -332,7 +332,13 @@ class MaritimeEnv:
         self.short_forecast = self.short_forecaster.predict(self.ports, self.rng)
 
     def _get_observations(self) -> dict[str, Any]:
-        """Build observation dicts for all agent types from current state."""
+        """Build observation dicts for all agent types from current state.
+
+        Coordinator observations are **zero-padded** to the maximum
+        coordinator dimension (``num_ports * medium_d + num_vessels * 4 + 1``)
+        so that parameter-shared networks receive fixed-size inputs even when
+        vessel partitions vary.
+        """
         if self.medium_forecast is None or self.short_forecast is None:
             self._refresh_forecasts()
         medium = self.medium_forecast
@@ -341,6 +347,11 @@ class MaritimeEnv:
             raise RuntimeError("forecasts not initialized — call reset() first")
 
         assignments = self._build_assignments()
+
+        # Fixed coordinator observation dimension
+        medium_d = int(self.cfg["medium_horizon_days"])
+        max_coord_dim = int(self.cfg["num_ports"]) * medium_d + self.num_vessels * 4 + 1
+
         coordinator_obs = []
         for coordinator_id, coordinator in enumerate(self.coordinators):
             local_ids = assignments.get(coordinator_id, [])
@@ -348,7 +359,13 @@ class MaritimeEnv:
             local_vessels = [vessels_by_id[i] for i in local_ids if i in vessels_by_id]
             if not local_vessels:
                 local_vessels = self.vessels
-            coordinator_obs.append(coordinator.get_obs(medium, local_vessels))
+            raw_obs = coordinator.get_obs(medium, local_vessels)
+            # Pad to fixed dimension
+            if len(raw_obs) < max_coord_dim:
+                raw_obs = np.concatenate(
+                    [raw_obs, np.zeros(max_coord_dim - len(raw_obs))]
+                )
+            coordinator_obs.append(raw_obs[:max_coord_dim])
         coord_obs = coordinator_obs[0]
 
         vessel_obs = []
@@ -420,19 +437,18 @@ class MaritimeEnv:
         }
 
     def get_global_state(self) -> np.ndarray:
-        """Flatten all observations and global stats for CTDE critic inputs."""
+        """Flatten all observations and global stats for CTDE critic inputs.
+
+        Coordinator observations are already padded to fixed dimension by
+        ``_get_observations()``, so the resulting vector size is deterministic.
+        """
         obs = self._get_observations()
         global_congestion = np.array([p.queue for p in self.ports], dtype=float)
         total_emissions = np.array([sum(v.emissions for v in self.vessels)], dtype=float)
-        extra_coordinators = (
-            obs["coordinators"][1:]
-            if obs.get("coordinators") and len(obs["coordinators"]) > 1
-            else []
-        )
+
         return np.concatenate(
             [
-                obs["coordinator"],
-                *(extra_coordinators if extra_coordinators else [np.array([])]),
+                *obs["coordinators"],
                 *(obs["vessels"] if obs["vessels"] else [np.array([])]),
                 *(obs["ports"] if obs["ports"] else [np.array([])]),
                 global_congestion,

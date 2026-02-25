@@ -10,6 +10,8 @@ This folder captures design details requested in Meeting 03.
 4. `forecasting_async_communication.md`
 5. `multi_coordinator_scaling.md`
 6. `meeting-03_task-plan.md`
+7. `mappo_ctde_training.md` — MAPPO trainer, CTDE, buffers, checkpointing
+8. `learned_forecaster.md` — trainable MLP queue forecaster pipeline
 
 ## Purpose
 

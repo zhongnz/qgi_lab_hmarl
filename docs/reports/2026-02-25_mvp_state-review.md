@@ -24,14 +24,26 @@ documentation alignment.
 
 ## Remaining Gaps
 
-1. Forecast models are heuristic; no learned forecaster integrated yet.
-2. PPO/MAPPO training loop and CTDE learner stack are not implemented.
+1. ~~Forecast models are heuristic; no learned forecaster integrated yet.~~
+   **Resolved**: `learned_forecaster.py` provides a trainable MLP forecaster
+   with supervised training pipeline, integration tests, and CLI script.
+2. ~~PPO/MAPPO training loop and CTDE learner stack are not implemented.~~
+   **Resolved**: `mappo.py` implements full `MAPPOTrainer` with CTDE
+   (centralised critic, decentralised actors), rollout buffers, PPO clipped
+   surrogate, value clipping, reward normalisation, and LR scheduling.
 3. Multi-coordinator strategy is baseline modulo partitioning only.
-4. No scenario suite yet for large fleets and heterogeneous ports.
+   Shared critic via CTDE in `mappo.py` partially addresses this; further
+   coordination strategies remain future work.
+4. ~~No scenario suite yet for large fleets and heterogeneous ports.~~
+   **Resolved**: `test_scenarios.py` covers large fleets, heterogeneous ports,
+   stress latency, multi-seed evaluation, and all-policy scenarios.
 
-## Recommended Next Steps
+## Recommended Next Steps (Updated)
 
-1. Implement learned forecasting module and compare against heuristic/oracle.
-2. Define independent/reactive/forecast baseline contracts in docs with clear invariants.
-3. Start MAPPO/CTDE training integration behind a separate experiment entrypoint.
-4. Expand scenario tests (fleet scale, port heterogeneity, stress latency settings).
+1. ~~Implement learned forecasting module.~~ **Done.**
+2. ~~Define baseline contracts in docs with clear invariants.~~ **Done** (architecture docs).
+3. ~~Start MAPPO/CTDE training integration.~~ **Done.**
+4. ~~Expand scenario tests.~~ **Done.**
+5. (New) Add curriculum learning / adaptive difficulty scaling.
+6. (New) Investigate parameter-sharing ablations across agent types.
+7. (New) Profile training throughput and optimise buffer/network bottlenecks.

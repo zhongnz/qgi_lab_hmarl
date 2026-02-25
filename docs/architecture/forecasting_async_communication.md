@@ -7,6 +7,18 @@
 2. Vessel and Port:
    short-term horizon (`short_horizon_hours`)
 
+## Forecaster implementations
+
+| Forecaster | Module | Description |
+|------------|--------|-------------|
+| `MediumTermForecaster` | `forecasts.py` | Queue + linear trend + Gaussian noise |
+| `ShortTermForecaster` | `forecasts.py` | Queue + Gaussian noise |
+| `OracleForecaster` | `forecasts.py` | Perfect current-queue repeat |
+| `LearnedForecaster` | `learned_forecaster.py` | Trainable MLP (see `learned_forecaster.md`) |
+
+The `learned_forecast` policy type uses `LearnedForecaster.predict()` as a
+drop-in replacement for the heuristic forecasters.
+
 ## Asynchronous cadence model
 
 The environment should support different decision rates per agent class:

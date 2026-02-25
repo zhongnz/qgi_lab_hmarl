@@ -34,6 +34,21 @@ This is a baseline partitioning strategy to keep interfaces stable.
    - shared critic with coordinator id embedding
    - or hierarchical critics (local + global)
 
+## CTDE integration (implemented)
+
+The MAPPO trainer (`mappo.py`) uses a **shared critic** that receives the
+full global state regardless of the number of coordinators.  Each
+coordinator runs its own decentralised actor while the centralised critic
+fuses all coordinator, vessel, and port observations.  The global state
+dimension is:
+
+```
+N_c × coordinator_obs_dim + N_v × vessel_obs_dim + N_p × port_obs_dim
++ N_p (congestion) + 1 (total_emissions)
+```
+
+See `mappo_ctde_training.md` for full details.
+
 ## Multi-coordinator dataflow
 
 ```mermaid

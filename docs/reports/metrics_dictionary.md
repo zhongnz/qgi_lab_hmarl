@@ -6,7 +6,7 @@ CSV outputs from `scripts/run_baselines.py`.
 ## Run Metadata
 
 - `t`: simulation step index.
-- `policy`: one of `independent`, `reactive`, `forecast`, `oracle`.
+- `policy`: one of `independent`, `reactive`, `forecast`, `oracle`, `learned_forecast`, `mappo`.
 - `forecast_horizon`: short-horizon forecast length used in the run.
 - `forecast_noise`: Gaussian noise scale applied to synthetic forecasts.
 - `share_forecasts`: `1` if short forecasts are shared beyond coordinator, else `0`.
@@ -53,3 +53,27 @@ CSV outputs from `scripts/run_baselines.py`.
 - `avg_vessel_reward`: average per-step vessel reward over all vessels.
 - `avg_port_reward`: average per-step port reward over all ports.
 - `coordinator_reward`: per-step coordinator reward.
+
+## Per-Step Economic Deltas
+
+- `step_fuel_cost_usd`: fuel cost incurred at this step.
+- `step_delay_cost_usd`: delay penalty incurred at this step.
+- `step_carbon_cost_usd`: carbon cost incurred at this step.
+- `step_total_ops_cost_usd`: total ops cost at this step (`fuel + delay + carbon`).
+
+## MAPPO Training Metrics
+
+Produced by `run_mappo_comparison()` under the `_train_log` key and by the
+`MAPPOTrainer` during training iterations.
+
+- `iteration`: training iteration index (1-based).
+- `mean_reward`: mean episode reward for the iteration.
+- `total_reward`: total episode reward for the iteration.
+- `vessel_value_loss`: critic MSE loss for the vessel actor-critic.
+- `port_value_loss`: critic MSE loss for the port actor-critic.
+- `coordinator_value_loss`: critic MSE loss for the coordinator actor-critic.
+- `*_policy_loss`: PPO clipped surrogate loss per agent type.
+- `*_entropy`: policy entropy per agent type.
+- `*_clip_fraction`: fraction of samples clipped per agent type.
+- `*_grad_norm`: gradient norm after clipping per agent type.
+- `*_weight_norm`: total parameter L2 norm per agent type.
