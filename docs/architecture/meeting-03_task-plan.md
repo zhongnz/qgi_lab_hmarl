@@ -9,7 +9,7 @@ This checklist maps Meeting 03 feedback to concrete implementation tasks.
 | Draw environment relationship | `environment_relationship.md` | Done |
 | Clarify emissions interaction and rewards | `emissions_reward_interactions.md` | Done |
 | Define forecasting horizons and async communication | `forecasting_async_communication.md` | Done |
-| Plan scale-up to multiple coordinators | `multi_coordinator_scaling.md` + `hmarl_mvp/multi_coordinator.py` | Done |
+| Plan scale-up to multiple coordinators | `multi_coordinator_scaling.md` + `hmarl_mvp/agents.py` / `hmarl_mvp/env.py` scaffolding | Done |
 | Diagram each agent input/output | `agent_input_output.md` | Done |
 | Make things modular | `hmarl_mvp/` package, script runner, tests | Done |
 | Prepare the environment | cadence scaffolding + tests + config knobs | Done |

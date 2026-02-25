@@ -27,8 +27,19 @@ class FleetCoordinatorPolicy:
         if self.mode == "independent":
             if rng is None:
                 raise ValueError("rng is required for independent coordinator mode")
+            num_ports = int(self.cfg["num_ports"])
+            default_dest = int(rng.integers(0, num_ports))
+            independent_destinations: dict[int, int] = {}
+            if num_ports > 1:
+                # Keep independent behavior random while avoiding immediate self-loops.
+                for vessel in vessels:
+                    destination = int(rng.integers(0, num_ports - 1))
+                    if destination >= vessel.location:
+                        destination += 1
+                    independent_destinations[vessel.vessel_id] = destination
             return {
-                "dest_port": int(rng.integers(0, self.cfg["num_ports"])),
+                "dest_port": default_dest,
+                "per_vessel_dest": independent_destinations,
                 "departure_window_hours": 12,
                 "emission_budget": 50.0,
             }
@@ -43,13 +54,13 @@ class FleetCoordinatorPolicy:
         sorted_ports = [int(p) for p in np.argsort(port_scores)]
         dest_port = sorted_ports[0]
         total_emissions = sum(v.emissions for v in vessels)
-        per_vessel_dest: dict[int, int] = {}
+        forecast_destinations: dict[int, int] = {}
         if vessels and len(sorted_ports) > 1:
             for i, v in enumerate(vessels):
-                per_vessel_dest[v.vessel_id] = sorted_ports[i % len(sorted_ports)]
+                forecast_destinations[v.vessel_id] = sorted_ports[i % len(sorted_ports)]
         return {
             "dest_port": dest_port,
-            "per_vessel_dest": per_vessel_dest,
+            "per_vessel_dest": forecast_destinations,
             "departure_window_hours": 12,
             "emission_budget": max(50.0 - total_emissions * 0.1, 10.0),
         }
@@ -71,7 +82,7 @@ class VesselPolicy:
         if self.mode == "independent":
             return {
                 "target_speed": float(self.cfg["nominal_speed"]),
-                "request_arrival_slot": False,
+                "request_arrival_slot": True,
             }
         if self.mode == "reactive":
             return {
@@ -107,7 +118,8 @@ class PortPolicy:
     ) -> dict[str, Any]:
         """Produce a port action without mutating agent state."""
         if self.mode == "independent":
-            return {"service_rate": 1, "accept_requests": 0}
+            available_slots = max(port_state.docks - port_state.occupied, 0)
+            return {"service_rate": 1, "accept_requests": int(min(incoming_requests, available_slots))}
         if self.mode == "reactive":
             service_rate = min(port_state.docks, max(port_state.queue, 1))
             return {
@@ -127,4 +139,3 @@ class PortPolicy:
                 min(incoming_requests, max(port_state.docks - port_state.occupied, 0))
             ),
         }
-

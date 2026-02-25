@@ -13,8 +13,8 @@ Config:
 
 Utilities:
 
-- `hmarl_mvp/multi_coordinator.py::assign_vessels_to_coordinators`
-- `hmarl_mvp/multi_coordinator.py::build_multi_coordinator_directives`
+- `hmarl_mvp/agents.py::assign_vessels_to_coordinators`
+- `hmarl_mvp/env.py::_build_assignments`
 
 ## Initial partition strategy
 
@@ -56,4 +56,3 @@ flowchart LR
     E --> C2
     E --> CN
 ```
-

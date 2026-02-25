@@ -135,6 +135,22 @@ class SmokeTests(unittest.TestCase):
         self.assertTrue((oracle_df["policy_agreement_rate"] >= 0.0).all())
         self.assertTrue((oracle_df["policy_agreement_rate"] <= 1.0).all())
 
+    def test_independent_baseline_generates_operational_activity(self) -> None:
+        cfg = get_default_config(
+            num_ports=3,
+            num_vessels=6,
+            docks_per_port=6,
+            rollout_steps=12,
+            coord_decision_interval_steps=1,
+            message_latency_steps=1,
+        )
+        df = run_experiment(policy_type="independent", steps=12, seed=42, config=cfg)
+
+        self.assertGreater(float(df["total_vessel_requests"].iloc[-1]), 0.0)
+        self.assertGreater(float(df["total_port_accepted"].iloc[-1]), 0.0)
+        self.assertGreater(float(df["total_fuel_used"].iloc[-1]), 0.0)
+        self.assertGreater(float(df["total_emissions_co2"].iloc[-1]), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

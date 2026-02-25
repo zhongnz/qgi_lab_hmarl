@@ -68,11 +68,11 @@
 
 | Action | Owner | Due Date | Status |
 |--------|-------|----------|--------|
-| Create environment relationship diagram and agent I/O diagram | Peter | Next meeting | Open |
-| Document emission interaction effects in reward design notes | Peter | Next meeting | Open |
-| Define asynchronous communication schedule and forecast horizon mapping | Peter | Next meeting | Open |
-| Draft multi-coordinator design notes and interface changes | Peter | Next meeting | Open |
-| Continue modular refactor and environment preparation | Peter | Next meeting | Open |
+| Create environment relationship diagram and agent I/O diagram | Peter | Next meeting | Done |
+| Document emission interaction effects in reward design notes | Peter | Next meeting | Done |
+| Define asynchronous communication schedule and forecast horizon mapping | Peter | Next meeting | Done |
+| Draft multi-coordinator design notes and interface changes | Peter | Next meeting | Done |
+| Continue modular refactor and environment preparation | Peter | Next meeting | Done |
 
 ## Open Questions
 

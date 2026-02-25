@@ -25,7 +25,8 @@ Current config keys:
 Code references:
 
 - `hmarl_mvp/config.py`
-- `hmarl_mvp/scheduling.py`
+- `hmarl_mvp/env.py`
+- `hmarl_mvp/message_bus.py`
 
 ## Cadence diagram
 
