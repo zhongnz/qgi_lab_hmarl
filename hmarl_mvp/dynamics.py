@@ -25,10 +25,19 @@ def step_vessels(
     distance_nm: np.ndarray,
     config: dict[str, Any],
     dt_hours: float = 1.0,
-) -> None:
-    """Advance all in-transit vessels by one tick."""
+) -> dict[int, dict[str, float | bool]]:
+    """Advance all in-transit vessels by one tick and return per-vessel step deltas."""
+    step_stats: dict[int, dict[str, float | bool]] = {}
     for vessel in vessels:
+        fuel_used = 0.0
+        co2 = 0.0
+        arrived = False
         if not vessel.at_sea:
+            step_stats[vessel.vessel_id] = {
+                "fuel_used": fuel_used,
+                "co2_emitted": co2,
+                "arrived": arrived,
+            }
             continue
         vessel.position_nm += vessel.speed * dt_hours
         fuel_used, co2 = compute_fuel_and_emissions(vessel.speed, config, dt_hours)
@@ -40,20 +49,43 @@ def step_vessels(
             vessel.position_nm = 0.0
             vessel.location = vessel.destination
             vessel.at_sea = False
+            arrived = True
+        step_stats[vessel.vessel_id] = {
+            "fuel_used": float(fuel_used),
+            "co2_emitted": float(co2),
+            "arrived": arrived,
+        }
+    return step_stats
 
 
 def step_ports(
     ports: list[PortState],
     service_rates: list[int],
     dt_hours: float = 1.0,
+    service_time_hours: float = 6.0,
 ) -> None:
-    """Serve queued vessels and accumulate waiting time."""
+    """Advance port service state, admit queued vessels, and accumulate waiting time."""
     for port, rate in zip(ports, service_rates):
-        served = min(port.queue, max(int(rate), 0))
-        port.queue = max(port.queue - served, 0)
-        port.occupied = min(port.docks, port.occupied + served)
-        port.vessels_served += served
+        # Normalize potentially stale manual test overrides of occupied/service_times.
+        if len(port.service_times) != int(port.occupied):
+            port.service_times = list(port.service_times[: max(int(port.occupied), 0)])
+            if len(port.service_times) < int(port.occupied):
+                missing = int(port.occupied) - len(port.service_times)
+                port.service_times.extend([float(service_time_hours)] * missing)
+
+        # Complete ongoing services and free berths.
+        remaining = [max(t - dt_hours, 0.0) for t in port.service_times]
+        port.service_times = [t for t in remaining if t > 0.0]
+        port.occupied = len(port.service_times)
+
         port.cumulative_wait_hours += port.queue * dt_hours
+        available_slots = max(port.docks - port.occupied, 0)
+        served = min(port.queue, max(int(rate), 0), available_slots)
+        port.queue = max(port.queue - served, 0)
+        port.vessels_served += served
+        if served > 0:
+            port.service_times.extend([float(service_time_hours)] * int(served))
+            port.occupied = len(port.service_times)
 
 
 def dispatch_vessel(
@@ -81,4 +113,3 @@ def observe_port_metrics(ports: list[PortState]) -> dict[str, float]:
         "dock_utilization": dock_util,
         "total_wait_hours": total_wait,
     }
-

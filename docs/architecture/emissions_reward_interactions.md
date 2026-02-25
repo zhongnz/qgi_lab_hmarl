@@ -13,9 +13,9 @@ This note clarifies how emissions couple agent rewards.
 
 Code references:
 
-- `hmarl_mvp/rewards.py::compute_vessel_reward`
+- `hmarl_mvp/rewards.py::compute_vessel_reward_step`
 - `hmarl_mvp/rewards.py::compute_port_reward`
-- `hmarl_mvp/rewards.py::compute_coordinator_reward`
+- `hmarl_mvp/rewards.py::compute_coordinator_reward_step`
 
 ## Interaction effect summary
 
@@ -37,4 +37,3 @@ Code references:
 2. Add coordination term that rewards vessel-port agreement while penalizing high-emission recovery actions.
 3. Separate local and global emission costs to avoid over-penalizing a single layer.
 4. Track per-agent emission attribution to support diagnostics and ablation.
-

@@ -108,6 +108,33 @@ class SmokeTests(unittest.TestCase):
         self.assertIn("pending_arrival_requests", df.columns)
         self.assertTrue((df["num_coordinators"] == 2).all())
 
+    def test_run_experiment_supports_non_default_num_ports(self) -> None:
+        cfg = get_default_config(num_ports=6, num_vessels=4, rollout_steps=3)
+        df = run_experiment(policy_type="forecast", steps=3, seed=42, config=cfg)
+        self.assertEqual(len(df), 3)
+        self.assertIn("avg_queue", df.columns)
+
+    def test_forecast_and_oracle_generate_accepted_requests(self) -> None:
+        cfg = get_default_config(
+            num_ports=3,
+            num_vessels=6,
+            docks_per_port=5,
+            rollout_steps=12,
+            message_latency_steps=2,
+        )
+        forecast_df = run_experiment(policy_type="forecast", steps=12, seed=42, config=cfg)
+        oracle_df = run_experiment(policy_type="oracle", steps=12, seed=42, config=cfg)
+
+        self.assertGreater(float(forecast_df["total_vessel_requests"].iloc[-1]), 0.0)
+        self.assertGreater(float(oracle_df["total_vessel_requests"].iloc[-1]), 0.0)
+        self.assertGreater(float(forecast_df["total_port_accepted"].iloc[-1]), 0.0)
+        self.assertGreater(float(oracle_df["total_port_accepted"].iloc[-1]), 0.0)
+
+        self.assertTrue((forecast_df["policy_agreement_rate"] >= 0.0).all())
+        self.assertTrue((forecast_df["policy_agreement_rate"] <= 1.0).all())
+        self.assertTrue((oracle_df["policy_agreement_rate"] >= 0.0).all())
+        self.assertTrue((oracle_df["policy_agreement_rate"] <= 1.0).all())
+
 
 if __name__ == "__main__":
     unittest.main()

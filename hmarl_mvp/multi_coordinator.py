@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from .policies import fleet_coordinator_policy
+from .policies import FleetCoordinatorPolicy
 from .state import VesselState
 
 
@@ -26,10 +26,10 @@ def assign_vessels_to_coordinators(
 
     groups: dict[int, list[int]] = {i: [] for i in range(num_coordinators)}
     for vessel in vessels:
-        if vessel.location >= 0:
-            coordinator_id = int(vessel.location % num_coordinators)
-        else:
+        if vessel.at_sea:
             coordinator_id = int(vessel.vessel_id % num_coordinators)
+        else:
+            coordinator_id = int(vessel.location % num_coordinators)
         groups[coordinator_id].append(vessel.vessel_id)
     return groups
 
@@ -48,6 +48,10 @@ def build_multi_coordinator_directives(
     assignments = assign_vessels_to_coordinators(vessels, num_coordinators)
     directives: list[dict[str, Any]] = []
     vessels_by_id = {v.vessel_id: v for v in vessels}
+    policy = FleetCoordinatorPolicy(
+        config={"num_ports": int(medium_forecast.shape[0])},
+        mode="forecast",
+    )
 
     for coordinator_id in range(num_coordinators):
         local_ids = assignments.get(coordinator_id, [])
@@ -55,9 +59,13 @@ def build_multi_coordinator_directives(
         if not local_vessels:
             # Fallback keeps output shape stable even when a partition is empty.
             local_vessels = vessels
-        directive = fleet_coordinator_policy(medium_forecast, local_vessels)
+        directive = policy.propose_action(
+            medium_forecast=medium_forecast,
+            vessels=local_vessels,
+            ports=[],
+            rng=None,
+        )
         directive["coordinator_id"] = coordinator_id
         directive["assigned_vessel_ids"] = local_ids
         directives.append(directive)
     return directives
-

@@ -1,7 +1,14 @@
 """HMARL maritime MVP package."""
 
 from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent
-from .config import DEFAULT_CONFIG, DISTANCE_NM, SEED, get_default_config
+from .config import (
+    DEFAULT_CONFIG,
+    DISTANCE_NM,
+    SEED,
+    HMARLConfig,
+    get_default_config,
+    validate_config,
+)
 from .env import MaritimeEnv, make_default_env
 from .experiment import (
     run_experiment,
@@ -26,8 +33,10 @@ __all__ = [
     "DEFAULT_CONFIG",
     "DISTANCE_NM",
     "SEED",
+    "HMARLConfig",
     "MaritimeEnv",
     "get_default_config",
+    "validate_config",
     "make_default_env",
     "run_experiment",
     "run_policy_sweep",

@@ -32,7 +32,7 @@ def plot_policy_comparison(
         ax.set_ylabel(ylabel)
         ax.legend(fontsize=8)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -62,7 +62,7 @@ def plot_horizon_sweep(
         ax.set_xlabel("Step")
         ax.legend()
 
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plt.tight_layout(rect=(0, 0, 1, 0.93))
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -92,7 +92,7 @@ def plot_noise_sweep(
         ax.set_xlabel("Step")
         ax.legend()
 
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plt.tight_layout(rect=(0, 0, 1, 0.93))
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -114,11 +114,10 @@ def plot_sharing_sweep(
     ax[1].set_title("Total Ops Cost ($)")
     ax[0].legend()
     ax[1].legend()
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plt.tight_layout(rect=(0, 0, 1, 0.93))
 
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
     else:
         plt.show()
-

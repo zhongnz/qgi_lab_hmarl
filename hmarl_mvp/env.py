@@ -7,15 +7,15 @@ from typing import Any
 import numpy as np
 
 from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent
-from .config import DEFAULT_CONFIG, DISTANCE_NM, SEED, get_default_config
+from .config import DEFAULT_CONFIG, SEED, get_default_config, resolve_distance_matrix
 from .dynamics import dispatch_vessel, observe_port_metrics, step_ports, step_vessels
 from .forecasts import MediumTermForecaster, ShortTermForecaster
 from .multi_coordinator import assign_vessels_to_coordinators
 from .policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
 from .rewards import (
-    compute_coordinator_reward,
+    compute_coordinator_reward_step,
     compute_port_reward,
-    compute_vessel_reward,
+    compute_vessel_reward_step,
 )
 from .scheduling import DecisionCadence
 from .state import PortState, VesselState, initialize_ports, initialize_vessels, make_rng
@@ -44,7 +44,7 @@ class MaritimeEnv:
         self.num_ports = self.cfg["num_ports"]
         self.num_vessels = self.cfg["num_vessels"]
         self.num_coordinators = max(1, int(self.cfg.get("num_coordinators", 1)))
-        self.distance_nm = DISTANCE_NM if distance_nm is None else distance_nm
+        self.distance_nm = resolve_distance_matrix(self.num_ports, distance_nm)
         self.cadence = DecisionCadence.from_config(self.cfg)
         self.t = 0
 
@@ -94,12 +94,14 @@ class MaritimeEnv:
             num_ports=self.num_ports,
             docks_per_port=self.cfg["docks_per_port"],
             rng=self.rng,
+            service_time_hours=self.cfg["service_time_hours"],
         )
         self.vessels = initialize_vessels(
             num_vessels=self.num_vessels,
             num_ports=self.num_ports,
             nominal_speed=self.cfg["nominal_speed"],
             rng=self.rng,
+            initial_fuel=self.cfg["initial_fuel"],
         )
         self.coordinators = [
             FleetCoordinatorAgent(config=self.cfg, coordinator_id=i)
@@ -120,6 +122,12 @@ class MaritimeEnv:
         due = self.cadence.due(self.t)
         delivered_responses = self._deliver_due_messages()
         assignments = self._build_assignments()
+        step_delay_by_vessel: dict[int, float] = {
+            vessel.vessel_id: 0.0 for vessel in self.vessels
+        }
+        step_requests_submitted = 0
+        step_requests_accepted = 0
+        step_requests_rejected = 0
 
         coordinator_actions = self._normalize_coordinator_actions(actions)
         if due["coordinator"]:
@@ -161,6 +169,7 @@ class MaritimeEnv:
                         (self.t + self.cadence.message_latency_steps, vessel_id, destination)
                     )
                     self._awaiting_slot_response.add(vessel_id)
+                    step_requests_submitted += 1
             else:
                 normalized = dict(vessel_agent.last_action)
 
@@ -175,14 +184,16 @@ class MaritimeEnv:
                     )
                 elif not response["accepted"] and not vessel.at_sea:
                     vessel.delay_hours += 1.0
+                    step_delay_by_vessel[vessel_id] += 1.0
                 self._awaiting_slot_response.discard(vessel_id)
             elif vessel_id in self._awaiting_slot_response and not vessel.at_sea:
                 vessel.delay_hours += 1.0
+                step_delay_by_vessel[vessel_id] += 1.0
             normalized_vessel_actions.append(normalized)
 
         pre_step_at_sea = {v.vessel_id: v.at_sea for v in self.vessels}
 
-        step_vessels(
+        vessel_step_stats = step_vessels(
             vessels=self.vessels,
             distance_nm=self.distance_nm,
             config=self.cfg,
@@ -212,6 +223,8 @@ class MaritimeEnv:
                 )
                 accepted = backlog[:accept_limit]
                 rejected = backlog[accept_limit:]
+                step_requests_accepted += len(accepted)
+                step_requests_rejected += len(rejected)
                 self._pending_port_requests[port_id] = []
                 response_step = self.t + self.cadence.message_latency_steps
                 for vessel_id in accepted:
@@ -228,9 +241,17 @@ class MaritimeEnv:
                 else [port_agent.last_action for port_agent in self.port_agents]
             )
         ]
-        step_ports(self.ports, service_rates, dt_hours=1.0)
+        step_ports(
+            self.ports,
+            service_rates,
+            dt_hours=1.0,
+            service_time_hours=self.cfg["service_time_hours"],
+        )
 
-        rewards = self._compute_rewards()
+        rewards = self._compute_rewards(
+            vessel_step_stats=vessel_step_stats,
+            step_delay_by_vessel=step_delay_by_vessel,
+        )
 
         self.t += 1
         done = self.t >= self.cfg["rollout_steps"]
@@ -245,6 +266,24 @@ class MaritimeEnv:
                 "arrival_requests": len(self._arrival_request_queue),
                 "slot_responses": len(self._slot_response_queue),
             },
+            "pending_arrival_requests": float(
+                sum(len(queue) for queue in self._pending_port_requests.values())
+            ),
+            "requests_submitted": float(step_requests_submitted),
+            "requests_accepted": float(step_requests_accepted),
+            "requests_rejected": float(step_requests_rejected),
+            "step_fuel_used": float(
+                sum(
+                    float(stats["fuel_used"])
+                    for stats in vessel_step_stats.values()
+                )
+            ),
+            "step_co2_emitted": float(
+                sum(
+                    float(stats["co2_emitted"])
+                    for stats in vessel_step_stats.values()
+                )
+            ),
         }
         return obs, rewards, done, info
 
@@ -254,6 +293,8 @@ class MaritimeEnv:
             self._refresh_forecasts()
         medium = self.medium_forecast
         short = self.short_forecast
+        if medium is None or short is None:
+            raise RuntimeError("forecasts must be initialized before sampling actions")
         if not self.coordinators:
             self.coordinators = [
                 FleetCoordinatorAgent(config=self.cfg, coordinator_id=i)
@@ -269,8 +310,7 @@ class MaritimeEnv:
             local_vessels = [vessels_by_id[i] for i in local_ids if i in vessels_by_id]
             if not local_vessels:
                 local_vessels = self.vessels
-            directive = self.coordinator_policy.act(
-                agent=coordinator,
+            directive = self.coordinator_policy.propose_action(
                 medium_forecast=medium,
                 vessels=local_vessels,
                 ports=self.ports,
@@ -289,8 +329,7 @@ class MaritimeEnv:
                 directive_by_vessel[vessel_id] = directive
 
         vessel_actions = [
-            self.vessel_policy.act(
-                vessel_agent,
+            self.vessel_policy.propose_action(
                 short,
                 directive_by_vessel.get(
                     vessel_agent.state.vessel_id,
@@ -304,7 +343,11 @@ class MaritimeEnv:
         ]
         incoming = sum(1 for a in vessel_actions if a["request_arrival_slot"])
         port_actions = [
-            self.port_policy.act(port_agent, incoming, short[i])
+            self.port_policy.propose_action(
+                port_agent.state,
+                incoming,
+                short[i],
+            )
             for i, port_agent in enumerate(self.port_agents)
         ]
         return {
@@ -324,6 +367,8 @@ class MaritimeEnv:
             self._refresh_forecasts()
         medium = self.medium_forecast
         short = self.short_forecast
+        if medium is None or short is None:
+            raise RuntimeError("forecasts must be initialized before observations")
 
         if not self.coordinators:
             self.coordinators = [
@@ -368,11 +413,37 @@ class MaritimeEnv:
             "ports": port_obs,
         }
 
-    def _compute_rewards(self) -> dict[str, Any]:
-        vessel_rewards = [compute_vessel_reward(v, self.cfg) for v in self.vessels]
+    def _compute_rewards(
+        self,
+        vessel_step_stats: dict[int, dict[str, float | bool]] | None = None,
+        step_delay_by_vessel: dict[int, float] | None = None,
+    ) -> dict[str, Any]:
+        vessel_step_stats = vessel_step_stats or {}
+        step_delay_by_vessel = step_delay_by_vessel or {}
+        vessel_rewards = [
+            compute_vessel_reward_step(
+                vessel=v,
+                config=self.cfg,
+                fuel_used=float(vessel_step_stats.get(v.vessel_id, {}).get("fuel_used", 0.0)),
+                co2_emitted=float(vessel_step_stats.get(v.vessel_id, {}).get("co2_emitted", 0.0)),
+                delay_hours=float(step_delay_by_vessel.get(v.vessel_id, 0.0)),
+            )
+            for v in self.vessels
+        ]
         port_rewards = [compute_port_reward(p, self.cfg) for p in self.ports]
+        step_fuel_used = float(
+            sum(float(stats.get("fuel_used", 0.0)) for stats in vessel_step_stats.values())
+        )
+        step_co2_emitted = float(
+            sum(float(stats.get("co2_emitted", 0.0)) for stats in vessel_step_stats.values())
+        )
         coordinator_rewards = [
-            compute_coordinator_reward(self.vessels, self.ports, self.cfg)
+            compute_coordinator_reward_step(
+                ports=self.ports,
+                config=self.cfg,
+                fuel_used=step_fuel_used,
+                co2_emitted=step_co2_emitted,
+            )
             for _ in self.coordinators
         ]
         return {
@@ -411,6 +482,57 @@ class MaritimeEnv:
         self._awaiting_slot_response = set()
         self._latest_directive_by_vessel = {}
         self._last_port_actions = [dict(port_agent.last_action) for port_agent in self.port_agents]
+
+    def get_assignments(self) -> dict[int, list[int]]:
+        """Return current vessel partitioning by coordinator id."""
+        return self._build_assignments()
+
+    def get_directive_for_vessel(
+        self,
+        vessel_id: int,
+        assignments: dict[int, list[int]] | None = None,
+        latest_directive_by_vessel: dict[int, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Return latest directive visible to a vessel, with fallback."""
+        assignments = assignments or self._build_assignments()
+        latest_map = (
+            self._latest_directive_by_vessel
+            if latest_directive_by_vessel is None
+            else latest_directive_by_vessel
+        )
+        return latest_map.get(
+            vessel_id,
+            self._fallback_directive_for_vessel(vessel_id, assignments),
+        )
+
+    def peek_step_context(self) -> dict[str, Any]:
+        """
+        Return the message-visible context at the current step without mutation.
+
+        This mirrors what receivers can observe after latency delivery and before
+        new actions are applied in ``step``.
+        """
+        assignments = self._build_assignments()
+        latest_directive_by_vessel = dict(self._latest_directive_by_vessel)
+        pending_port_requests = {
+            port_id: list(queue)
+            for port_id, queue in self._pending_port_requests.items()
+        }
+
+        for deliver_step, vessel_id, directive in self._directive_queue:
+            if deliver_step <= self.t:
+                latest_directive_by_vessel[vessel_id] = directive
+
+        for deliver_step, vessel_id, destination in self._arrival_request_queue:
+            if deliver_step <= self.t and 0 <= destination < self.num_ports:
+                pending_port_requests[destination].append(vessel_id)
+
+        return {
+            "t": self.t,
+            "assignments": assignments,
+            "latest_directive_by_vessel": latest_directive_by_vessel,
+            "pending_port_requests": pending_port_requests,
+        }
 
     def _build_assignments(self) -> dict[int, list[int]]:
         return assign_vessels_to_coordinators(self.vessels, self.num_coordinators)

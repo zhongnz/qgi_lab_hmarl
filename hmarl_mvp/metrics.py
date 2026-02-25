@@ -20,7 +20,7 @@ def forecast_rmse(predicted: np.ndarray, actual: np.ndarray) -> float:
 def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
     avg_speed = float(np.mean([v.speed for v in vessels])) if vessels else 0.0
     avg_fuel = float(np.mean([v.fuel for v in vessels])) if vessels else 0.0
-    total_fuel_used = float(sum(100.0 - v.fuel for v in vessels))
+    total_fuel_used = float(sum(max(v.initial_fuel - v.fuel, 0.0) for v in vessels))
     total_emissions = float(sum(v.emissions for v in vessels))
     avg_delay = float(np.mean([v.delay_hours for v in vessels])) if vessels else 0.0
     on_time_count = sum(1 for v in vessels if v.delay_hours < 2.0)
@@ -49,26 +49,14 @@ def compute_port_metrics(ports: list[PortState]) -> dict[str, float]:
         "avg_wait_per_vessel": avg_wait_per,
     }
 
-
-def compute_coordination_metrics(
-    vessel_actions: list[dict[str, Any]],
-    port_actions: list[dict[str, Any]],
-) -> dict[str, float]:
-    total_requests = sum(1 for a in vessel_actions if a.get("request_arrival_slot", False))
-    total_accepted = sum(int(a.get("accept_requests", 0)) for a in port_actions)
-    agreement_rate = total_accepted / total_requests if total_requests > 0 else 0.0
-    return {
-        "total_vessel_requests": float(total_requests),
-        "total_port_accepted": float(total_accepted),
-        "policy_agreement_rate": agreement_rate,
-    }
-
-
 def compute_economic_metrics(
     vessels: list[VesselState],
     config: dict[str, Any],
 ) -> dict[str, float]:
-    fuel_cost_total = sum((100.0 - v.fuel) * config["fuel_price_per_ton"] for v in vessels)
+    fuel_cost_total = sum(
+        max(v.initial_fuel - v.fuel, 0.0) * config["fuel_price_per_ton"]
+        for v in vessels
+    )
     delay_cost_total = sum(v.delay_hours * config["delay_penalty_per_hour"] for v in vessels)
     carbon_cost_total = sum(v.emissions * config["carbon_price_per_ton"] for v in vessels)
     total_ops_cost = fuel_cost_total + delay_cost_total + carbon_cost_total
@@ -86,4 +74,3 @@ def compute_economic_metrics(
         "price_per_vessel_usd": float(price_per_vessel),
         "cost_reliability": float(reliability),
     }
-

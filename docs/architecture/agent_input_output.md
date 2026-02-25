@@ -33,12 +33,13 @@ flowchart TD
 
 ## Current code mapping
 
-1. Coordinator policy:
-   `hmarl_mvp/policies.py::fleet_coordinator_policy`
-2. Vessel policy:
-   `hmarl_mvp/policies.py::vessel_policy`
-3. Port policy:
-   `hmarl_mvp/policies.py::port_policy`
+1. Coordinator policy class and action proposal:
+   `hmarl_mvp/policies.py::FleetCoordinatorPolicy.propose_action`
+2. Vessel policy class and action proposal:
+   `hmarl_mvp/policies.py::VesselPolicy.propose_action`
+3. Port policy class and action proposal:
+   `hmarl_mvp/policies.py::PortPolicy.propose_action`
 4. Observation builders:
    `hmarl_mvp/env.py::_get_observations`
-
+5. Latency-aware visible context before each step:
+   `hmarl_mvp/env.py::MaritimeEnv.peek_step_context`

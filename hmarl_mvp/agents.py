@@ -219,9 +219,9 @@ class FleetCoordinatorAgent:
             ),
             "emission_budget": float(action.get("emission_budget", self.state.emission_budget)),
         }
-        self.state.last_dest_port = normalized["dest_port"]
-        self.state.departure_window_hours = normalized["departure_window_hours"]
-        self.state.emission_budget = normalized["emission_budget"]
+        self.state.last_dest_port = int(normalized["dest_port"])
+        self.state.departure_window_hours = int(normalized["departure_window_hours"])
+        self.state.emission_budget = float(normalized["emission_budget"])
         self.last_action = normalized
         return normalized
 
@@ -236,4 +236,3 @@ class FleetCoordinatorAgent:
             "emission_budget": float(self.state.emission_budget),
             "last_dest_port": float(self.state.last_dest_port),
         }
-

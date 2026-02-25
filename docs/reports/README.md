@@ -14,3 +14,6 @@ Use this folder for:
 Example:
 - `2026-03-01_baseline-ablation-summary.md`
 
+## Reference
+
+- `metrics_dictionary.md`: definitions of baseline CSV columns and reward/metric semantics.

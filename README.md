@@ -36,7 +36,16 @@ The codebase now follows a module-first layout. The notebook remains for explora
 ├── scripts/
 │   └── run_baselines.py
 ├── tests/
-│   └── test_smoke.py
+│   ├── test_smoke.py
+│   ├── test_arch_scaffolding.py
+│   ├── test_agent_policy_forecaster.py
+│   ├── test_config_schema.py
+│   └── test_model_correctness.py
+├── .github/workflows/ci.yml
+├── Makefile
+├── pyproject.toml
+├── requirements-dev.txt
+├── CONTRIBUTING.md
 ├── docs/
 │   ├── README.md
 │   ├── meetings/
@@ -61,6 +70,7 @@ Start with:
 - `docs/README.md`
 - `docs/templates/meeting_minutes_template.md`
 - `docs/architecture/meeting-03_task-plan.md`
+- `docs/reports/metrics_dictionary.md`
 
 ## Why This Refactor
 
@@ -91,9 +101,32 @@ cd qgi_lab_hmarl
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-### 3) Use notebook for analysis
+Or run the repo-standard command:
+
+```bash
+cd qgi_lab_hmarl
+make test
+```
+
+### 3) Run quality checks (lint + type + tests)
+
+```bash
+cd qgi_lab_hmarl
+make install-dev
+make check
+```
+
+### 4) Use notebook for analysis
 
 Use `colab_mvp_hmarl_maritime.ipynb` for presentation and visual inspection. Prefer module imports for any new logic.
+
+## Configuration
+
+Project config is now validated through a typed schema (`HMARLConfig`) in
+`hmarl_mvp/config.py`. Use:
+
+- `get_default_config(...)` for validated overrides
+- `validate_config(...)` for validating arbitrary mappings
 
 ## Research Questions
 
