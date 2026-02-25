@@ -1,6 +1,14 @@
 """HMARL maritime MVP package."""
 
 from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent, assign_vessels_to_coordinators
+from .analysis import (
+    compare_to_baselines,
+    compute_ablation_deltas,
+    compute_training_stats,
+    format_comparison_table,
+    rank_sweep_results,
+    summarize_experiment,
+)
 from .buffer import MultiAgentRolloutBuffer, RolloutBuffer
 from .checkpointing import EarlyStopping, TrainingCheckpoint
 from .config import (
@@ -13,6 +21,11 @@ from .config import (
     resolve_distance_matrix,
     should_update,
     validate_config,
+)
+from .curriculum import (
+    CurriculumScheduler,
+    CurriculumStage,
+    make_curriculum_configs,
 )
 from .dynamics import compute_fuel_and_emissions, dispatch_vessel, step_ports, step_vessels
 from .env import MaritimeEnv
@@ -44,6 +57,7 @@ from .learned_forecaster import (
 from .mappo import (
     MAPPOConfig,
     MAPPOTrainer,
+    ObsRunningMeanStd,
     PPOUpdateResult,
     RunningMeanStd,
     global_state_dim_from_config,
@@ -85,6 +99,8 @@ __all__ = [
     "ActorCritic",
     "ContinuousActor",
     "Critic",
+    "CurriculumScheduler",
+    "CurriculumStage",
     "DISTANCE_NM",
     "DecisionCadence",
     "DiscreteActor",
@@ -100,6 +116,7 @@ __all__ = [
     "MediumTermForecaster",
     "MessageBus",
     "MultiAgentRolloutBuffer",
+    "ObsRunningMeanStd",
     "OracleForecaster",
     "PPOUpdateResult",
     "PortAgent",
@@ -118,22 +135,27 @@ __all__ = [
     "build_actor_critics",
     "build_forecast_dataset",
     "collect_queue_traces",
+    "compare_to_baselines",
+    "compute_ablation_deltas",
     "compute_coordinator_reward_step",
     "compute_economic_metrics",
     "compute_economic_step_deltas",
     "compute_port_metrics",
     "compute_port_reward",
+    "compute_training_stats",
     "compute_vessel_metrics",
     "compute_fuel_and_emissions",
     "compute_vessel_reward_step",
     "dispatch_vessel",
     "forecast_mae",
     "forecast_rmse",
+    "format_comparison_table",
     "generate_distance_matrix",
     "get_default_config",
     "global_state_dim_from_config",
     "initialize_ports",
     "initialize_vessels",
+    "make_curriculum_configs",
     "make_rng",
     "obs_dim_from_env",
     "plot_horizon_sweep",
@@ -142,6 +164,7 @@ __all__ = [
     "plot_policy_comparison",
     "plot_sharing_sweep",
     "plot_training_curves",
+    "rank_sweep_results",
     "resolve_distance_matrix",
     "run_experiment",
     "run_horizon_sweep",
@@ -158,6 +181,7 @@ __all__ = [
     "should_update",
     "step_ports",
     "step_vessels",
+    "summarize_experiment",
     "summarize_multi_seed",
     "summarize_policy_results",
     "train_forecaster",

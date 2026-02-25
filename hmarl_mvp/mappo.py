@@ -99,6 +99,40 @@ class RunningMeanStd:
         return float(max(np.sqrt(max(self.var, 0.0)), self._epsilon))
 
 
+class ObsRunningMeanStd:
+    """Per-dimension Welford running mean/variance for observation normalisation.
+
+    Maintains a running mean and variance vector so each feature of an
+    observation is independently normalised to zero-mean, unit-variance.
+    """
+
+    def __init__(self, dim: int, epsilon: float = 1e-8) -> None:
+        self.dim = dim
+        self.mean = np.zeros(dim, dtype=np.float64)
+        self.var = np.ones(dim, dtype=np.float64)
+        self.count: float = epsilon
+        self._epsilon = epsilon
+
+    def update(self, x: np.ndarray) -> None:
+        """Incorporate a single observation vector."""
+        x = np.asarray(x, dtype=np.float64).ravel()[:self.dim]
+        self.count += 1.0
+        delta = x - self.mean
+        self.mean += delta / self.count
+        delta2 = x - self.mean
+        self.var += (delta * delta2 - self.var) / self.count
+
+    def update_batch(self, xs: np.ndarray) -> None:
+        """Incorporate a batch of observation vectors (N × dim)."""
+        for x in xs:
+            self.update(x)
+
+    def normalize(self, x: np.ndarray) -> np.ndarray:
+        """Return ``(x - mean) / std`` element-wise."""
+        std = np.sqrt(np.maximum(self.var, 0.0)).clip(min=self._epsilon)
+        return (np.asarray(x, dtype=np.float64) - self.mean) / std
+
+
 # ---------------------------------------------------------------------------
 # PPO update result
 # ---------------------------------------------------------------------------
@@ -150,10 +184,26 @@ def _nn_to_coordinator_action(
     env: MaritimeEnv,
     assignments: dict[int, list[int]],
 ) -> dict[str, Any]:
-    """Convert a discrete NN output to a coordinator action dict."""
+    """Convert a discrete NN output to a coordinator action dict.
+
+    The selected port is the *primary* destination.  Assigned vessels are
+    distributed across ports in order of proximity to the primary port so
+    each vessel receives a unique (or near-unique) destination rather than
+    all being sent to the same place — matching the per-vessel routing that
+    heuristic policies already perform.
+    """
     dest_port = int(raw.detach().cpu().item())
     local_ids = assignments.get(coordinator_idx, [])
-    per_vessel_dest = {vid: dest_port for vid in local_ids}
+    num_ports = env.num_ports
+
+    # Build port ordering: primary first, then by ascending distance
+    distances = env.distance_nm[dest_port]
+    port_order = sorted(range(num_ports), key=lambda p: (distances[p], p))
+
+    per_vessel_dest: dict[int, int] = {}
+    for i, vid in enumerate(local_ids):
+        per_vessel_dest[vid] = port_order[i % len(port_order)] if port_order else dest_port
+
     total_emissions = sum(v.emissions for v in env.vessels)
     return {
         "dest_port": dest_port,
@@ -193,6 +243,7 @@ class MAPPOConfig:
     device: str = "cpu"
     hidden_dims: list[int] = field(default_factory=lambda: [64, 64])
     normalize_rewards: bool = True
+    normalize_observations: bool = True
 
 
 class MAPPOTrainer:
@@ -253,6 +304,13 @@ class MAPPOTrainer:
             "coordinator": RunningMeanStd(),
         }
 
+        # Observation normalisers — per-dimension running stats
+        self._obs_normalizers: dict[str, ObsRunningMeanStd] = {
+            "vessel": ObsRunningMeanStd(self.obs_dims["vessel"]),
+            "port": ObsRunningMeanStd(self.obs_dims["port"]),
+            "coordinator": ObsRunningMeanStd(self.obs_dims["coordinator"]),
+        }
+
         # Iteration counter for LR scheduling
         self._iteration: int = 0
 
@@ -281,6 +339,32 @@ class MAPPOTrainer:
         """Return the current learning rate from the first optimiser."""
         opt = next(iter(self.optimizers.values()))
         return float(opt.param_groups[0]["lr"])
+
+    # ------------------------------------------------------------------
+    # Observation normalization
+    # ------------------------------------------------------------------
+
+    def _normalize_obs(self, obs: np.ndarray, agent_type: str) -> np.ndarray:
+        """Normalize an observation vector using running statistics.
+
+        Updates the running statistics and returns the normalised vector.
+        If observation normalization is disabled, returns the input unchanged.
+        """
+        norm = self._obs_normalizers[agent_type]
+        norm.update(obs)
+        if not self.mappo_cfg.normalize_observations:
+            return obs
+        return norm.normalize(obs).astype(np.float32)
+
+    def _eval_normalize_obs(self, obs: np.ndarray, agent_type: str) -> np.ndarray:
+        """Normalize an observation using existing stats (no update).
+
+        Used during evaluation to apply the same normalization learned
+        during training without contaminating the running statistics.
+        """
+        if not self.mappo_cfg.normalize_observations:
+            return obs
+        return self._obs_normalizers[agent_type].normalize(obs).astype(np.float32)
 
     # ------------------------------------------------------------------
     # Buffer setup
@@ -353,8 +437,9 @@ class MAPPOTrainer:
             vessel_actions_list: list[dict[str, Any]] = []
             with torch.no_grad():
                 for i, v_obs in enumerate(obs["vessels"]):
+                    v_obs_n = self._normalize_obs(v_obs, "vessel")
                     v_obs_t = torch.as_tensor(
-                        v_obs, dtype=torch.float32, device=self.device
+                        v_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     action_t, log_prob_t, value_t = vessel_ac.get_action_and_value(
                         v_obs_t, gs_tensor
@@ -362,7 +447,7 @@ class MAPPOTrainer:
                     action_dict = _nn_to_vessel_action(action_t.squeeze(0), self.cfg)
                     vessel_actions_list.append(action_dict)
                     self.vessel_buf[i].add(
-                        obs=v_obs,
+                        obs=v_obs_n,
                         action=action_t.squeeze(0).cpu().numpy(),
                         reward=0.0,  # filled after step
                         done=False,
@@ -375,8 +460,9 @@ class MAPPOTrainer:
             port_actions_list: list[dict[str, Any]] = []
             with torch.no_grad():
                 for i, p_obs in enumerate(obs["ports"]):
+                    p_obs_n = self._normalize_obs(p_obs, "port")
                     p_obs_t = torch.as_tensor(
-                        p_obs, dtype=torch.float32, device=self.device
+                        p_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     action_t, log_prob_t, value_t = port_ac.get_action_and_value(
                         p_obs_t, gs_tensor
@@ -384,7 +470,7 @@ class MAPPOTrainer:
                     action_dict = _nn_to_port_action(action_t.squeeze(0), i, self.env)
                     port_actions_list.append(action_dict)
                     self.port_buf[i].add(
-                        obs=p_obs,
+                        obs=p_obs_n,
                         action=np.array([action_t.squeeze(0).cpu().item()]),
                         reward=0.0,
                         done=False,
@@ -398,8 +484,9 @@ class MAPPOTrainer:
             coordinator_actions_list: list[dict[str, Any]] = []
             with torch.no_grad():
                 for i, c_obs in enumerate(obs["coordinators"]):
+                    c_obs_n = self._normalize_obs(c_obs, "coordinator")
                     c_obs_t = torch.as_tensor(
-                        c_obs, dtype=torch.float32, device=self.device
+                        c_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     action_t, log_prob_t, value_t = coord_ac.get_action_and_value(
                         c_obs_t, gs_tensor
@@ -409,7 +496,7 @@ class MAPPOTrainer:
                     )
                     coordinator_actions_list.append(action_dict)
                     self.coordinator_buf[i].add(
-                        obs=c_obs,
+                        obs=c_obs_n,
                         action=np.array([action_t.squeeze(0).cpu().item()]),
                         reward=0.0,
                         done=False,
@@ -682,8 +769,9 @@ class MAPPOTrainer:
                 # Vessels
                 vessel_actions: list[dict[str, Any]] = []
                 for v_obs in obs["vessels"]:
+                    v_obs_n = self._eval_normalize_obs(v_obs, "vessel")
                     v_t = torch.as_tensor(
-                        v_obs, dtype=torch.float32, device=self.device
+                        v_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     a, _, _ = vessel_ac.get_action_and_value(
                         v_t, gs_tensor, deterministic=deterministic
@@ -693,8 +781,9 @@ class MAPPOTrainer:
                 # Ports
                 port_actions: list[dict[str, Any]] = []
                 for i, p_obs in enumerate(obs["ports"]):
+                    p_obs_n = self._eval_normalize_obs(p_obs, "port")
                     p_t = torch.as_tensor(
-                        p_obs, dtype=torch.float32, device=self.device
+                        p_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     a, _, _ = port_ac.get_action_and_value(
                         p_t, gs_tensor, deterministic=deterministic
@@ -705,8 +794,9 @@ class MAPPOTrainer:
                 assignments = self.env._build_assignments()
                 coord_actions: list[dict[str, Any]] = []
                 for i, c_obs in enumerate(obs["coordinators"]):
+                    c_obs_n = self._eval_normalize_obs(c_obs, "coordinator")
                     c_t = torch.as_tensor(
-                        c_obs, dtype=torch.float32, device=self.device
+                        c_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     a, _, _ = coord_ac.get_action_and_value(
                         c_t, gs_tensor, deterministic=deterministic
@@ -788,6 +878,9 @@ class MAPPOTrainer:
         for name, rms in self._reward_normalizers.items():
             diag[f"{name}_reward_mean"] = rms.mean
             diag[f"{name}_reward_std"] = rms.std
+        for name, orms in self._obs_normalizers.items():
+            diag[f"{name}_obs_mean_norm"] = float(np.linalg.norm(orms.mean))
+            diag[f"{name}_obs_std_mean"] = float(np.sqrt(np.maximum(orms.var, 0.0)).mean())
         diag["iteration"] = float(self._iteration)
         diag["lr"] = self.current_lr
         return diag
