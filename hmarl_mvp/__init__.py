@@ -54,6 +54,7 @@ from .learned_forecaster import (
     collect_queue_traces,
     train_forecaster,
 )
+from .logger import TrainingLogger
 from .mappo import (
     MAPPOConfig,
     MAPPOTrainer,
@@ -76,6 +77,7 @@ from .networks import (
     ContinuousActor,
     Critic,
     DiscreteActor,
+    apply_orthogonal_init,
     build_actor_critics,
     obs_dim_from_env,
 )
@@ -128,9 +130,11 @@ __all__ = [
     "ShortTermForecaster",
     "TrainResult",
     "TrainingCheckpoint",
+    "TrainingLogger",
     "VesselAgent",
     "VesselPolicy",
     "VesselState",
+    "apply_orthogonal_init",
     "assign_vessels_to_coordinators",
     "build_actor_critics",
     "build_forecast_dataset",

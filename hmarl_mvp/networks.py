@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
 from torch import nn
+
+# ---------------------------------------------------------------------------
+# Orthogonal initialisation (PPO best-practice)
+# ---------------------------------------------------------------------------
+
+
+def _ortho_init(module: nn.Module, gain: float = math.sqrt(2)) -> None:
+    """Apply orthogonal initialisation to a single ``nn.Linear`` layer."""
+    if isinstance(module, nn.Linear):
+        nn.init.orthogonal_(module.weight, gain=gain)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+
+
+def apply_orthogonal_init(
+    model: nn.Module,
+    gain: float = math.sqrt(2),
+    output_gain: float = 0.01,
+) -> None:
+    """Apply orthogonal initialisation to all layers in *model*.
+
+    Hidden layers use ``gain`` (default √2 for ReLU/Tanh); the final
+    output layer uses ``output_gain`` (small value for policy heads,
+    1.0 for value heads).  The last ``nn.Linear`` found is treated as
+    the output layer.
+    """
+    linears = [m for m in model.modules() if isinstance(m, nn.Linear)]
+    for layer in linears[:-1]:
+        _ortho_init(layer, gain=gain)
+    if linears:
+        _ortho_init(linears[-1], gain=output_gain)
 
 
 def _make_mlp(
@@ -167,6 +199,7 @@ class ActorCritic(nn.Module):
         act_dim: int,
         discrete: bool = False,
         hidden_dims: list[int] | None = None,
+        ortho_init: bool = True,
     ) -> None:
         super().__init__()
         hidden_dims = hidden_dims or [64, 64]
@@ -177,6 +210,12 @@ class ActorCritic(nn.Module):
         else:
             self.actor = ContinuousActor(obs_dim, act_dim, hidden_dims)
         self.critic = Critic(global_state_dim, hidden_dims)
+
+        if ortho_init:
+            # Actor: small output gain for stable initial policy
+            apply_orthogonal_init(self.actor, output_gain=0.01)
+            # Critic: gain=1.0 output for unbiased initial value estimates
+            apply_orthogonal_init(self.critic, output_gain=1.0)
 
     def get_action_and_value(
         self,

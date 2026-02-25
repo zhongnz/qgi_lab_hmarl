@@ -736,6 +736,132 @@ class MAPPOTrainer:
         )
 
     # ------------------------------------------------------------------
+    # High-level training loop with optional curriculum
+    # ------------------------------------------------------------------
+
+    def train(
+        self,
+        num_iterations: int,
+        curriculum: Any | None = None,
+        eval_interval: int = 0,
+        log_fn: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run a complete training loop with optional curriculum scheduling.
+
+        Parameters
+        ----------
+        num_iterations:
+            Number of collect-rollout + update iterations.
+        curriculum:
+            Optional ``CurriculumScheduler`` — when provided the
+            environment is rebuilt whenever the curriculum config changes.
+        eval_interval:
+            If > 0, run ``evaluate()`` every *eval_interval* iterations
+            and include the result in the returned log.
+        log_fn:
+            Optional callback ``(iteration, log_entry) -> None`` called
+            after each iteration for external logging.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Per-iteration log entries with rewards, update metrics, LR,
+            diagnostics, and optional eval metrics.
+        """
+        self.mappo_cfg.total_iterations = max(
+            self.mappo_cfg.total_iterations, num_iterations
+        )
+        history: list[dict[str, Any]] = []
+        prev_cfg_key: str | None = None
+
+        for it in range(num_iterations):
+            # --- Curriculum: rebuild env if config changes ---
+            if curriculum is not None:
+                cur_cfg = curriculum.get_config(it, num_iterations)
+                cfg_key = str(sorted(cur_cfg.items()))
+                if cfg_key != prev_cfg_key:
+                    self._rebuild_env(cur_cfg)
+                    prev_cfg_key = cfg_key
+
+            # --- Collect + Update ---
+            rollout_info = self.collect_rollout()
+            update_info = self.update()
+
+            entry: dict[str, Any] = {
+                "iteration": it,
+                "mean_reward": rollout_info["mean_reward"],
+                "total_reward": rollout_info["total_reward"],
+                "lr": self.current_lr,
+            }
+            for agent_type, res in update_info.items():
+                entry[f"{agent_type}_policy_loss"] = res.policy_loss
+                entry[f"{agent_type}_value_loss"] = res.value_loss
+                entry[f"{agent_type}_entropy"] = res.entropy
+                entry[f"{agent_type}_clip_frac"] = res.clip_fraction
+                entry[f"{agent_type}_grad_norm"] = res.grad_norm
+
+            # --- Optional eval ---
+            if eval_interval > 0 and (it + 1) % eval_interval == 0:
+                eval_metrics = self.evaluate()
+                entry["eval"] = eval_metrics
+
+            history.append(entry)
+            if log_fn is not None:
+                log_fn(it, entry)
+
+        return history
+
+    def _rebuild_env(self, new_config: dict[str, Any]) -> None:
+        """Rebuild the environment when curriculum config changes.
+
+        Preserves the actor-critic networks and normaliser state but
+        rebuilds the env + buffers for the new topology.  If observation
+        dimensions change, networks are rebuilt from scratch.
+        """
+        from .config import get_default_config
+
+        new_config = dict(new_config)
+        new_config.setdefault("rollout_steps", self.mappo_cfg.rollout_length + 5)
+        new_cfg = get_default_config(**new_config)
+        new_obs_dims = obs_dim_from_env(new_cfg)
+        new_global_dim = global_state_dim_from_config(new_cfg)
+
+        dims_changed = (
+            new_obs_dims != self.obs_dims
+            or new_global_dim != self.global_dim
+        )
+
+        self.env = MaritimeEnv(config=new_cfg, seed=self.env.seed)
+        self.cfg = self.env.cfg
+        self.obs_dims = new_obs_dims
+        self.global_dim = new_global_dim
+
+        if dims_changed:
+            # Must rebuild networks — old weights are incompatible
+            self.actor_critics = build_actor_critics(
+                config=self.cfg,
+                vessel_obs_dim=self.obs_dims["vessel"],
+                port_obs_dim=self.obs_dims["port"],
+                coordinator_obs_dim=self.obs_dims["coordinator"],
+                global_state_dim=self.global_dim,
+                hidden_dims=self.mappo_cfg.hidden_dims,
+            )
+            for ac in self.actor_critics.values():
+                ac.to(self.device)
+            self.optimizers = {
+                name: torch.optim.Adam(ac.parameters(), lr=self.mappo_cfg.lr)
+                for name, ac in self.actor_critics.items()
+            }
+            # Reset normalizers for new dimensions
+            self._obs_normalizers = {
+                "vessel": ObsRunningMeanStd(self.obs_dims["vessel"]),
+                "port": ObsRunningMeanStd(self.obs_dims["port"]),
+                "coordinator": ObsRunningMeanStd(self.obs_dims["coordinator"]),
+            }
+
+        self._build_buffers()
+
+    # ------------------------------------------------------------------
     # Evaluation
     # ------------------------------------------------------------------
 
@@ -844,12 +970,27 @@ class MAPPOTrainer:
         self.coordinator_buf.reset()
 
     def save_models(self, path_prefix: str) -> None:
-        """Save actor-critic state dicts."""
+        """Save actor-critic state dicts and normaliser state."""
         for name, ac in self.actor_critics.items():
             torch.save(ac.state_dict(), f"{path_prefix}_{name}.pt")
+        # Persist normaliser state for reproducible evaluation
+        import json
+        norm_state: dict[str, Any] = {}
+        for name, rms in self._reward_normalizers.items():
+            norm_state[f"reward_{name}"] = {
+                "mean": rms.mean, "var": rms.var, "count": rms.count,
+            }
+        for name, orms in self._obs_normalizers.items():
+            norm_state[f"obs_{name}"] = {
+                "mean": orms.mean.tolist(),
+                "var": orms.var.tolist(),
+                "count": orms.count,
+            }
+        with open(f"{path_prefix}_normalizers.json", "w") as f:
+            json.dump(norm_state, f)
 
     def load_models(self, path_prefix: str) -> None:
-        """Load actor-critic state dicts."""
+        """Load actor-critic state dicts and normaliser state."""
         for name, ac in self.actor_critics.items():
             state_dict = torch.load(
                 f"{path_prefix}_{name}.pt",
@@ -857,6 +998,25 @@ class MAPPOTrainer:
                 weights_only=True,
             )
             ac.load_state_dict(state_dict)
+        # Restore normaliser state if available
+        import json
+        import os
+        norm_path = f"{path_prefix}_normalizers.json"
+        if os.path.exists(norm_path):
+            with open(norm_path) as f:
+                norm_state = json.load(f)
+            for name, rms in self._reward_normalizers.items():
+                key = f"reward_{name}"
+                if key in norm_state:
+                    rms.mean = float(norm_state[key]["mean"])
+                    rms.var = float(norm_state[key]["var"])
+                    rms.count = float(norm_state[key]["count"])
+            for name, orms in self._obs_normalizers.items():
+                key = f"obs_{name}"
+                if key in norm_state:
+                    orms.mean = np.array(norm_state[key]["mean"], dtype=np.float64)
+                    orms.var = np.array(norm_state[key]["var"], dtype=np.float64)
+                    orms.count = float(norm_state[key]["count"])
 
     @property
     def reward_history(self) -> list[float]:
