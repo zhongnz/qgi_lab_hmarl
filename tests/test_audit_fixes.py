@@ -1,6 +1,6 @@
 """Tests for audit-identified fixes: evaluate division, seed variation,
-metric key consistency, dt_hours config, logger serialization,
-per-agent reward accumulation, dispatch current_step, compare_to_baselines."""
+dt_hours config, logger serialization, per-agent reward accumulation,
+dispatch current_step."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 
-from hmarl_mvp.analysis import compare_to_baselines
 from hmarl_mvp.config import HMARLConfig, get_default_config
 from hmarl_mvp.dynamics import dispatch_vessel
 from hmarl_mvp.state import VesselState
@@ -39,42 +38,6 @@ class TestEvaluateDivision(unittest.TestCase):
     def test_zero_steps_safe(self) -> None:
         denom = max(0, 1)
         self.assertEqual(denom, 1)
-
-
-# -----------------------------------------------------------------------
-# Issue 1.1: compare_to_baselines metric key alignment
-# -----------------------------------------------------------------------
-
-
-class TestCompareToBaselinesKeys(unittest.TestCase):
-    """Verify compare_to_baselines works with run_experiment() DataFrame keys."""
-
-    def test_default_keys_match_experiment_output(self) -> None:
-        """MAPPO evaluate() keys should be aliased to match defaults."""
-        mappo_metrics = {
-            "mean_vessel_reward": -5.0,
-            "mean_port_reward": -3.0,
-            "mean_coordinator_reward": -2.0,
-            "total_reward": -10.0,
-        }
-        baselines = {
-            "heuristic": pd.DataFrame([{
-                "avg_vessel_reward": -6.0,
-                "avg_port_reward": -4.0,
-                "coordinator_reward": -3.0,
-            }]),
-        }
-        result = compare_to_baselines(mappo_metrics, baselines)
-        self.assertIn("policy", result.columns)
-        # MAPPO row should have real values (not NaN)
-        mappo_row = result[result["policy"] == "mappo"].iloc[0]
-        self.assertAlmostEqual(mappo_row["avg_vessel_reward"], -5.0)
-
-    def test_custom_keys_still_work(self) -> None:
-        mappo_metrics = {"total_reward": -10.0}
-        baselines = {"baseline": pd.DataFrame([{"total_reward": -15.0}])}
-        result = compare_to_baselines(mappo_metrics, baselines, metric_keys=["total_reward"])
-        self.assertEqual(len(result), 2)
 
 
 # -----------------------------------------------------------------------
@@ -203,13 +166,3 @@ class TestMetricKeyDefaults(unittest.TestCase):
 
             out = os.path.join(tmpdir, "test.png")
             plot_ablation_bar(df, out_path=out)
-
-    def test_sweep_report_default_sort(self) -> None:
-        import inspect
-
-        from hmarl_mvp.report import generate_sweep_report
-
-        sig = inspect.signature(generate_sweep_report)
-        default = sig.parameters["sort_by"].default
-        self.assertEqual(default, "total_reward")
-

@@ -8,17 +8,8 @@ import unittest
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import torch
 
-from hmarl_mvp.analysis import (
-    compare_to_baselines,
-    compute_ablation_deltas,
-    compute_training_stats,
-    format_comparison_table,
-    rank_sweep_results,
-    summarize_experiment,
-)
 from hmarl_mvp.curriculum import (
     CurriculumScheduler,
     CurriculumStage,
@@ -366,138 +357,6 @@ class TestMakeCurriculumConfigs(unittest.TestCase):
         # First should be easy, last should be target
         self.assertLessEqual(result[0][1]["num_vessels"], 8)
         self.assertEqual(result[-1][1]["num_vessels"], 8)
-
-
-# ===================================================================
-# Analysis utilities
-# ===================================================================
-
-
-class TestCompareToBaselines(unittest.TestCase):
-
-    def test_basic_comparison(self) -> None:
-        mappo = {"total_reward": -10.0, "mean_vessel_reward": -5.0}
-        baselines = {
-            "forecast": pd.DataFrame({"total_reward": [-12.0, -11.0]}),
-            "reactive": pd.DataFrame({"total_reward": [-15.0, -14.0]}),
-        }
-        df = compare_to_baselines(mappo, baselines)
-        self.assertEqual(len(df), 3)
-        self.assertIn("rank", df.columns)
-        # MAPPO should rank first (highest total_reward)
-        mappo_row = df[df["policy"] == "mappo"]
-        self.assertEqual(mappo_row["rank"].values[0], 1)
-
-    def test_empty_baselines(self) -> None:
-        df = compare_to_baselines({"total_reward": -5.0}, {})
-        self.assertEqual(len(df), 1)
-
-
-class TestRankSweepResults(unittest.TestCase):
-
-    def test_ranking_order(self) -> None:
-        results = [
-            {"config": {"lr": 1e-3}, "mean_reward": -10.0},
-            {"config": {"lr": 3e-4}, "mean_reward": -5.0},
-            {"config": {"lr": 1e-4}, "mean_reward": -8.0},
-        ]
-        df = rank_sweep_results(results, sort_by="mean_reward", ascending=False)
-        self.assertEqual(df.iloc[0]["mean_reward"], -5.0)
-        self.assertEqual(df.iloc[0]["rank"], 1)
-
-    def test_empty_input(self) -> None:
-        df = rank_sweep_results([])
-        self.assertTrue(df.empty)
-
-    def test_config_flattening(self) -> None:
-        results = [{"config": {"lr": 1e-3, "epochs": 4}, "loss": 0.5}]
-        df = rank_sweep_results(results)
-        self.assertIn("cfg_lr", df.columns)
-        self.assertIn("cfg_epochs", df.columns)
-
-
-class TestComputeAblationDeltas(unittest.TestCase):
-
-    def test_basic_deltas(self) -> None:
-        results = {
-            "baseline": {"reward": -5.0, "loss": 0.5},
-            "no_norm": {"reward": -8.0, "loss": 0.7},
-            "high_entropy": {"reward": -4.0, "loss": 0.6},
-        }
-        df = compute_ablation_deltas(results)
-        # no_norm should have negative delta
-        no_norm = df[df["variant"] == "no_norm"]
-        self.assertAlmostEqual(no_norm["delta_reward"].values[0], -3.0)
-        # high_entropy should have positive delta
-        high_ent = df[df["variant"] == "high_entropy"]
-        self.assertAlmostEqual(high_ent["delta_reward"].values[0], 1.0)
-
-    def test_missing_baseline_raises(self) -> None:
-        with self.assertRaises(KeyError):
-            compute_ablation_deltas({"a": {"x": 1}}, baseline_key="missing")
-
-    def test_percentage_deltas(self) -> None:
-        results = {
-            "baseline": {"reward": -10.0},
-            "variant": {"reward": -8.0},
-        }
-        df = compute_ablation_deltas(results)
-        variant = df[df["variant"] == "variant"]
-        self.assertAlmostEqual(variant["pct_reward"].values[0], 20.0)
-
-
-class TestComputeTrainingStats(unittest.TestCase):
-
-    def test_basic_stats(self) -> None:
-        history = [float(x) for x in range(20)]
-        stats = compute_training_stats(history, window=5)
-        self.assertEqual(stats["final_reward"], 19.0)
-        self.assertGreater(stats["improvement"], 0.0)
-
-    def test_empty_history(self) -> None:
-        stats = compute_training_stats([])
-        self.assertTrue(np.isnan(stats["final_reward"]))
-
-    def test_window_larger_than_history(self) -> None:
-        stats = compute_training_stats([1.0, 2.0], window=100)
-        self.assertAlmostEqual(stats["smoothed_final"], 1.5)
-
-
-class TestSummarizeExperiment(unittest.TestCase):
-
-    def test_full_summary(self) -> None:
-        summary = summarize_experiment(
-            name="test_run",
-            training_history=[1.0, 2.0, 3.0],
-            eval_metrics={"total_reward": -5.0},
-            diagnostics={"lr": 3e-4},
-            config={"num_vessels": 8},
-        )
-        self.assertEqual(summary["name"], "test_run")
-        self.assertIn("training_stats", summary)
-        self.assertIn("eval", summary)
-        self.assertEqual(summary["num_iterations"], 3)
-
-    def test_minimal_summary(self) -> None:
-        summary = summarize_experiment(name="minimal")
-        self.assertEqual(summary["name"], "minimal")
-        self.assertNotIn("training_stats", summary)
-
-
-class TestFormatComparisonTable(unittest.TestCase):
-
-    def test_comparison_table(self) -> None:
-        experiments = [
-            summarize_experiment("a", training_history=[1.0, 2.0], eval_metrics={"r": -5.0}),
-            summarize_experiment("b", training_history=[3.0, 4.0], eval_metrics={"r": -3.0}),
-        ]
-        df = format_comparison_table(experiments)
-        self.assertEqual(len(df), 2)
-        self.assertIn("final_reward", df.columns)
-
-    def test_empty_experiments(self) -> None:
-        df = format_comparison_table([])
-        self.assertTrue(df.empty)
 
 
 if __name__ == "__main__":

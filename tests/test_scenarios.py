@@ -10,9 +10,6 @@ from hmarl_mvp.config import get_default_config
 from hmarl_mvp.env import MaritimeEnv
 from hmarl_mvp.experiment import (
     run_experiment,
-    run_multi_seed,
-    run_multi_seed_policy_sweep,
-    summarize_multi_seed,
 )
 
 
@@ -125,65 +122,6 @@ class StressLatencyTests(unittest.TestCase):
         )
         df = run_experiment(policy_type="forecast", steps=12, seed=42, config=cfg)
         self.assertEqual(len(df), 12)
-
-
-class MultiSeedTests(unittest.TestCase):
-    """Test multi-seed evaluation infrastructure."""
-
-    def test_run_multi_seed_tags_seeds(self) -> None:
-        cfg = get_default_config(rollout_steps=5)
-        df = run_multi_seed(
-            policy_type="forecast",
-            seeds=[42, 123],
-            steps=5,
-            config=cfg,
-        )
-        self.assertIn("seed", df.columns)
-        self.assertEqual(set(df["seed"].unique()), {42, 123})
-        self.assertEqual(len(df), 10)  # 2 seeds × 5 steps
-
-    def test_summarize_multi_seed(self) -> None:
-        cfg = get_default_config(rollout_steps=4)
-        df = run_multi_seed(
-            policy_type="forecast",
-            seeds=[42, 100],
-            steps=4,
-            config=cfg,
-        )
-        summary = summarize_multi_seed(df)
-        self.assertIn("avg_queue_mean", summary.columns)
-        self.assertIn("avg_queue_std", summary.columns)
-        self.assertEqual(len(summary), 4)  # 4 unique steps
-
-    def test_multi_seed_policy_sweep(self) -> None:
-        cfg = get_default_config(rollout_steps=3)
-        df = run_multi_seed_policy_sweep(
-            policies=["independent", "forecast"],
-            seeds=[42, 100],
-            steps=3,
-            config=cfg,
-        )
-        self.assertEqual(set(df["policy"].unique()), {"independent", "forecast"})
-        self.assertEqual(set(df["seed"].unique()), {42, 100})
-        self.assertEqual(len(df), 12)  # 2 policies × 2 seeds × 3 steps
-
-    def test_different_seeds_produce_different_results(self) -> None:
-        cfg = get_default_config(num_ports=5, num_vessels=8, rollout_steps=15)
-        df = run_multi_seed(
-            policy_type="forecast",
-            seeds=[42, 999],
-            steps=15,
-            config=cfg,
-        )
-        # Compare across several numeric columns — at least one should differ
-        seed_42 = df[df["seed"] == 42]
-        seed_999 = df[df["seed"] == 999]
-        found_diff = False
-        for col in ["avg_queue", "total_fuel_used", "total_emissions_co2", "avg_vessel_reward"]:
-            if not np.array_equal(seed_42[col].values, seed_999[col].values):
-                found_diff = True
-                break
-        self.assertTrue(found_diff, "Expected at least one metric to differ across seeds")
 
 
 class AllPoliciesScenarioTests(unittest.TestCase):

@@ -250,44 +250,6 @@ def run_horizon_sweep(
     }
 
 
-def run_weather_sweep(
-    sea_state_levels: list[float] | None = None,
-    policy_type: str = "forecast",
-    steps: int | None = None,
-    seed: int = SEED,
-    config: dict[str, Any] | None = None,
-) -> dict[str, pd.DataFrame]:
-    """Run weather severity sweep comparing weather-off vs weather-on.
-
-    Parameters
-    ----------
-    sea_state_levels:
-        Maximum sea-state values to test.  Defaults to ``[0 (off), 1.5, 3.0, 5.0]``.
-
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        Keyed by label (e.g. ``"off"``, ``"sea3.0"``).
-    """
-    sea_state_levels = sea_state_levels or [0.0, 1.5, 3.0, 5.0]
-    base = dict(config or {})
-    results: dict[str, pd.DataFrame] = {}
-    for level in sea_state_levels:
-        if level <= 0.0:
-            label = "off"
-            run_cfg = {**base, "weather_enabled": False}
-        else:
-            label = f"sea{level}"
-            run_cfg = {**base, "weather_enabled": True, "sea_state_max": level}
-        results[label] = run_experiment(
-            policy_type=policy_type,
-            steps=steps,
-            seed=seed,
-            config=run_cfg,
-        )
-    return results
-
-
 def run_noise_sweep(
     noise_levels: list[float] | None = None,
     steps: int | None = None,
@@ -350,89 +312,6 @@ def summarize_policy_results(results: dict[str, pd.DataFrame]) -> pd.DataFrame:
         .round(3)
     )
     return summary
-
-
-def run_multi_seed(
-    policy_type: str = "forecast",
-    seeds: list[int] | None = None,
-    steps: int | None = None,
-    config: dict[str, Any] | None = None,
-    **kwargs: Any,
-) -> pd.DataFrame:
-    """Run the same experiment across multiple seeds and tag each row.
-
-    Returns a single DataFrame with an extra ``seed`` column.  This
-    makes it easy to compute mean ± std statistics for publication-quality
-    comparisons.
-    """
-    seeds = seeds or [42, 123, 256, 512, 1024]
-    frames: list[pd.DataFrame] = []
-    for seed in seeds:
-        df = run_experiment(
-            policy_type=policy_type,
-            steps=steps,
-            seed=seed,
-            config=config,
-            **kwargs,
-        )
-        df["seed"] = seed
-        frames.append(df)
-    return pd.concat(frames, ignore_index=True)
-
-
-def summarize_multi_seed(df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate multi-seed results into mean ± std per policy per step.
-
-    Expects a DataFrame produced by :func:`run_multi_seed` containing
-    ``seed``, ``t``, and ``policy`` columns.
-    """
-    numeric_cols = [
-        "avg_queue",
-        "dock_utilization",
-        "total_emissions_co2",
-        "total_fuel_used",
-        "on_time_rate",
-        "total_ops_cost_usd",
-        "cost_reliability",
-        "avg_vessel_reward",
-        "avg_port_reward",
-        "coordinator_reward",
-        "policy_agreement_rate",
-        "step_fuel_cost_usd",
-        "step_delay_cost_usd",
-        "step_carbon_cost_usd",
-        "step_total_ops_cost_usd",
-    ]
-    present = [c for c in numeric_cols if c in df.columns]
-    grouped = df.groupby(["policy", "t"])[present]
-    mean_df = grouped.mean().round(4)
-    std_df = grouped.std().round(4)
-    mean_df.columns = [f"{c}_mean" for c in mean_df.columns]
-    std_df.columns = [f"{c}_std" for c in std_df.columns]
-    return pd.concat([mean_df, std_df], axis=1).reset_index()
-
-
-def run_multi_seed_policy_sweep(
-    policies: list[str] | None = None,
-    seeds: list[int] | None = None,
-    steps: int | None = None,
-    config: dict[str, Any] | None = None,
-) -> pd.DataFrame:
-    """Run all baseline policies across multiple seeds.
-
-    Returns a single DataFrame containing all policies × seeds.
-    """
-    policies = policies or ["independent", "reactive", "forecast", "oracle"]
-    frames: list[pd.DataFrame] = []
-    for policy in policies:
-        df = run_multi_seed(
-            policy_type=policy,
-            seeds=seeds,
-            steps=steps,
-            config=config,
-        )
-        frames.append(df)
-    return pd.concat(frames, ignore_index=True)
 
 
 def save_result_dict(results: dict[Any, pd.DataFrame], out_dir: str, prefix: str) -> None:
@@ -595,59 +474,6 @@ def run_mappo_comparison(
     # Attach training log
     results["_train_log"] = pd.DataFrame(train_log)
     return results
-
-
-def run_multi_seed_mappo_comparison(
-    train_iterations: int = 50,
-    rollout_length: int = 64,
-    eval_steps: int | None = None,
-    baselines: list[str] | None = None,
-    seeds: list[int] | None = None,
-    config: dict[str, Any] | None = None,
-    mappo_kwargs: dict[str, Any] | None = None,
-) -> pd.DataFrame:
-    """Train MAPPO and evaluate against baselines across multiple seeds.
-
-    For each seed, independently trains MAPPO and runs all baselines.
-    Returns a single DataFrame with ``seed`` and ``policy`` columns for
-    statistical comparison (mean +/- std).
-
-    Parameters
-    ----------
-    train_iterations:
-        Number of MAPPO train iterations per seed.
-    rollout_length:
-        Rollout length per training iteration.
-    eval_steps:
-        Steps for evaluation episodes (defaults to ``rollout_length``).
-    baselines:
-        Heuristic policy names to compare against.
-    seeds:
-        Random seeds for reproducibility.
-    config:
-        Environment configuration overrides.
-    mappo_kwargs:
-        Extra kwargs forwarded to ``MAPPOConfig``.
-    """
-    seeds = seeds or [42, 123, 256]
-    frames: list[pd.DataFrame] = []
-    for seed in seeds:
-        results = run_mappo_comparison(
-            train_iterations=train_iterations,
-            rollout_length=rollout_length,
-            eval_steps=eval_steps,
-            baselines=baselines,
-            seed=seed,
-            config=config,
-            mappo_kwargs=mappo_kwargs,
-        )
-        for name, df in results.items():
-            if name.startswith("_"):
-                continue
-            df_copy = df.copy()
-            df_copy["seed"] = seed
-            frames.append(df_copy)
-    return pd.concat(frames, ignore_index=True)
 
 
 # ---------------------------------------------------------------------------

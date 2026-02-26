@@ -16,8 +16,6 @@ from hmarl_mvp.plotting import (
     plot_training_dashboard,
 )
 from hmarl_mvp.report import (
-    generate_ablation_report,
-    generate_sweep_report,
     generate_training_report,
 )
 
@@ -117,67 +115,6 @@ class TestTrainingReport(unittest.TestCase):
         history = self._make_history(20)
         report = generate_training_report(history)
         self.assertIn("Improvement", report)
-
-
-class TestSweepReport(unittest.TestCase):
-    """Tests for generate_sweep_report."""
-
-    def _make_sweep_df(self) -> pd.DataFrame:
-        return pd.DataFrame([
-            {"lr": 1e-4, "entropy_coeff": 0.01, "total_reward": -3.0, "final_mean_reward": -1.0},
-            {"lr": 3e-4, "entropy_coeff": 0.01, "total_reward": -2.0, "final_mean_reward": -0.5},
-            {"lr": 1e-3, "entropy_coeff": 0.05, "total_reward": -4.0, "final_mean_reward": -1.5},
-        ])
-
-    def test_basic_sweep_report(self) -> None:
-        df = self._make_sweep_df()
-        report = generate_sweep_report(df)
-        self.assertIn("Sweep Report", report)
-        self.assertIn("Configurations tested", report)
-        self.assertIn("Best Configuration", report)
-
-    def test_sorted_by_metric(self) -> None:
-        df = self._make_sweep_df()
-        report = generate_sweep_report(df, sort_by="total_reward")
-        # Best config (lr=3e-4) should appear first in results
-        lines = report.split("\n")
-        rank1_line = [l for l in lines if l.startswith("| 1 |")]
-        self.assertEqual(len(rank1_line), 1)
-        self.assertIn("-2.0000", rank1_line[0])
-
-    def test_custom_title(self) -> None:
-        df = self._make_sweep_df()
-        report = generate_sweep_report(df, title="My Custom Sweep")
-        self.assertIn("My Custom Sweep", report)
-
-
-class TestAblationReport(unittest.TestCase):
-    """Tests for generate_ablation_report."""
-
-    def _make_ablation_df(self) -> pd.DataFrame:
-        return pd.DataFrame([
-            {"ablation": "baseline", "final_mean_reward": -1.0, "total_reward": -3.0},
-            {"ablation": "no_reward_norm", "final_mean_reward": -1.5, "total_reward": -4.0},
-            {"ablation": "high_entropy", "final_mean_reward": -0.8, "total_reward": -2.5},
-        ])
-
-    def test_basic_ablation_report(self) -> None:
-        df = self._make_ablation_df()
-        report = generate_ablation_report(df)
-        self.assertIn("Ablation Study", report)
-        self.assertIn("baseline", report)
-        self.assertIn("Variants tested", report)
-
-    def test_deltas_from_baseline(self) -> None:
-        df = self._make_ablation_df()
-        report = generate_ablation_report(df)
-        self.assertIn("Deltas from Baseline", report)
-        self.assertIn("no_reward_norm", report)
-
-    def test_custom_title(self) -> None:
-        df = self._make_ablation_df()
-        report = generate_ablation_report(df, title="Custom Ablation")
-        self.assertIn("Custom Ablation", report)
 
 
 # ===================================================================

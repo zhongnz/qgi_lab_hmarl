@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from hmarl_mvp.config import get_default_config
-from hmarl_mvp.experiment import run_experiment, run_weather_sweep
+from hmarl_mvp.experiment import run_experiment
 from hmarl_mvp.policies import FleetCoordinatorPolicy, VesselPolicy
 from hmarl_mvp.rewards import weather_coordinator_shaping, weather_vessel_shaping
 from hmarl_mvp.state import PortState, VesselState
@@ -256,49 +256,6 @@ class TestExperimentWeatherLogging:
         assert "weather_enabled" in df.columns
         assert df["weather_enabled"].iloc[0] == 0
         assert df["mean_sea_state"].max() == 0.0
-
-
-# ── Weather sweep tests ─────────────────────────────────────────────────
-
-
-class TestWeatherSweep:
-    """run_weather_sweep should produce results for each sea-state level."""
-
-    def test_sweep_returns_dict_with_labels(self) -> None:
-        cfg = get_default_config(num_vessels=2, num_ports=2)
-        results = run_weather_sweep(
-            sea_state_levels=[0.0, 2.0],
-            steps=5,
-            seed=42,
-            config=cfg,
-        )
-        assert "off" in results
-        assert "sea2.0" in results
-        assert len(results["off"]) == 5
-        assert len(results["sea2.0"]) == 5
-
-    def test_sweep_default_levels(self) -> None:
-        cfg = get_default_config(num_vessels=2, num_ports=2)
-        results = run_weather_sweep(steps=3, seed=42, config=cfg)
-        assert "off" in results
-        assert "sea1.5" in results
-        assert "sea3.0" in results
-        assert "sea5.0" in results
-
-    def test_sweep_weather_affects_emissions(self) -> None:
-        """Weather should increase fuel/emissions compared to calm baseline."""
-        cfg = get_default_config(num_vessels=2, num_ports=2)
-        results = run_weather_sweep(
-            sea_state_levels=[0.0, 3.0],
-            steps=10,
-            seed=42,
-            config=cfg,
-        )
-        off_fuel = results["off"]["total_fuel_used"].iloc[-1]
-        sea_fuel = results["sea3.0"]["total_fuel_used"].iloc[-1]
-        # With weather penalties, fuel should differ
-        # (direction depends on whether weather-aware policies save more than penalties cost)
-        assert off_fuel != sea_fuel
 
 
 # ── MAPPO ablation env-config override tests ────────────────────────────

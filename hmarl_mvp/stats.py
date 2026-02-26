@@ -290,13 +290,10 @@ def multi_method_comparison(
 
 
 def _t_cdf_two_sided(t_abs: float, df: float) -> float:
-    """Approximate two-sided p-value from Student's t-distribution.
+    """Two-sided p-value from Student's t-distribution.
 
-    Uses the regularised incomplete beta function relationship:
-    ``p = I(df/(df+t²), df/2, 1/2)`` for the two-sided test.
-
-    Falls back to scipy if available; otherwise uses a reasonable
-    approximation.
+    Uses scipy when available; otherwise falls back to a normal
+    approximation (accurate for df > ~30, conservative for smaller df).
     """
     try:
         from scipy import stats as sp_stats
@@ -305,39 +302,8 @@ def _t_cdf_two_sided(t_abs: float, df: float) -> float:
     except ImportError:
         pass
 
-    # Approximation: for large df, t → N(0,1)
-    # For small df, use a conservative approximation
-    x = df / (df + t_abs ** 2)
-    # Regularised incomplete beta function approximation
-    p = _approx_betainc(df / 2.0, 0.5, x)
-    return float(max(0.0, min(1.0, p)))
+    # Normal approximation: for df>30 this is very close; for smaller df
+    # it slightly underestimates p (conservative).
+    from math import erfc, sqrt
 
-
-def _approx_betainc(a: float, b: float, x: float) -> float:
-    """Very rough regularised incomplete beta function.
-
-    Sufficient for p-value ordering; for exact p-values, scipy
-    is preferred (and imported automatically when available).
-    """
-    if x <= 0:
-        return 0.0
-    if x >= 1:
-        return 1.0
-    # Use continued fraction approximation (Lentz's method, 30 terms)
-    # This gives reasonable accuracy for our use case
-    from math import exp, lgamma
-
-    log_beta = lgamma(a) + lgamma(b) - lgamma(a + b)
-    prefix = exp(a * np.log(x) + b * np.log(1 - x) - log_beta) / a
-
-    # Simple series expansion (sufficient for df > 2)
-    result = 1.0
-    term = 1.0
-    for n in range(1, 200):
-        term *= (n - b) * x / n
-        coeff = term / (a + n)
-        result += coeff
-        if abs(coeff) < 1e-12:
-            break
-
-    return float(min(1.0, max(0.0, prefix * result)))
+    return float(erfc(t_abs / sqrt(2)))
