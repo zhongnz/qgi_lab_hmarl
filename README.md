@@ -34,6 +34,8 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── buffer.py       # Rollout buffer for on-policy RL training
 │   ├── mappo.py        # MAPPO trainer (PPO + CTDE multi-agent training)
 │   ├── experiment.py   # Experiment runner, sweeps, multi-seed eval
+│   ├── experiment_config.py # YAML experiment config + TensorBoard + runner
+│   ├── stats.py        # Statistical evaluation (Welch t-test, bootstrap CI)
 │   ├── plotting.py     # Matplotlib plot helpers
 │   ├── analysis.py     # Post-processing: comparisons, ranking, ablation deltas
 │   ├── report.py       # Markdown report generators
@@ -42,12 +44,18 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── curriculum.py   # Curriculum learning scheduler
 │   ├── learned_forecaster.py  # Trainable MLP queue forecaster
 │   └── gym_wrapper.py  # Gymnasium-compatible single-agent wrapper
+├── configs/
+│   ├── baseline.yaml         # Standard MAPPO baseline experiment
+│   ├── multi_seed.yaml       # 5-seed statistical evaluation
+│   ├── weather_curriculum.yaml # Weather curriculum progressive training
+│   └── no_sharing_ablation.yaml # Per-agent (no sharing) ablation
 ├── scripts/
 │   ├── run_baselines.py      # CLI: run heuristic baseline experiments
+│   ├── run_experiment.py     # CLI: run experiments from YAML configs
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
 │   ├── train_mappo.py        # CLI: standalone MAPPO training with checkpoints
 │   └── train_forecaster.py   # CLI: train the learned forecaster
-├── tests/                    # 617 tests (pytest)
+├── tests/                    # 666 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
@@ -79,7 +87,10 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_weather_gym.py
 │   ├── test_weather_policy_rewards.py
 │   ├── test_weather_integration.py
-│   └── test_profiling_multiseed.py
+│   ├── test_profiling_multiseed.py
+│   ├── test_experiment_config.py
+│   ├── test_stats.py
+│   └── test_parameter_sharing.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml
@@ -178,7 +189,24 @@ This runs the full MAPPO training loop: collecting rollouts with neural-network
 policies, computing GAE advantages, and performing PPO clipped updates. Outputs
 model checkpoints and reward curves to `outputs/mappo/`.
 
-### 6) Multi-seed evaluation
+### 6) Run experiments from YAML configs
+
+```bash
+cd qgi_lab_hmarl
+# Single experiment:
+python scripts/run_experiment.py configs/baseline.yaml
+
+# Compare two experiments:
+python scripts/run_experiment.py configs/baseline.yaml configs/no_sharing_ablation.yaml --compare
+
+# Smoke test (2 iterations):
+python scripts/run_experiment.py configs/baseline.yaml --smoke
+```
+
+Experiment configs specify environment, MAPPO hyper-parameters, curriculum
+stages, seed counts, and output paths in a single reproducible YAML file.
+
+### 7) Multi-seed evaluation
 
 ```python
 from hmarl_mvp import run_multi_seed_policy_sweep, summarize_multi_seed
@@ -186,7 +214,7 @@ df = run_multi_seed_policy_sweep(seeds=[42, 123, 256, 512, 1024], steps=20)
 summary = summarize_multi_seed(df)
 ```
 
-### 7) Use notebook for analysis
+### 8) Use notebook for analysis
 
 Use `colab_mvp_hmarl_maritime.ipynb` for presentation and visual inspection. Prefer module imports for any new logic.
 

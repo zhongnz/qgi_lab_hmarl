@@ -3,3 +3,4 @@ pandas>=2.2,<3.0
 matplotlib>=3.8,<4.0
 torch>=2.0
 gymnasium>=1.0
+pyyaml>=6.0

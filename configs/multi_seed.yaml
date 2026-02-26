@@ -1,0 +1,39 @@
+# Multi-seed experiment — 5 seeds for statistical evaluation.
+# Usage: python scripts/run_experiment.py configs/multi_seed.yaml
+
+name: multi_seed_evaluation
+description: >
+  Train MAPPO over 5 seeds for reliable comparison and confidence
+  intervals.  Results feed into the statistical evaluation module.
+tags:
+  - multi-seed
+  - evaluation
+
+env:
+  num_vessels: 3
+  num_ports: 2
+  docks_per_port: 3
+  rollout_steps: 55
+
+mappo:
+  lr: 0.0003
+  rollout_length: 50
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  normalize_observations: true
+  normalize_rewards: true
+
+num_iterations: 200
+num_seeds: 5
+seeds: [42, 49, 56, 63, 70]
+eval_interval: 20
+early_stopping_patience: 30
+checkpoint_dir: runs/multi_seed/checkpoints
+output_dir: runs/multi_seed
+tensorboard: false
+console_log: true
+log_every: 10

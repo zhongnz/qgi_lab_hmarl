@@ -1,0 +1,34 @@
+# Baseline experiment — standard parameters, single seed, no curriculum.
+# Usage: python scripts/run_experiment.py configs/baseline.yaml
+
+name: baseline
+description: Standard MAPPO training with default hyper-parameters.
+tags:
+  - baseline
+  - default
+
+env:
+  num_vessels: 3
+  num_ports: 2
+  docks_per_port: 3
+  rollout_steps: 55
+
+mappo:
+  lr: 0.0003
+  rollout_length: 50
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  normalize_observations: true
+  normalize_rewards: true
+
+num_iterations: 200
+num_seeds: 1
+eval_interval: 20
+output_dir: runs/baseline
+tensorboard: false
+console_log: true
+log_every: 10

@@ -232,3 +232,61 @@ Runs N independent training seeds and aggregates learning curves.
 - `--num-seeds N`: number of independent seeds (default: 3).
 - `--early-stopping N`: patience for early stopping per seed (default: 0).
 - `--no-plots`: skip generating learning curve and timing plots.
+
+## Experiment Configuration (`experiment_config.py`)
+
+YAML-based experiment specification for reproducible runs.
+
+| Field                    | Type         | Description                                   |
+|--------------------------|--------------|-----------------------------------------------|
+| `name`                   | str          | Human-readable experiment name.               |
+| `description`            | str          | Free-text description.                        |
+| `tags`                   | list[str]    | Tags for filtering/grouping.                 |
+| `env`                    | dict         | Environment config overrides.                 |
+| `mappo`                  | dict         | MAPPOConfig field overrides.                  |
+| `curriculum_stages`      | list[dict]   | Curriculum stage definitions.                 |
+| `num_iterations`         | int          | Training iterations.                          |
+| `num_seeds`              | int          | Number of independent seeds.                  |
+| `seeds`                  | list[int]    | Explicit seed list (optional).                |
+| `eval_interval`          | int          | Evaluation frequency.                         |
+| `early_stopping_patience`| int          | Patience for early stopping (0 = disabled).   |
+| `output_dir`             | str          | Output directory for results.                 |
+| `tensorboard`            | bool         | Enable TensorBoard logging.                   |
+
+### Functions
+
+- `save_experiment_config(cfg, path)`: Save to YAML (or JSON fallback).
+- `load_experiment_config(path)`: Load from YAML/JSON.
+- `run_from_config(cfg)`: Execute full experiment from config.
+
+## Statistical Evaluation (`stats.py`)
+
+Research-grade statistical testing for method comparisons.
+
+| Function                 | Returns        | Description                                      |
+|--------------------------|----------------|--------------------------------------------------|
+| `welch_t_test(a, b)`     | dict           | Welch's unequal-variances t-test with Cohen's d. |
+| `bootstrap_ci(data, ...)`| (lo, hi)       | Bootstrap confidence interval.                   |
+| `compare_methods(a, b)`  | dict           | Full pairwise comparison with markdown summary.  |
+| `multi_method_comparison()` | dict        | Multi-method table with pairwise tests.          |
+
+### `welch_t_test` Return Keys
+
+| Key       | Type  | Description                            |
+|-----------|-------|----------------------------------------|
+| `t_stat`  | float | Welch's t statistic.                   |
+| `p_value` | float | Two-sided p-value.                     |
+| `df`      | float | Welch-Satterthwaite degrees of freedom.|
+| `cohens_d`| float | Cohen's d effect size.                 |
+| `diff`    | float | mean_a − mean_b.                       |
+
+## Parameter Sharing
+
+`MAPPOConfig.parameter_sharing` (default: `True`) controls whether agents
+of the same type share neural network weights.
+
+- `True`: Standard CTDE — one `ActorCritic` per agent type.
+- `False`: Per-agent networks — `build_per_agent_actor_critics()` creates
+  individual `vessel_0`, `vessel_1`, ..., `port_0`, etc.
+
+Useful for ablation studies comparing shared vs. independent learning.

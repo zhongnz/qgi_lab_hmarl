@@ -327,6 +327,56 @@ def build_actor_critics(
     }
 
 
+def build_per_agent_actor_critics(
+    config: dict[str, Any],
+    vessel_obs_dim: int,
+    port_obs_dim: int,
+    coordinator_obs_dim: int,
+    global_state_dim: int,
+    hidden_dims: list[int] | None = None,
+) -> dict[str, ActorCritic]:
+    """Create separate ``ActorCritic`` networks for each individual agent.
+
+    Unlike ``build_actor_critics`` which creates one network per agent *type*
+    (shared across all agents of that type), this creates one network per
+    individual agent: ``vessel_0``, ``vessel_1``, ..., ``port_0``, etc.
+
+    This is the *no parameter sharing* ablation — useful for comparing
+    against the default shared-parameter CTDE architecture.
+    """
+    hidden_dims = hidden_dims or [64, 64]
+    nets: dict[str, ActorCritic] = {}
+
+    for i in range(config["num_vessels"]):
+        nets[f"vessel_{i}"] = ActorCritic(
+            obs_dim=vessel_obs_dim,
+            global_state_dim=global_state_dim,
+            act_dim=1,
+            discrete=False,
+            hidden_dims=hidden_dims,
+        )
+
+    for i in range(config["num_ports"]):
+        nets[f"port_{i}"] = ActorCritic(
+            obs_dim=port_obs_dim,
+            global_state_dim=global_state_dim,
+            act_dim=config["docks_per_port"] + 1,
+            discrete=True,
+            hidden_dims=hidden_dims,
+        )
+
+    for i in range(config.get("num_coordinators", 1)):
+        nets[f"coordinator_{i}"] = ActorCritic(
+            obs_dim=coordinator_obs_dim,
+            global_state_dim=global_state_dim,
+            act_dim=config["num_ports"],
+            discrete=True,
+            hidden_dims=hidden_dims,
+        )
+
+    return nets
+
+
 def obs_dim_from_env(
     config: dict[str, Any],
 ) -> dict[str, int]:

@@ -60,5 +60,12 @@ documentation alignment.
 18. ~~Multi-seed training runner.~~ **Done** (`train_multi_seed()` in `mappo.py`).
 19. ~~Multi-seed learning curve + timing plots.~~ **Done** (`plot_multi_seed_curves()`, `plot_timing_breakdown()` in `plotting.py`).
 20. ~~CLI multiseed subcommand.~~ **Done** (`run_mappo.py multiseed`).
-21. (New) Run full hyperparameter sweeps and ablation experiments for final report.
+21. ~~(New) Run full hyperparameter sweeps and ablation experiments for final report.~~
+    Partially addressed: YAML experiment config system (`experiment_config.py`),
+    experiment runner script (`scripts/run_experiment.py`), and example configs
+    in `configs/` provide infrastructure for systematic sweep execution.
 22. (New) End-to-end weather impact analysis across all policy types.
+23. ~~(New) YAML experiment configuration with save/load/run.~~ **Done** (`experiment_config.py`).
+24. ~~(New) Statistical evaluation module (Welch's t-test, bootstrap CI, method comparison).~~ **Done** (`stats.py`).
+25. ~~(New) Parameter sharing toggle for MAPPO ablation.~~ **Done** (`MAPPOConfig.parameter_sharing`, `build_per_agent_actor_critics()`).
+26. ~~(New) Experiment runner script for YAML configs.~~ **Done** (`scripts/run_experiment.py`).

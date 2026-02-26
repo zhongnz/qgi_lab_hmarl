@@ -269,6 +269,24 @@ class MAPPOConfig:
     hidden_dims: list[int] = field(default_factory=lambda: [64, 64])
     normalize_rewards: bool = True
     normalize_observations: bool = True
+    # Parameter sharing: if True, all agents of the same type share one network.
+    # If False, each individual agent gets its own network.
+    parameter_sharing: bool = True
+
+
+class _SingleAgentBufferView:
+    """Wrap a single ``RolloutBuffer`` to look like a 1-agent ``MultiAgentRolloutBuffer``.
+
+    Used by the per-agent update path so that ``_ppo_update`` can
+    process a single agent's data with the same interface.
+    """
+
+    def __init__(self, buf: MultiAgentRolloutBuffer | Any) -> None:
+        self.num_agents = 1
+        self._buf = buf
+
+    def __getitem__(self, idx: int) -> Any:
+        return self._buf
 
 
 class MAPPOTrainer:
@@ -307,14 +325,26 @@ class MAPPOTrainer:
         self.global_dim = global_state_dim_from_config(self.cfg)
 
         # Actor-critic networks (parameter-shared per agent type)
-        self.actor_critics: dict[str, ActorCritic] = build_actor_critics(
-            config=self.cfg,
-            vessel_obs_dim=self.obs_dims["vessel"],
-            port_obs_dim=self.obs_dims["port"],
-            coordinator_obs_dim=self.obs_dims["coordinator"],
-            global_state_dim=self.global_dim,
-            hidden_dims=self.mappo_cfg.hidden_dims,
-        )
+        if self.mappo_cfg.parameter_sharing:
+            self.actor_critics: dict[str, ActorCritic] = build_actor_critics(
+                config=self.cfg,
+                vessel_obs_dim=self.obs_dims["vessel"],
+                port_obs_dim=self.obs_dims["port"],
+                coordinator_obs_dim=self.obs_dims["coordinator"],
+                global_state_dim=self.global_dim,
+                hidden_dims=self.mappo_cfg.hidden_dims,
+            )
+        else:
+            from .networks import build_per_agent_actor_critics
+
+            self.actor_critics = build_per_agent_actor_critics(
+                config=self.cfg,
+                vessel_obs_dim=self.obs_dims["vessel"],
+                port_obs_dim=self.obs_dims["port"],
+                coordinator_obs_dim=self.obs_dims["coordinator"],
+                global_state_dim=self.global_dim,
+                hidden_dims=self.mappo_cfg.hidden_dims,
+            )
         for ac in self.actor_critics.values():
             ac.to(self.device)
 
@@ -440,6 +470,21 @@ class MAPPOTrainer:
         return self._obs_normalizers[agent_type].normalize(obs).astype(np.float32)
 
     # ------------------------------------------------------------------
+    # Per-agent network lookup
+    # ------------------------------------------------------------------
+
+    def _get_ac(self, agent_type: str, agent_idx: int = 0) -> "ActorCritic":
+        """Return the actor-critic for a given agent type and index.
+
+        When ``parameter_sharing`` is True, all agents of the same type
+        share one network (keyed by type name).  When False, each
+        individual agent has its own network (keyed ``{type}_{idx}``).
+        """
+        if self.mappo_cfg.parameter_sharing:
+            return self.actor_critics[agent_type]
+        return self.actor_critics[f"{agent_type}_{agent_idx}"]
+
+    # ------------------------------------------------------------------
     # Action mask helpers
     # ------------------------------------------------------------------
 
@@ -545,13 +590,8 @@ class MAPPOTrainer:
         total_port_reward_rollout = 0.0
         total_coord_reward_rollout = 0.0
 
-        vessel_ac = self.actor_critics["vessel"]
-        port_ac = self.actor_critics["port"]
-        coord_ac = self.actor_critics["coordinator"]
-
-        vessel_ac.eval()
-        port_ac.eval()
-        coord_ac.eval()
+        for _ac in self.actor_critics.values():
+            _ac.eval()
 
         for _step in range(self.mappo_cfg.rollout_length):
             global_state = self.env.get_global_state()
@@ -568,7 +608,8 @@ class MAPPOTrainer:
                     v_obs_t = torch.as_tensor(
                         v_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
-                    action_t, log_prob_t, value_t = vessel_ac.get_action_and_value(
+                    v_ac = self._get_ac("vessel", i)
+                    action_t, log_prob_t, value_t = v_ac.get_action_and_value(
                         v_obs_t, gs_tensor
                     )
                     speed_cap = self._vessel_weather_speed_cap(i)
@@ -595,7 +636,8 @@ class MAPPOTrainer:
                         p_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     p_mask = self._port_mask_tensor(i)
-                    action_t, log_prob_t, value_t = port_ac.get_action_and_value(
+                    p_ac = self._get_ac("port", i)
+                    action_t, log_prob_t, value_t = p_ac.get_action_and_value(
                         p_obs_t, gs_tensor, action_mask=p_mask
                     )
                     action_dict = _nn_to_port_action(action_t.squeeze(0), i, self.env)
@@ -620,7 +662,8 @@ class MAPPOTrainer:
                     c_obs_t = torch.as_tensor(
                         c_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
-                    action_t, log_prob_t, value_t = coord_ac.get_action_and_value(
+                    c_ac = self._get_ac("coordinator", i)
+                    action_t, log_prob_t, value_t = c_ac.get_action_and_value(
                         c_obs_t, gs_tensor
                     )
                     action_dict = _nn_to_coordinator_action(
@@ -691,18 +734,18 @@ class MAPPOTrainer:
             ).unsqueeze(0)
 
             vessel_last = []
-            for _v_obs in obs["vessels"]:
-                vessel_last.append(vessel_ac.critic(gs_tensor).item())
+            for i, _v_obs in enumerate(obs["vessels"]):
+                vessel_last.append(self._get_ac("vessel", i).critic(gs_tensor).item())
             self.vessel_buf.compute_returns(vessel_last)
 
             port_last = []
-            for _p_obs in obs["ports"]:
-                port_last.append(port_ac.critic(gs_tensor).item())
+            for i, _p_obs in enumerate(obs["ports"]):
+                port_last.append(self._get_ac("port", i).critic(gs_tensor).item())
             self.port_buf.compute_returns(port_last)
 
             coord_last = []
-            for _c_obs in obs["coordinators"]:
-                coord_last.append(coord_ac.critic(gs_tensor).item())
+            for i, _c_obs in enumerate(obs["coordinators"]):
+                coord_last.append(self._get_ac("coordinator", i).critic(gs_tensor).item())
             self.coordinator_buf.compute_returns(coord_last)
 
         mean_reward = total_reward / self.mappo_cfg.rollout_length
@@ -728,13 +771,45 @@ class MAPPOTrainer:
     def update(self) -> dict[str, PPOUpdateResult]:
         """Run PPO update epochs on the collected rollout.
 
-        Returns per-agent-type ``PPOUpdateResult``.
+        Returns per-agent-type ``PPOUpdateResult``.  When parameter
+        sharing is disabled, per-agent results are aggregated back
+        to type-level keys for downstream compatibility.
         """
         results: dict[str, PPOUpdateResult] = {}
-        for agent_type, ac in self.actor_critics.items():
-            buf = self._get_buffer(agent_type)
-            result = self._ppo_update(ac, buf, self.optimizers[agent_type])
-            results[agent_type] = result
+
+        if self.mappo_cfg.parameter_sharing:
+            for agent_type, ac in self.actor_critics.items():
+                buf = self._get_buffer(agent_type)
+                result = self._ppo_update(ac, buf, self.optimizers[agent_type])
+                results[agent_type] = result
+        else:
+            # Per-agent: update each individual network on its own data
+            per_agent: dict[str, PPOUpdateResult] = {}
+            for key, ac in self.actor_critics.items():
+                parts = key.rsplit("_", 1)
+                agent_type, agent_idx = parts[0], int(parts[1])
+                full_buf = self._get_buffer(agent_type)
+                view = _SingleAgentBufferView(full_buf[agent_idx])
+                per_agent[key] = self._ppo_update(ac, view, self.optimizers[key])  # type: ignore[arg-type]
+
+            # Aggregate to type-level for compatibility with logging
+            for atype in ("vessel", "port", "coordinator"):
+                type_res = [v for k, v in per_agent.items() if k.startswith(f"{atype}_")]
+                if type_res:
+                    results[atype] = PPOUpdateResult(
+                        policy_loss=float(np.mean([r.policy_loss for r in type_res])),
+                        value_loss=float(np.mean([r.value_loss for r in type_res])),
+                        entropy=float(np.mean([r.entropy for r in type_res])),
+                        total_loss=float(np.mean([r.total_loss for r in type_res])),
+                        clip_fraction=float(np.mean([r.clip_fraction for r in type_res])),
+                        grad_norm=float(np.mean([r.grad_norm for r in type_res])),
+                        weight_norm=float(np.mean([r.weight_norm for r in type_res])),
+                        approx_kl=float(np.mean([r.approx_kl for r in type_res])),
+                        entropy_coeff=type_res[0].entropy_coeff,
+                        kl_early_stopped=any(r.kl_early_stopped for r in type_res),
+                        explained_variance=float(np.mean([r.explained_variance for r in type_res])),
+                    )
+
         # Step LR scheduler after all agent types are updated
         self._step_lr()
         return results
@@ -1101,14 +1176,26 @@ class MAPPOTrainer:
 
         if dims_changed:
             # Must rebuild networks — old weights are incompatible
-            self.actor_critics = build_actor_critics(
-                config=self.cfg,
-                vessel_obs_dim=self.obs_dims["vessel"],
-                port_obs_dim=self.obs_dims["port"],
-                coordinator_obs_dim=self.obs_dims["coordinator"],
-                global_state_dim=self.global_dim,
-                hidden_dims=self.mappo_cfg.hidden_dims,
-            )
+            if self.mappo_cfg.parameter_sharing:
+                self.actor_critics = build_actor_critics(
+                    config=self.cfg,
+                    vessel_obs_dim=self.obs_dims["vessel"],
+                    port_obs_dim=self.obs_dims["port"],
+                    coordinator_obs_dim=self.obs_dims["coordinator"],
+                    global_state_dim=self.global_dim,
+                    hidden_dims=self.mappo_cfg.hidden_dims,
+                )
+            else:
+                from .networks import build_per_agent_actor_critics
+
+                self.actor_critics = build_per_agent_actor_critics(
+                    config=self.cfg,
+                    vessel_obs_dim=self.obs_dims["vessel"],
+                    port_obs_dim=self.obs_dims["port"],
+                    coordinator_obs_dim=self.obs_dims["coordinator"],
+                    global_state_dim=self.global_dim,
+                    hidden_dims=self.mappo_cfg.hidden_dims,
+                )
             for ac in self.actor_critics.values():
                 ac.to(self.device)
             self.optimizers = {
@@ -1141,12 +1228,8 @@ class MAPPOTrainer:
         num_steps = num_steps or int(self.cfg["rollout_steps"])
         obs = self.env.reset()
 
-        vessel_ac = self.actor_critics["vessel"]
-        port_ac = self.actor_critics["port"]
-        coord_ac = self.actor_critics["coordinator"]
-        vessel_ac.eval()
-        port_ac.eval()
-        coord_ac.eval()
+        for _ac in self.actor_critics.values():
+            _ac.eval()
 
         total_vessel_reward = 0.0
         total_port_reward = 0.0
@@ -1167,7 +1250,7 @@ class MAPPOTrainer:
                     v_t = torch.as_tensor(
                         v_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
-                    a, _, _ = vessel_ac.get_action_and_value(
+                    a, _, _ = self._get_ac("vessel", i).get_action_and_value(
                         v_t, gs_tensor, deterministic=deterministic
                     )
                     speed_cap = self._vessel_weather_speed_cap(i)
@@ -1183,7 +1266,7 @@ class MAPPOTrainer:
                         p_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     p_mask = self._port_mask_tensor(i)
-                    a, _, _ = port_ac.get_action_and_value(
+                    a, _, _ = self._get_ac("port", i).get_action_and_value(
                         p_t, gs_tensor, deterministic=deterministic, action_mask=p_mask
                     )
                     port_actions.append(_nn_to_port_action(a.squeeze(0), i, self.env))
@@ -1196,7 +1279,7 @@ class MAPPOTrainer:
                     c_t = torch.as_tensor(
                         c_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
-                    a, _, _ = coord_ac.get_action_and_value(
+                    a, _, _ = self._get_ac("coordinator", i).get_action_and_value(
                         c_t, gs_tensor, deterministic=deterministic
                     )
                     coord_actions.append(

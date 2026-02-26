@@ -1,0 +1,58 @@
+# Weather-enabled experiment with curriculum training.
+# Usage: python scripts/run_experiment.py configs/weather_curriculum.yaml
+
+name: weather_curriculum
+description: >
+  Progressive curriculum training that ramps weather severity from
+  calm to full storm conditions over four stages.
+tags:
+  - weather
+  - curriculum
+  - progressive
+
+env:
+  num_vessels: 3
+  num_ports: 2
+  docks_per_port: 3
+  rollout_steps: 55
+  weather_enabled: true
+  weather_penalty_factor: 0.15
+
+mappo:
+  lr: 0.0003
+  lr_end: 0.00005
+  rollout_length: 50
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  normalize_observations: true
+  normalize_rewards: true
+
+curriculum_stages:
+  - fraction: 0.25
+    config:
+      weather_enabled: false
+  - fraction: 0.25
+    config:
+      weather_enabled: true
+      weather_penalty_factor: 0.05
+  - fraction: 0.25
+    config:
+      weather_enabled: true
+      weather_penalty_factor: 0.10
+  - fraction: 0.25
+    config:
+      weather_enabled: true
+      weather_penalty_factor: 0.15
+
+num_iterations: 300
+num_seeds: 3
+eval_interval: 25
+early_stopping_patience: 40
+output_dir: runs/weather_curriculum
+tensorboard: false
+console_log: true
+log_every: 10

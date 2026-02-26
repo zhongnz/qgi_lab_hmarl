@@ -1,0 +1,40 @@
+# Per-agent (no parameter sharing) ablation experiment.
+# Usage: python scripts/run_experiment.py configs/no_sharing_ablation.yaml
+
+name: no_sharing_ablation
+description: >
+  Alternative MAPPO training where each individual agent gets
+  its own actor-critic network.  Compared against the shared-parameter
+  baseline to quantify the benefit of parameter sharing in CTDE.
+tags:
+  - ablation
+  - no-sharing
+  - per-agent
+
+env:
+  num_vessels: 3
+  num_ports: 2
+  docks_per_port: 3
+  rollout_steps: 55
+
+mappo:
+  lr: 0.0003
+  rollout_length: 50
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  normalize_observations: true
+  normalize_rewards: true
+  parameter_sharing: false
+
+num_iterations: 200
+num_seeds: 3
+seeds: [42, 49, 56]
+eval_interval: 20
+output_dir: runs/no_sharing
+tensorboard: false
+console_log: true
+log_every: 10
