@@ -214,3 +214,211 @@ def plot_mappo_comparison(
 
     plt.tight_layout(rect=(0, 0, 1, 0.96))
     _save_or_show(fig, out_path)
+
+
+# ---------------------------------------------------------------------------
+# Hyperparameter sweep and ablation plots
+# ---------------------------------------------------------------------------
+
+
+def plot_sweep_heatmap(
+    sweep_df: Any,
+    x_param: str,
+    y_param: str,
+    metric: str = "eval_total_reward",
+    out_path: str | None = None,
+) -> None:
+    """Plot a 2-D heatmap of sweep results over two swept parameters.
+
+    Parameters
+    ----------
+    sweep_df:
+        DataFrame from ``run_mappo_hyperparam_sweep()``.
+    x_param, y_param:
+        Column names of the two swept parameters.
+    metric:
+        Metric column to plot as colour values.
+    """
+    import pandas as pd
+
+    df = pd.DataFrame(sweep_df) if not isinstance(sweep_df, pd.DataFrame) else sweep_df
+    if x_param not in df.columns or y_param not in df.columns:
+        return
+    if metric not in df.columns:
+        return
+
+    pivot = df.pivot_table(index=y_param, columns=x_param, values=metric, aggfunc="mean")
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(
+        pivot.values,
+        aspect="auto",
+        origin="lower",
+        cmap="viridis",
+    )
+    ax.set_xticks(range(len(pivot.columns)))
+    ax.set_xticklabels([f"{v}" for v in pivot.columns], fontsize=9)
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels([f"{v}" for v in pivot.index], fontsize=9)
+    ax.set_xlabel(x_param)
+    ax.set_ylabel(y_param)
+    ax.set_title(f"Sweep: {metric}")
+    fig.colorbar(im, ax=ax, label=metric)
+
+    # Annotate cells
+    for i in range(len(pivot.index)):
+        for j in range(len(pivot.columns)):
+            val = pivot.values[i, j]
+            if not _isnan(val):
+                ax.text(j, i, f"{val:.3f}", ha="center", va="center", fontsize=8, color="white")
+
+    plt.tight_layout()
+    _save_or_show(fig, out_path)
+
+
+def plot_ablation_bar(
+    ablation_df: Any,
+    metrics: list[str] | None = None,
+    out_path: str | None = None,
+) -> None:
+    """Bar chart comparing ablation variants on key metrics.
+
+    Parameters
+    ----------
+    ablation_df:
+        DataFrame from ``run_mappo_ablation()``.
+    metrics:
+        Metric columns to plot. Defaults to reward metrics.
+    """
+    import numpy as np
+    import pandas as pd
+
+    df = pd.DataFrame(ablation_df) if not isinstance(ablation_df, pd.DataFrame) else ablation_df
+    if "ablation" not in df.columns:
+        return
+
+    metrics = metrics or ["final_mean_reward", "best_mean_reward", "eval_total_reward"]
+    metrics = [m for m in metrics if m in df.columns]
+    if not metrics:
+        return
+
+    n_variants = len(df)
+    n_metrics = len(metrics)
+    x = np.arange(n_variants)
+    width = 0.8 / n_metrics
+
+    fig, ax = plt.subplots(figsize=(max(8, n_variants * 1.2), 5))
+    for i, metric in enumerate(metrics):
+        offset = (i - n_metrics / 2 + 0.5) * width
+        bars = ax.bar(
+            x + offset,
+            df[metric].values,
+            width,
+            label=metric.replace("_", " ").title(),
+        )
+        # Add value labels
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height,
+                f"{height:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+            )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(df["ablation"], rotation=30, ha="right", fontsize=9)
+    ax.set_ylabel("Value")
+    ax.set_title("Ablation Comparison")
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+    _save_or_show(fig, out_path)
+
+
+def plot_training_dashboard(
+    history: list[dict[str, Any]],
+    out_path: str | None = None,
+) -> None:
+    """Multi-panel training dashboard showing reward, losses, KL, and entropy.
+
+    Parameters
+    ----------
+    history:
+        Per-iteration log entries from ``MAPPOTrainer.train()``.
+    """
+    import pandas as pd
+
+    df = pd.DataFrame(history)
+    iters = df["iteration"] if "iteration" in df.columns else range(len(df))
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle("MAPPO Training Dashboard", fontsize=14)
+
+    # Panel 1: Reward
+    ax = axes[0, 0]
+    if "mean_reward" in df.columns:
+        ax.plot(iters, df["mean_reward"], color="steelblue", alpha=0.5, linewidth=1)
+        if len(df) >= 10:
+            window = max(5, len(df) // 10)
+            smoothed = df["mean_reward"].rolling(window, min_periods=1).mean()
+            ax.plot(iters, smoothed, color="darkblue", linewidth=2, label=f"MA({window})")
+            ax.legend(fontsize=8)
+    ax.set_title("Mean Reward")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Reward")
+
+    # Panel 2: Value losses
+    ax = axes[0, 1]
+    loss_cols = [c for c in df.columns if c.endswith("_value_loss")]
+    for col in loss_cols:
+        label = col.replace("_value_loss", "")
+        ax.plot(iters, df[col], label=label, linewidth=1.2)
+    ax.set_title("Critic Value Loss")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Loss")
+    if loss_cols:
+        ax.legend(fontsize=8)
+
+    # Panel 3: Approximate KL
+    ax = axes[1, 0]
+    kl_cols = [c for c in df.columns if c.endswith("_approx_kl")]
+    for col in kl_cols:
+        label = col.replace("_approx_kl", "")
+        ax.plot(iters, df[col], label=label, linewidth=1.2)
+    ax.set_title("Approximate KL Divergence")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("KL")
+    if kl_cols:
+        ax.legend(fontsize=8)
+        ax.axhline(y=0.02, color="red", linestyle="--", alpha=0.5, label="target")
+
+    # Panel 4: Entropy
+    ax = axes[1, 1]
+    ent_cols = [c for c in df.columns if c.endswith("_entropy")]
+    for col in ent_cols:
+        label = col.replace("_entropy", "")
+        ax.plot(iters, df[col], label=label, linewidth=1.2)
+    if "entropy_coeff" in df.columns:
+        ax2 = ax.twinx()
+        ax2.plot(iters, df["entropy_coeff"], color="gray", linestyle="--", linewidth=1, label="coeff")
+        ax2.set_ylabel("Entropy Coeff", color="gray")
+        ax2.legend(fontsize=7, loc="lower right")
+    ax.set_title("Policy Entropy")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Entropy")
+    if ent_cols:
+        ax.legend(fontsize=8)
+
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
+    _save_or_show(fig, out_path)
+
+
+def _isnan(val: Any) -> bool:
+    """Check if a value is NaN."""
+    try:
+        import math
+        return math.isnan(float(val))
+    except (TypeError, ValueError):
+        return False
