@@ -46,6 +46,7 @@ class HMARLConfig:
     weather_enabled: bool = False
     sea_state_max: float = 3.0
     weather_penalty_factor: float = 0.15
+    weather_autocorrelation: float = 0.0
     # Economic parameters (RQ4)
     cargo_value_per_vessel: float = 1_000_000.0
     fuel_price_per_ton: float = 600.0
@@ -104,6 +105,7 @@ class HMARLConfig:
             # Weather
             "sea_state_max": "float>0",
             "weather_penalty_factor": "float>=0",
+            "weather_autocorrelation": "float>=0",
         }
         for name, rule in _rules.items():
             value = getattr(self, name)
@@ -123,6 +125,11 @@ class HMARLConfig:
         if self.speed_min > self.speed_max:
             raise ValueError(
                 f"speed_min ({self.speed_min}) must be <= speed_max ({self.speed_max})"
+            )
+        if self.weather_autocorrelation > 1.0:
+            raise ValueError(
+                "weather_autocorrelation must be <= 1.0, "
+                f"got {self.weather_autocorrelation}"
             )
         if not (self.speed_min <= self.nominal_speed <= self.speed_max):
             raise ValueError(

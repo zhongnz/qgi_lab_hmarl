@@ -32,6 +32,31 @@ def generate_weather(
     return symmetric
 
 
+def update_weather_ar1(
+    prev: np.ndarray,
+    rng: np.random.Generator,
+    autocorrelation: float = 0.7,
+    sea_state_max: float = 3.0,
+) -> np.ndarray:
+    """Advance weather one tick using an AR(1) process.
+
+    ``next = autocorrelation * prev + (1 - autocorrelation) * noise``
+
+    where *noise* is drawn from ``generate_weather``.  The result is
+    clipped to ``[0, sea_state_max]`` and made symmetric with a zero
+    diagonal.  When ``autocorrelation == 0`` this degenerates to pure
+    i.i.d. noise (backward compatible).
+    """
+    autocorrelation = float(np.clip(autocorrelation, 0.0, 1.0))
+    noise = generate_weather(prev.shape[0], rng, sea_state_max)
+    updated = autocorrelation * prev + (1.0 - autocorrelation) * noise
+    updated = np.clip(updated, 0.0, sea_state_max)
+    # Re-symmetrise and zero diagonal
+    updated = (updated + updated.T) / 2.0
+    np.fill_diagonal(updated, 0.0)
+    return updated
+
+
 def weather_fuel_multiplier(sea_state: float, penalty_factor: float = 0.15) -> float:
     """Return the fuel multiplier caused by sea state.
 

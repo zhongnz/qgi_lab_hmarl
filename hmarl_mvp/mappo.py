@@ -534,6 +534,31 @@ class MAPPOTrainer:
             return float(self.cfg["nominal_speed"])
         return None
 
+    def _build_coordinator_mask(self) -> np.ndarray:
+        """Build a boolean action mask for the coordinator's destination action.
+
+        A port is masked out when its docks are fully occupied *and* its
+        queue already exceeds available capacity — sending more vessels
+        there would guarantee delays.  At least one port is always valid;
+        if all ports are congested the mask allows all of them.
+        """
+        num_ports = self.env.num_ports
+        mask = np.ones(num_ports, dtype=np.float32)
+        for p in range(num_ports):
+            port = self.env.ports[p]
+            if port.occupied >= port.docks and port.queue >= port.docks:
+                mask[p] = 0.0
+        # Safety: ensure at least one port is valid
+        if mask.sum() == 0:
+            mask[:] = 1.0
+        return mask
+
+    def _coordinator_mask_tensor(self) -> torch.Tensor:
+        """Return coordinator mask as a boolean tensor on the trainer device."""
+        return torch.as_tensor(
+            self._build_coordinator_mask(), dtype=torch.bool, device=self.device
+        ).unsqueeze(0)
+
     # ------------------------------------------------------------------
     # Buffer setup
     # ------------------------------------------------------------------
@@ -571,6 +596,7 @@ class MAPPOTrainer:
             gamma=g,
             lam=lam,
             global_state_dim=self.global_dim,
+            mask_dim=self.env.num_ports,
         )
 
     # ------------------------------------------------------------------
@@ -656,6 +682,7 @@ class MAPPOTrainer:
             # --- Coordinator actions ---
             assignments = self.env._build_assignments()
             coordinator_actions_list: list[dict[str, Any]] = []
+            coord_mask = self._coordinator_mask_tensor()
             with torch.no_grad():
                 for i, c_obs in enumerate(obs["coordinators"]):
                     c_obs_n = self._normalize_obs(c_obs, "coordinator")
@@ -664,7 +691,7 @@ class MAPPOTrainer:
                     ).unsqueeze(0)
                     c_ac = self._get_ac("coordinator", i)
                     action_t, log_prob_t, value_t = c_ac.get_action_and_value(
-                        c_obs_t, gs_tensor
+                        c_obs_t, gs_tensor, action_mask=coord_mask
                     )
                     action_dict = _nn_to_coordinator_action(
                         action_t.squeeze(0), i, self.env, assignments
@@ -678,6 +705,7 @@ class MAPPOTrainer:
                         log_prob=log_prob_t.item(),
                         value=value_t.item(),
                         global_state=gs_np,
+                        action_mask=self._build_coordinator_mask(),
                     )
 
             # --- Step environment ---
@@ -1274,13 +1302,14 @@ class MAPPOTrainer:
                 # Coordinators
                 assignments = self.env._build_assignments()
                 coord_actions: list[dict[str, Any]] = []
+                c_mask = self._coordinator_mask_tensor()
                 for i, c_obs in enumerate(obs["coordinators"]):
                     c_obs_n = self._eval_normalize_obs(c_obs, "coordinator")
                     c_t = torch.as_tensor(
                         c_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
                     a, _, _ = self._get_ac("coordinator", i).get_action_and_value(
-                        c_t, gs_tensor, deterministic=deterministic
+                        c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
                     )
                     coord_actions.append(
                         _nn_to_coordinator_action(a.squeeze(0), i, self.env, assignments)

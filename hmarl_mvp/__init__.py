@@ -33,6 +33,7 @@ from .dynamics import (
     generate_weather,
     step_ports,
     step_vessels,
+    update_weather_ar1,
     weather_fuel_multiplier,
     weather_speed_factor,
 )

@@ -8,7 +8,13 @@ import numpy as np
 
 from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent, assign_vessels_to_coordinators
 from .config import SEED, DecisionCadence, get_default_config, resolve_distance_matrix
-from .dynamics import dispatch_vessel, generate_weather, step_ports, step_vessels
+from .dynamics import (
+    dispatch_vessel,
+    generate_weather,
+    step_ports,
+    step_vessels,
+    update_weather_ar1,
+)
 from .forecasts import MediumTermForecaster, ShortTermForecaster
 from .message_bus import MessageBus
 from .metrics import compute_port_metrics
@@ -362,12 +368,23 @@ class MaritimeEnv:
         }
 
     def _refresh_weather(self) -> None:
-        """Generate new per-route sea-state matrix for this tick."""
-        if self._weather_enabled:
-            sea_state_max = float(self.cfg.get("sea_state_max", 3.0))
-            self._weather = generate_weather(self.num_ports, self.rng, sea_state_max)
-        else:
+        """Generate or update per-route sea-state matrix for this tick.
+
+        Uses AR(1) temporal correlation when ``weather_autocorrelation > 0``
+        and a previous weather matrix exists; otherwise falls back to i.i.d.
+        sampling.
+        """
+        if not self._weather_enabled:
             self._weather = None
+            return
+        sea_state_max = float(self.cfg.get("sea_state_max", 3.0))
+        autocorr = float(self.cfg.get("weather_autocorrelation", 0.0))
+        if autocorr > 0.0 and self._weather is not None:
+            self._weather = update_weather_ar1(
+                self._weather, self.rng, autocorr, sea_state_max
+            )
+        else:
+            self._weather = generate_weather(self.num_ports, self.rng, sea_state_max)
 
     def _refresh_forecasts(self) -> None:
         """Refresh cached forecasts exactly once per environment tick."""
