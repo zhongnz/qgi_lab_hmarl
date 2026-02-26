@@ -27,6 +27,7 @@ from torch import nn
 
 from .buffer import MultiAgentRolloutBuffer
 from .env import MaritimeEnv
+from .metrics import compute_economic_metrics, compute_port_metrics, compute_vessel_metrics
 from .networks import ActorCritic, build_actor_critics, obs_dim_from_env
 
 # ---------------------------------------------------------------------------
@@ -660,7 +661,18 @@ class MAPPOTrainer:
 
         mean_reward = total_reward / self.mappo_cfg.rollout_length
         self._episode_rewards.append(mean_reward)
-        return {"mean_reward": mean_reward, "total_reward": total_reward}
+
+        # Per-agent-type reward breakdown
+        vessel_raw = [float(r) for r in rewards["vessels"]]
+        port_raw = [float(r) for r in rewards["ports"]]
+        coord_raw = [float(r) for r in rewards["coordinators"]]
+        return {
+            "mean_reward": mean_reward,
+            "total_reward": total_reward,
+            "vessel_mean_reward": float(np.mean(vessel_raw)) if vessel_raw else 0.0,
+            "port_mean_reward": float(np.mean(port_raw)) if port_raw else 0.0,
+            "coordinator_mean_reward": float(np.mean(coord_raw)) if coord_raw else 0.0,
+        }
 
     # ------------------------------------------------------------------
     # PPO update
@@ -948,6 +960,9 @@ class MAPPOTrainer:
                 "iteration": it,
                 "mean_reward": rollout_info["mean_reward"],
                 "total_reward": rollout_info["total_reward"],
+                "vessel_mean_reward": rollout_info.get("vessel_mean_reward", 0.0),
+                "port_mean_reward": rollout_info.get("port_mean_reward", 0.0),
+                "coordinator_mean_reward": rollout_info.get("coordinator_mean_reward", 0.0),
                 "lr": self.current_lr,
                 "entropy_coeff": self.current_entropy_coeff,
             }
@@ -1118,12 +1133,23 @@ class MAPPOTrainer:
             if done:
                 break
 
-        return {
+        # Operational and economic metrics from final environment state
+        vessel_metrics = compute_vessel_metrics(self.env.vessels)
+        port_metrics = compute_port_metrics(self.env.ports)
+        economic_metrics = compute_economic_metrics(
+            self.env.vessels, dict(self.cfg),
+        )
+
+        result: dict[str, float] = {
             "mean_vessel_reward": total_vessel_reward / num_steps,
             "mean_port_reward": total_port_reward / num_steps,
             "mean_coordinator_reward": total_coord_reward / num_steps,
             "total_reward": total_vessel_reward + total_port_reward + total_coord_reward,
         }
+        result.update(vessel_metrics)
+        result.update(port_metrics)
+        result.update(economic_metrics)
+        return result
 
     def evaluate_episodes(
         self,
@@ -1319,9 +1345,11 @@ class MAPPOTrainer:
             vl_key = f"{agent}_value_loss"
             pl_key = f"{agent}_policy_loss"
             ev_key = f"{agent}_explained_variance"
+            mr_key = f"{agent}_mean_reward"
             vl_vals = [h[vl_key] for h in history if vl_key in h]
             pl_vals = [h[pl_key] for h in history if pl_key in h]
             ev_vals = [h[ev_key] for h in history if ev_key in h]
+            mr_vals = [h[mr_key] for h in history if mr_key in h]
             if vl_vals:
                 summary[f"mean_{vl_key}"] = float(np.mean(vl_vals))
             if pl_vals:
@@ -1329,5 +1357,8 @@ class MAPPOTrainer:
             if ev_vals:
                 summary[f"mean_{ev_key}"] = float(np.mean(ev_vals))
                 summary[f"final_{ev_key}"] = ev_vals[-1]
+            if mr_vals:
+                summary[f"mean_{mr_key}"] = float(np.mean(mr_vals))
+                summary[f"final_{mr_key}"] = mr_vals[-1]
 
         return summary

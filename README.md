@@ -24,42 +24,53 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── state.py        # Port/vessel state dataclasses, initializers
 │   ├── agents.py       # Agent wrappers, vessel-coordinator assignment
 │   ├── dynamics.py     # Physics: fuel, emissions, vessel/port ticks
+│   ├── env.py          # Gym-style multi-agent environment
+│   ├── rewards.py      # Reward functions for all agent types
+│   ├── metrics.py      # Operational, forecast, and economic metrics
 │   ├── forecasts.py    # Medium-term, short-term, oracle forecasters
-│   ├── learned_forecaster.py  # Trainable MLP queue forecaster
+│   ├── message_bus.py  # Asynchronous inter-agent message queues
+│   ├── policies.py     # Heuristic policy baselines (independent/reactive/forecast/oracle)
 │   ├── networks.py     # Actor-critic neural networks (MAPPO/CTDE)
 │   ├── buffer.py       # Rollout buffer for on-policy RL training
 │   ├── mappo.py        # MAPPO trainer (PPO + CTDE multi-agent training)
-│   ├── checkpointing.py # Training checkpoints and early stopping
-│   ├── policies.py     # Heuristic policy stubs (placeholder for PPO)
-│   ├── rewards.py      # Reward functions for all agent types
-│   ├── metrics.py      # Operational, forecast, and economic metrics
-│   ├── message_bus.py  # Asynchronous inter-agent message queues
-│   ├── env.py          # Gym-style multi-agent environment
 │   ├── experiment.py   # Experiment runner, sweeps, multi-seed eval
-│   └── plotting.py     # Matplotlib plot helpers
+│   ├── plotting.py     # Matplotlib plot helpers
+│   ├── analysis.py     # Post-processing: comparisons, ranking, ablation deltas
+│   ├── report.py       # Markdown report generators
+│   ├── logger.py       # Structured JSONL training logger
+│   ├── checkpointing.py # Training checkpoints and early stopping
+│   ├── curriculum.py   # Curriculum learning scheduler
+│   └── learned_forecaster.py  # Trainable MLP queue forecaster
 ├── scripts/
-│   ├── run_baselines.py
-│   ├── train_forecaster.py
-│   └── train_mappo.py
-├── tests/
+│   ├── run_baselines.py      # CLI: run heuristic baseline experiments
+│   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
+│   ├── train_mappo.py        # CLI: standalone MAPPO training with checkpoints
+│   └── train_forecaster.py   # CLI: train the learned forecaster
+├── tests/                    # 452 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
+│   ├── test_state.py
 │   ├── test_message_bus.py
-│   ├── test_model_correctness.py
 │   ├── test_rewards_metrics.py
-│   ├── test_buffer.py
+│   ├── test_coverage_gaps.py
+│   ├── test_model_correctness.py
 │   ├── test_networks.py
-│   ├── test_learned_forecaster.py
-│   ├── test_learned_forecast_integration.py
+│   ├── test_buffer.py
 │   ├── test_mappo.py
 │   ├── test_mappo_advanced.py
-│   ├── test_training_infra.py
+│   ├── test_action_masking.py
 │   ├── test_scenarios.py
-│   ├── test_plotting.py
-│   ├── test_coverage_gaps.py
+│   ├── test_learned_forecaster.py
+│   ├── test_learned_forecast_integration.py
+│   ├── test_training_infra.py
+│   ├── test_training_pipeline.py
+│   ├── test_training_quality.py
+│   ├── test_new_modules.py
 │   ├── test_new_features.py
-│   └── test_state.py
+│   ├── test_sweep_ablation.py
+│   ├── test_report_plotting.py
+│   └── test_plotting.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml
@@ -189,7 +200,7 @@ Project config is now validated through a typed schema (`HMARLConfig`) in
 
 | Month | Milestone |
 |-------|-----------|
-| Feb | ✅ MVP simulator, rewards, metrics, baseline runner |
-| Mar | ✅ Trained forecasting models, heuristic baselines, RL infrastructure |
-| Apr | ✅ MAPPO with CTDE (training loop, integration) — tune & ablate |
+| Feb | ✅ MVP simulator, rewards, metrics, baseline runner, module-first refactor |
+| Mar | ✅ Trained forecasting models, heuristic baselines, RL infrastructure (MAPPO/CTDE), curriculum learning |
+| Apr | Tune hyperparameters, run ablation experiments, multi-seed evaluation |
 | May | Full ablation suite, final report |

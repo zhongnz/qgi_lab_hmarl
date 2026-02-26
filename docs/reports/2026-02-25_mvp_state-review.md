@@ -44,6 +44,7 @@ documentation alignment.
 2. ~~Define baseline contracts in docs with clear invariants.~~ **Done** (architecture docs).
 3. ~~Start MAPPO/CTDE training integration.~~ **Done.**
 4. ~~Expand scenario tests.~~ **Done.**
-5. (New) Add curriculum learning / adaptive difficulty scaling.
+5. ~~Add curriculum learning / adaptive difficulty scaling.~~ **Done** (`curriculum.py`).
 6. (New) Investigate parameter-sharing ablations across agent types.
 7. (New) Profile training throughput and optimise buffer/network bottlenecks.
+8. (New) Run full hyperparameter sweeps and ablation experiments for final report.
