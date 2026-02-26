@@ -233,6 +233,9 @@ def cmd_ablate(args: argparse.Namespace) -> None:
         "low_entropy": {"entropy_coeff": 0.001},
         "no_kl_stop": {"target_kl": 0.0},
         "small_net": {"hidden_dims": [32, 32]},
+        # Environment ablations (env_ prefix → env-config override)
+        "weather_on": {"env_weather_enabled": True},
+        "weather_harsh": {"env_weather_enabled": True, "env_sea_state_max": 5.0},
     }
 
     print(f"Running MAPPO ablation: {args.iterations} iters, {len(ablations)} variants")

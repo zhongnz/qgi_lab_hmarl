@@ -113,13 +113,25 @@ def run_experiment(
                     vessels=local_vessels,
                     ports=env.ports,
                     rng=rng,
+                    weather=getattr(env, "_weather", None),
                 )
             )
 
         forecast_for_vessels = short if share_forecasts else np.zeros_like(short)
         vessel_actions: list[dict[str, Any]] = []
+        weather_matrix = getattr(env, "_weather", None)
         for vessel_agent in env.vessel_agents:
             vessel = vessel_agent.state
+            # Extract local sea-state for the vessel's current route segment.
+            local_sea_state = 0.0
+            if weather_matrix is not None:
+                src = vessel.location
+                dest_id = latest_directive_by_vessel.get(vessel.vessel_id, {}).get(
+                    "dest_port", vessel.location
+                )
+                n_ports = weather_matrix.shape[0]
+                if 0 <= src < n_ports and 0 <= dest_id < n_ports:
+                    local_sea_state = float(weather_matrix[src, dest_id])
             directive = env.get_directive_for_vessel(
                 vessel_id=vessel.vessel_id,
                 assignments=assignments,
@@ -129,6 +141,7 @@ def run_experiment(
                 vessel_policy.propose_action(
                     short_forecast=forecast_for_vessels,
                     directive=directive,
+                    sea_state=local_sea_state,
                 )
             )
 
@@ -184,6 +197,9 @@ def run_experiment(
                 "num_coordinators": num_coordinators,
                 "coordinator_updates": int(info["cadence_due"]["coordinator"]),
                 "pending_arrival_requests": float(info.get("pending_arrival_requests", 0.0)),
+                "weather_enabled": int(bool(info.get("weather_enabled", False))),
+                "mean_sea_state": float(info.get("mean_sea_state", 0.0)),
+                "max_sea_state": float(info.get("max_sea_state", 0.0)),
                 **vessel_metrics,
                 **port_metrics,
                 **coordination_metrics,
@@ -232,6 +248,44 @@ def run_horizon_sweep(
         )
         for h in horizons
     }
+
+
+def run_weather_sweep(
+    sea_state_levels: list[float] | None = None,
+    policy_type: str = "forecast",
+    steps: int | None = None,
+    seed: int = SEED,
+    config: dict[str, Any] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Run weather severity sweep comparing weather-off vs weather-on.
+
+    Parameters
+    ----------
+    sea_state_levels:
+        Maximum sea-state values to test.  Defaults to ``[0 (off), 1.5, 3.0, 5.0]``.
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Keyed by label (e.g. ``"off"``, ``"sea3.0"``).
+    """
+    sea_state_levels = sea_state_levels or [0.0, 1.5, 3.0, 5.0]
+    base = dict(config or {})
+    results: dict[str, pd.DataFrame] = {}
+    for level in sea_state_levels:
+        if level <= 0.0:
+            label = "off"
+            run_cfg = {**base, "weather_enabled": False}
+        else:
+            label = f"sea{level}"
+            run_cfg = {**base, "weather_enabled": True, "sea_state_max": level}
+        results[label] = run_experiment(
+            policy_type=policy_type,
+            steps=steps,
+            seed=seed,
+            config=run_cfg,
+        )
+    return results
 
 
 def run_noise_sweep(
@@ -722,9 +776,19 @@ def run_mappo_ablation(
 
     rows: list[dict[str, Any]] = []
     for label, overrides in ablations.items():
-        run_kwargs = {**base, **overrides}
+        # Separate env-config overrides (prefixed with "env_") from
+        # MAPPOConfig overrides so ablations can tweak the environment.
+        env_overrides = {
+            k[4:]: v for k, v in overrides.items() if k.startswith("env_")
+        }
+        mappo_overrides = {
+            k: v for k, v in overrides.items() if not k.startswith("env_")
+        }
+        ablation_cfg = {**cfg, **env_overrides} if env_overrides else cfg
+
+        run_kwargs = {**base, **mappo_overrides}
         mappo_cfg = MAPPOConfig(**run_kwargs)
-        trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=seed)
+        trainer = MAPPOTrainer(env_config=ablation_cfg, mappo_config=mappo_cfg, seed=seed)
 
         # Train
         train_log: list[dict[str, float]] = []

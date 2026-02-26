@@ -126,3 +126,38 @@ step `info` dict.
 - **Fuel multiplier**: `1 + weather_penalty_factor × sea_state` (default worst case: 1.45×).
 - **Speed factor**: `1 / (1 + weather_penalty_factor × sea_state)` (effective distance reduced).
 - Vessel observations gain one extra dimension (`sea_state`) when weather is enabled.
+
+### Weather-Aware Policies
+
+Heuristic policies (`forecast` mode) condition on weather when supplied:
+
+- **Coordinator**: Penalises destination ports reachable through rough seas.
+  Port scores are adjusted by `weather_penalty_factor × normalised_sea_state × max_forecast_score`.
+  This shifts routing toward calmer routes when sea-forecast data is available.
+- **Vessel**: Reduces speed in rough seas to save fuel.
+  If `weather_fuel_multiplier > 1.3`, speed drops to `speed_min`.
+  If `> 1.1`, speed is capped at `nominal_speed`.
+- **Independent / Reactive** modes ignore weather entirely.
+
+### Weather Reward Shaping
+
+Optional additive bonuses applied when `weather_enabled=True`:
+
+- `weather_vessel_shaping(speed, sea_state, config)` — Small positive reward
+  when a vessel slows down in rough seas (fuel_multiplier > 1.1 and speed ≤ nominal).
+  Bonus = `weather_shaping_weight × (fuel_mult - 1.0)`.
+- `weather_coordinator_shaping(weather, destinations, config)` — Praises
+  coordinators that route fleets through calmer seas.
+  Bonus = `weather_shaping_weight × (1 - normalised_mean_route_sea_state)`.
+- `weather_shaping_weight` (float, default `0.3`): controls shaping bonus magnitude.
+
+### Weather Experiment Sweep
+
+`run_weather_sweep()` compares policy performance across sea-state severity levels.
+Default levels: `[0 (off), 1.5, 3.0, 5.0]`.
+
+### Weather MAPPO Ablation
+
+The `ablate` command includes two weather variants:
+- `weather_on`: env_weather_enabled=True (standard sea states)
+- `weather_harsh`: env_weather_enabled=True, env_sea_state_max=5.0 (severe conditions)

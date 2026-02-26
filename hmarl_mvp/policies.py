@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from .dynamics import weather_fuel_multiplier
 from .state import PortState, VesselState
 
 
@@ -22,8 +23,17 @@ class FleetCoordinatorPolicy:
         vessels: list[VesselState],
         ports: list[PortState],
         rng: np.random.Generator | None = None,
+        weather: np.ndarray | None = None,
     ) -> dict[str, Any]:
-        """Produce a coordinator action without mutating agent state."""
+        """Produce a coordinator action without mutating agent state.
+
+        Parameters
+        ----------
+        weather:
+            Optional ``(num_ports, num_ports)`` sea-state matrix.
+            When provided and mode is ``"forecast"`` or ``"oracle"``,
+            the routing heuristic penalises routes through rough seas.
+        """
         if self.mode == "independent":
             if rng is None:
                 raise ValueError("rng is required for independent coordinator mode")
@@ -51,6 +61,19 @@ class FleetCoordinatorPolicy:
                 "emission_budget": 50.0,
             }
         port_scores = medium_forecast.mean(axis=1)
+
+        # Weather-aware routing: penalise ports reachable only through
+        # rough seas so the coordinator prefers calmer routes.
+        if weather is not None:
+            weather_penalty = float(self.cfg.get("weather_penalty_factor", 0.15))
+            # Mean sea-state across all routes *to* each port (column mean).
+            mean_sea_to_port = np.asarray(weather).mean(axis=0)
+            # Normalise to [0,1] relative to the configured maximum.
+            sea_max = float(self.cfg.get("sea_state_max", 3.0))
+            normalised = np.clip(mean_sea_to_port / max(sea_max, 1e-6), 0.0, 1.0)
+            # Higher sea state → higher score → less attractive destination.
+            port_scores = port_scores + weather_penalty * normalised * port_scores.max()
+
         sorted_ports = [int(p) for p in np.argsort(port_scores)]
         dest_port = sorted_ports[0]
         total_emissions = sum(v.emissions for v in vessels)
@@ -77,8 +100,17 @@ class VesselPolicy:
         self,
         short_forecast: np.ndarray,
         directive: dict[str, Any],
+        sea_state: float = 0.0,
     ) -> dict[str, Any]:
-        """Produce a vessel action without mutating agent state."""
+        """Produce a vessel action without mutating agent state.
+
+        Parameters
+        ----------
+        sea_state:
+            Local sea-state value for this vessel's current route segment.
+            When positive, ``forecast`` mode reduces speed to save fuel in
+            rough conditions using :func:`weather_fuel_multiplier`.
+        """
         if self.mode == "independent":
             return {
                 "target_speed": float(self.cfg["nominal_speed"]),
@@ -97,6 +129,20 @@ class VesselPolicy:
             speed = self.cfg["nominal_speed"]
         else:
             speed = self.cfg["speed_max"]
+
+        # Weather-aware speed adjustment: slow down in rough seas to
+        # reduce the fuel-consumption multiplier from weather.
+        if sea_state > 0.0:
+            fuel_mult = weather_fuel_multiplier(
+                sea_state, float(self.cfg.get("weather_penalty_factor", 0.15))
+            )
+            if fuel_mult > 1.3:
+                # Very rough – drop to minimum speed regardless of congestion.
+                speed = self.cfg["speed_min"]
+            elif fuel_mult > 1.1:
+                # Moderately rough – cap at nominal speed.
+                speed = min(speed, self.cfg["nominal_speed"])
+
         return {
             "target_speed": float(speed),
             "request_arrival_slot": True,

@@ -4,7 +4,7 @@
 
 | Agent | Inputs | Outputs | Cadence (target) |
 |------|--------|---------|------------------|
-| Fleet Coordinator | Medium forecast, fleet summaries, cumulative emissions | Destination directive, departure window, emission budget | Every 12 steps |
+| Fleet Coordinator | Medium forecast, fleet summaries, cumulative emissions, weather matrix (if enabled) | Destination directive, departure window, emission budget | Every 12 steps |
 | Vessel Agent | Coordinator directive, short forecast, vessel local state (location, speed, fuel, emissions, dock availability), sea state (if weather enabled) | Target speed, arrival-slot request | Every step |
 | Port Agent | Queue/dock state, incoming requests, short forecast | Service rate, request acceptance, dock allocation | Every 2 steps |
 

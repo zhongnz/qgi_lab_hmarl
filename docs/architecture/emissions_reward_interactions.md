@@ -58,3 +58,31 @@ effective vessel speed on each route:
 This creates a new strategic dimension: the coordinator must weigh routing
 through calm vs. rough sea lanes. Vessels experience higher emissions and slower
 progress in bad weather, which feeds back into all three reward functions.
+
+### Weather-Aware Reward Shaping (added)
+
+Two optional additive shaping terms encourage weather-efficient behaviour:
+
+- **Vessel shaping** (`weather_vessel_shaping`): Positive bonus when a vessel
+  reduces speed in rough seas (fuel_multiplier > 1.1 and speed ≤ nominal).
+  `bonus = weather_shaping_weight × (fuel_mult - 1.0)`.
+- **Coordinator shaping** (`weather_coordinator_shaping`): Positive bonus when
+  the fleet is routed through calmer seas.
+  `bonus = weather_shaping_weight × (1 - normalised_mean_route_sea)`.
+- Default `weather_shaping_weight = 0.3`. Both bonuses are zero when weather
+  is disabled or sea conditions are calm.
+
+Code references:
+
+- `hmarl_mvp/rewards.py::weather_vessel_shaping`
+- `hmarl_mvp/rewards.py::weather_coordinator_shaping`
+
+### Weather-Aware Heuristic Policies (added)
+
+In `forecast` mode, heuristic policies now condition on weather:
+
+- **Coordinator**: Port scores augmented with sea-state penalty — avoids
+  routing to ports reachable only through rough seas.
+- **Vessel**: Speed reduced in rough seas (fuel_mult > 1.3 → speed_min;
+  fuel_mult > 1.1 → capped at nominal) to save fuel.
+- `independent` and `reactive` modes remain weather-agnostic.

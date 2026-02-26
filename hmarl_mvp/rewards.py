@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from .dynamics import weather_fuel_multiplier
 from .state import PortState, VesselState
 
 
@@ -66,3 +67,65 @@ def compute_coordinator_reward_step(
     voyage_cost = float(max(fuel_used, 0.0)) + avg_queue
     emission_penalty = config["emission_lambda"] * float(max(co2_emitted, 0.0))
     return -(voyage_cost + emission_penalty)
+
+
+# ---------------------------------------------------------------------------
+# Weather-aware reward shaping (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def weather_vessel_shaping(
+    speed: float,
+    sea_state: float,
+    config: dict[str, Any],
+) -> float:
+    """Bonus for vessels that reduce speed in rough weather.
+
+    Returns a small positive reward when the vessel's speed is at or
+    below nominal while the fuel-consumption multiplier from weather
+    exceeds 1.1.  This encourages fuel-efficient weather routing.
+
+    Returns 0.0 when ``sea_state <= 0`` or weather is calm.
+    """
+    if sea_state <= 0.0:
+        return 0.0
+    fuel_mult = weather_fuel_multiplier(
+        sea_state, float(config.get("weather_penalty_factor", 0.15))
+    )
+    if fuel_mult <= 1.1:
+        return 0.0
+    # Bonus proportional to how much fuel was *saved* by slowing down.
+    nominal = float(config.get("nominal_speed", 14.0))
+    if speed <= nominal:
+        bonus_weight = float(config.get("weather_shaping_weight", 0.3))
+        return bonus_weight * (fuel_mult - 1.0)
+    return 0.0
+
+
+def weather_coordinator_shaping(
+    weather: np.ndarray | None,
+    destinations: dict[int, int],
+    config: dict[str, Any],
+) -> float:
+    """Bonus for a coordinator that routes fleet through calmer seas.
+
+    Computes mean sea-state along the chosen routes and rewards lower
+    values.  Returns 0.0 when weather is ``None`` or no destinations.
+    """
+    if weather is None or not destinations:
+        return 0.0
+    n = weather.shape[0]
+    total_sea = 0.0
+    count = 0
+    for src, dst in destinations.items():
+        if 0 <= src < n and 0 <= dst < n:
+            total_sea += float(weather[src, dst])
+            count += 1
+    if count == 0:
+        return 0.0
+    mean_route_sea = total_sea / count
+    sea_max = float(config.get("sea_state_max", 3.0))
+    # Reward calm routes: bonus = weight * (1 - normalised_sea)
+    normalised = min(mean_route_sea / max(sea_max, 1e-6), 1.0)
+    bonus_weight = float(config.get("weather_shaping_weight", 0.3))
+    return bonus_weight * (1.0 - normalised)

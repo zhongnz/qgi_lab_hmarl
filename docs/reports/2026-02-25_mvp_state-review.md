@@ -49,7 +49,8 @@ documentation alignment.
 7. ~~Codebase consistency audit.~~ **Done** (evaluate division bug, seed variation, metric key alignment, per-agent reward accumulation, dt_hours config, logger robustness).
 8. ~~Weather effects on fuel/speed.~~ **Done** (`dynamics.py` weather generation, fuel multiplier, speed factor; env integration with per-route sea-state observations).
 9. ~~Gymnasium gym.Env wrapper.~~ **Done** (`gym_wrapper.py` wraps MaritimeEnv with standard Box observation/action spaces).
-10. (New) Investigate parameter-sharing ablations across agent types.
-11. (New) Weather-aware routing experiments (compare policies with/without weather).
-9. (New) Profile training throughput and optimise buffer/network bottlenecks.
-10. (New) Run full hyperparameter sweeps and ablation experiments for final report.
+10. ~~Investigate parameter-sharing ablations across agent types.~~ **Done** (ablation framework supports `env_` prefix overrides for environment config).
+11. ~~Weather-aware routing experiments (compare policies with/without weather).~~ **Done** (`run_weather_sweep()`, weather-aware policies in coordinator and vessel agents, weather reward shaping, `weather_on`/`weather_harsh` MAPPO ablation variants).
+12. (New) Profile training throughput and optimise buffer/network bottlenecks.
+13. (New) Run full hyperparameter sweeps and ablation experiments for final report.
+14. (New) End-to-end weather impact analysis across all policy types.
