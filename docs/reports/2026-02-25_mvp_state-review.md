@@ -47,6 +47,9 @@ documentation alignment.
 5. ~~Add curriculum learning / adaptive difficulty scaling.~~ **Done** (`curriculum.py`).
 6. ~~Proposal alignment audit.~~ **Done** (dock availability, trip duration, coordinator metrics, cadence defaults).
 7. ~~Codebase consistency audit.~~ **Done** (evaluate division bug, seed variation, metric key alignment, per-agent reward accumulation, dt_hours config, logger robustness).
-8. (New) Investigate parameter-sharing ablations across agent types.
+8. ~~Weather effects on fuel/speed.~~ **Done** (`dynamics.py` weather generation, fuel multiplier, speed factor; env integration with per-route sea-state observations).
+9. ~~Gymnasium gym.Env wrapper.~~ **Done** (`gym_wrapper.py` wraps MaritimeEnv with standard Box observation/action spaces).
+10. (New) Investigate parameter-sharing ablations across agent types.
+11. (New) Weather-aware routing experiments (compare policies with/without weather).
 9. (New) Profile training throughput and optimise buffer/network bottlenecks.
 10. (New) Run full hyperparameter sweeps and ablation experiments for final report.

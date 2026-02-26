@@ -6,6 +6,9 @@ exclude = ["runs", "*.ipynb"]
 [tool.ruff.lint]
 select = ["E9", "F", "I"]
 
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
 [tool.mypy]
 python_version = "3.12"
 files = ["hmarl_mvp", "scripts", "tests"]

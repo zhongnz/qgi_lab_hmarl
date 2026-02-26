@@ -332,9 +332,10 @@ def obs_dim_from_env(
 ) -> dict[str, int]:
     """Compute observation dimensions for each agent type.
 
-    Based on the observation builders in ``agents.py``:
+    Based on the observation builders in ``agents.py`` and ``env.py``:
     - Vessel: 5 (local: loc, speed, fuel, emissions, dock_avail)
               + short_horizon_hours (forecast) + 3 (directive)
+              + 1 if weather_enabled (sea_state)
     - Port: 3 (local) + short_horizon_hours (forecast) + 1 (incoming)
     - Coordinator: num_ports * medium_horizon_days + num_vessels * 4 + 1
     """
@@ -344,6 +345,8 @@ def obs_dim_from_env(
     num_vessels = config["num_vessels"]
 
     vessel_dim = 5 + short_h + 3  # 5 local (loc, speed, fuel, emissions, dock_avail)
+    if config.get("weather_enabled", False):
+        vessel_dim += 1  # sea_state on current route
     port_dim = 3 + short_h + 1
     coordinator_dim = num_ports * medium_d + num_vessels * 4 + 1
 

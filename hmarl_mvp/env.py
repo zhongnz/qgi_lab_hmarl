@@ -8,7 +8,7 @@ import numpy as np
 
 from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent, assign_vessels_to_coordinators
 from .config import SEED, DecisionCadence, get_default_config, resolve_distance_matrix
-from .dynamics import dispatch_vessel, step_ports, step_vessels
+from .dynamics import dispatch_vessel, generate_weather, step_ports, step_vessels
 from .forecasts import MediumTermForecaster, ShortTermForecaster
 from .message_bus import MessageBus
 from .metrics import compute_port_metrics
@@ -60,6 +60,8 @@ class MaritimeEnv:
 
         self.bus = MessageBus(self.num_ports)
         self._last_port_actions: list[dict[str, Any]] = []
+        self._weather_enabled = bool(self.cfg.get("weather_enabled", False))
+        self._weather: np.ndarray | None = None
 
     def reset(self) -> dict[str, Any]:
         """Reset state and return initial observations."""
@@ -85,6 +87,7 @@ class MaritimeEnv:
         self.vessel_agents = [VesselAgent(v, self.cfg) for v in self.vessels]
         self.port_agents = [PortAgent(p, self.cfg) for p in self.ports]
         self._reset_runtime_state()
+        self._refresh_weather()
         self._refresh_forecasts()
         return self._get_observations()
 
@@ -198,6 +201,7 @@ class MaritimeEnv:
             distance_nm=self.distance_nm,
             config=self.cfg,
             dt_hours=1.0,
+            weather=self._weather if self._weather_enabled else None,
         )
 
         for vessel in self.vessels:
@@ -255,6 +259,7 @@ class MaritimeEnv:
 
         self.t += 1
         done = self.t >= self.cfg["rollout_steps"]
+        self._refresh_weather()
         self._refresh_forecasts()
         obs = self._get_observations()
         info = {
@@ -279,7 +284,11 @@ class MaritimeEnv:
                 )
             ),
             "step_delay_hours": float(sum(step_delay_by_vessel.values())),
+            "weather_enabled": self._weather_enabled,
         }
+        if self._weather_enabled and self._weather is not None:
+            info["mean_sea_state"] = float(np.mean(self._weather))
+            info["max_sea_state"] = float(np.max(self._weather))
         return obs, rewards, done, info
 
     def sample_stub_actions(self) -> dict[str, Any]:
@@ -350,6 +359,14 @@ class MaritimeEnv:
             "ports": port_actions,
         }
 
+    def _refresh_weather(self) -> None:
+        """Generate new per-route sea-state matrix for this tick."""
+        if self._weather_enabled:
+            sea_state_max = float(self.cfg.get("sea_state_max", 3.0))
+            self._weather = generate_weather(self.num_ports, self.rng, sea_state_max)
+        else:
+            self._weather = None
+
     def _refresh_forecasts(self) -> None:
         """Refresh cached forecasts exactly once per environment tick."""
         self.medium_forecast = self.medium_forecaster.predict(self.ports, self.rng)
@@ -409,6 +426,11 @@ class MaritimeEnv:
             v_obs = vessel_agent.get_obs(
                 short[dest], directive=directive, dock_availability=dock_avail,
             )
+            # Append weather sea state for the vessel's current route
+            if self._weather_enabled and self._weather is not None:
+                src = vessel.location
+                sea_state = float(self._weather[src, dest])
+                v_obs = np.concatenate([v_obs, np.array([sea_state])])
             vessel_obs.append(v_obs)
 
         port_obs = []

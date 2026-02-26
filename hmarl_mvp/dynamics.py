@@ -8,14 +8,72 @@ import numpy as np
 
 from .state import PortState, VesselState
 
+# ---------------------------------------------------------------------------
+# Weather generation
+# ---------------------------------------------------------------------------
+
+
+def generate_weather(
+    num_ports: int,
+    rng: np.random.Generator,
+    sea_state_max: float = 3.0,
+) -> np.ndarray:
+    """Generate a symmetric sea-state matrix for the current step.
+
+    Returns a ``(num_ports, num_ports)`` matrix where entry ``[i, j]``
+    is the sea state on the route from port *i* to port *j*.  Values
+    are drawn uniformly from ``[0, sea_state_max]`` and the matrix is
+    made symmetric (same conditions in both directions).  The diagonal
+    is zero (no route from a port to itself).
+    """
+    raw = rng.uniform(0, sea_state_max, size=(num_ports, num_ports))
+    symmetric = (raw + raw.T) / 2.0
+    np.fill_diagonal(symmetric, 0.0)
+    return symmetric
+
+
+def weather_fuel_multiplier(sea_state: float, penalty_factor: float = 0.15) -> float:
+    """Return the fuel multiplier caused by sea state.
+
+    ``multiplier = 1 + penalty_factor * sea_state``
+
+    With defaults (penalty 0.15, max sea state 3), worst case is a
+    1.45× fuel burn which is consistent with IMO rough-weather
+    guidelines.
+    """
+    return 1.0 + penalty_factor * max(float(sea_state), 0.0)
+
+
+def weather_speed_factor(sea_state: float, penalty_factor: float = 0.15) -> float:
+    """Return effective speed fraction under weather.
+
+    ``factor = 1 / (1 + penalty_factor * sea_state)``
+
+    This reduces effective distance travelled per tick in rough seas.
+    """
+    return 1.0 / weather_fuel_multiplier(sea_state, penalty_factor)
+
+
+# ---------------------------------------------------------------------------
+# Core physics
+# ---------------------------------------------------------------------------
+
 
 def compute_fuel_and_emissions(
     speed: float,
     config: dict[str, Any],
     hours: float = 1.0,
+    sea_state: float = 0.0,
 ) -> tuple[float, float]:
-    """Cubic fuel model with linear emission factor."""
-    fuel = config["fuel_rate_coeff"] * (speed**3) * hours
+    """Cubic fuel model with linear emission factor and optional weather penalty.
+
+    When ``sea_state > 0`` and the config has ``weather_penalty_factor``,
+    fuel consumption is multiplied by ``1 + penalty_factor * sea_state``
+    to model increased resistance in rough seas.
+    """
+    penalty = float(config.get("weather_penalty_factor", 0.15))
+    multiplier = weather_fuel_multiplier(sea_state, penalty)
+    fuel = config["fuel_rate_coeff"] * (speed**3) * hours * multiplier
     co2 = fuel * config["emission_factor"]
     return fuel, co2
 
@@ -25,8 +83,15 @@ def step_vessels(
     distance_nm: np.ndarray,
     config: dict[str, Any],
     dt_hours: float = 1.0,
+    weather: np.ndarray | None = None,
 ) -> dict[int, dict[str, float | bool]]:
-    """Advance all in-transit vessels by one tick and return per-vessel step deltas."""
+    """Advance all in-transit vessels by one tick and return per-vessel step deltas.
+
+    If *weather* is provided (a ``num_ports × num_ports`` sea-state matrix),
+    fuel consumption is increased and effective distance covered is reduced
+    proportionally.
+    """
+    penalty = float(config.get("weather_penalty_factor", 0.15))
     step_stats: dict[int, dict[str, float | bool]] = {}
     for vessel in vessels:
         fuel_used = 0.0
@@ -39,8 +104,23 @@ def step_vessels(
                 "arrived": arrived,
             }
             continue
-        vessel.position_nm += vessel.speed * dt_hours
-        fuel_used, co2 = compute_fuel_and_emissions(vessel.speed, config, dt_hours)
+
+        # Determine sea state for this vessel's route
+        sea_state = 0.0
+        if weather is not None:
+            src = vessel.location
+            dst = vessel.destination
+            if 0 <= src < weather.shape[0] and 0 <= dst < weather.shape[1]:
+                sea_state = float(weather[src, dst])
+
+        # Weather reduces effective speed (less distance per tick)
+        speed_frac = weather_speed_factor(sea_state, penalty)
+        effective_advance = vessel.speed * dt_hours * speed_frac
+        vessel.position_nm += effective_advance
+
+        fuel_used, co2 = compute_fuel_and_emissions(
+            vessel.speed, config, dt_hours, sea_state=sea_state,
+        )
         vessel.fuel = max(vessel.fuel - fuel_used, 0.0)
         vessel.emissions += co2
 

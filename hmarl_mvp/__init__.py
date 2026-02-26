@@ -27,7 +27,15 @@ from .curriculum import (
     CurriculumStage,
     make_curriculum_configs,
 )
-from .dynamics import compute_fuel_and_emissions, dispatch_vessel, step_ports, step_vessels
+from .dynamics import (
+    compute_fuel_and_emissions,
+    dispatch_vessel,
+    generate_weather,
+    step_ports,
+    step_vessels,
+    weather_fuel_multiplier,
+    weather_speed_factor,
+)
 from .env import MaritimeEnv
 from .experiment import (
     run_experiment,
@@ -46,6 +54,7 @@ from .experiment import (
     summarize_policy_results,
 )
 from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+from .gym_wrapper import MaritimeGymEnv
 from .learned_forecaster import (
     ForecastDataset,
     LearnedForecaster,

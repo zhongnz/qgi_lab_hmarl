@@ -44,3 +44,17 @@ Code references:
 4. ~~Track per-agent emission attribution to support diagnostics and ablation.~~
    **Partially done** — `avg_route_efficiency` and `avg_trip_duration_hours` in
    coordinator metrics provide per-vessel attribution proxies.
+
+## Weather effects on emissions (added Mar 2026)
+
+When `weather_enabled=True`, sea-state conditions affect fuel consumption and
+effective vessel speed on each route:
+
+- **Fuel multiplier**: `1 + weather_penalty_factor × sea_state` — increases
+  fuel burn (and proportionally CO2) in rough seas.
+- **Speed factor**: `1 / (1 + weather_penalty_factor × sea_state)` — reduces
+  distance covered per tick, extending voyage time.
+
+This creates a new strategic dimension: the coordinator must weigh routing
+through calm vs. rough sea lanes. Vessels experience higher emissions and slower
+progress in bad weather, which feeds back into all three reward functions.

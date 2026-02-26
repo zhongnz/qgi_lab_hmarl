@@ -105,3 +105,24 @@ Returned by `compute_coordination_metrics()`.
 
 - `policy_agreement_rate`: fraction of requests accepted vs submitted.
 - `communication_overhead`: total messages exchanged.
+
+## Weather Metrics
+
+Available when `weather_enabled=True` in the environment config. Returned in the
+step `info` dict.
+
+- `weather_enabled`: boolean flag indicating weather is active.
+- `mean_sea_state`: mean sea state across all routes at the current step.
+- `max_sea_state`: maximum sea state across all routes at the current step.
+
+### Weather Config Parameters
+
+- `weather_enabled` (bool, default `False`): enable per-route sea-state effects.
+- `sea_state_max` (float, default `3.0`): upper bound for uniformly sampled sea state.
+- `weather_penalty_factor` (float, default `0.15`): multiplier for fuel increase and speed reduction per unit sea state.
+
+### Weather Physics
+
+- **Fuel multiplier**: `1 + weather_penalty_factor × sea_state` (default worst case: 1.45×).
+- **Speed factor**: `1 / (1 + weather_penalty_factor × sea_state)` (effective distance reduced).
+- Vessel observations gain one extra dimension (`sea_state`) when weather is enabled.

@@ -42,6 +42,10 @@ class HMARLConfig:
     initial_fuel: float = 100.0
     service_time_hours: float = 6.0
     dt_hours: float = 1.0
+    # Weather (opt-in)
+    weather_enabled: bool = False
+    sea_state_max: float = 3.0
+    weather_penalty_factor: float = 0.15
     # Economic parameters (RQ4)
     cargo_value_per_vessel: float = 1_000_000.0
     fuel_price_per_ton: float = 600.0
@@ -97,6 +101,9 @@ class HMARLConfig:
             "initial_fuel": "float>0",
             "service_time_hours": "float>0",
             "dt_hours": "float>0",
+            # Weather
+            "sea_state_max": "float>0",
+            "weather_penalty_factor": "float>=0",
         }
         for name, rule in _rules.items():
             value = getattr(self, name)
