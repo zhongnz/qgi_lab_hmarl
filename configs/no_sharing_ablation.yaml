@@ -18,17 +18,17 @@ env:
   rollout_steps: 55
 
 mappo:
-  lr: 0.0003
-  rollout_length: 50
-  num_epochs: 4
-  minibatch_size: 128
-  clip_eps: 0.2
-  gamma: 0.99
-  gae_lambda: 0.95
-  hidden_dims: [64, 64]
+  lr: 0.0003                   # Adam learning rate
+  rollout_length: 50            # steps per rollout before PPO update
+  num_epochs: 4                 # PPO epochs per update
+  minibatch_size: 128           # samples per PPO minibatch
+  clip_eps: 0.2                 # PPO clipping epsilon
+  gamma: 0.99                   # discount factor
+  gae_lambda: 0.95              # GAE lambda for advantage estimation
+  hidden_dims: [64, 64]         # actor-critic MLP hidden layer sizes
   normalize_observations: true
   normalize_rewards: true
-  parameter_sharing: false
+  parameter_sharing: false      # each agent gets its own network (ablation)
 
 num_iterations: 200
 num_seeds: 3

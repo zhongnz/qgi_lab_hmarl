@@ -116,6 +116,7 @@ class TrainingLogger:
 
     @property
     def num_entries(self) -> int:
+        """Total number of logged entries."""
         return len(self._entries)
 
     # ------------------------------------------------------------------

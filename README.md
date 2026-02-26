@@ -37,7 +37,6 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── experiment_config.py # YAML experiment config + TensorBoard + runner
 │   ├── stats.py        # Statistical evaluation (Welch t-test, bootstrap CI)
 │   ├── plotting.py     # Matplotlib plot helpers
-│   ├── analysis.py     # Post-processing: comparisons, ranking, ablation deltas
 │   ├── report.py       # Markdown report generators
 │   ├── logger.py       # Structured JSONL training logger
 │   ├── checkpointing.py # Training checkpoints and early stopping
@@ -53,8 +52,9 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── run_baselines.py      # CLI: run heuristic baseline experiments
 │   ├── run_experiment.py     # CLI: run experiments from YAML configs
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
-│   └── train_forecaster.py   # CLI: train the learned forecaster
-├── tests/                    # 666 tests (pytest)
+│   ├── train_forecaster.py   # CLI: train the learned forecaster
+│   └── generate_paper_figures.py  # CLI: generate publication-ready figures
+├── tests/                    # 639 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
@@ -75,14 +75,13 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_training_pipeline.py
 │   ├── test_training_quality.py
 │   ├── test_new_modules.py
-│   ├── test_new_features.py
 │   ├── test_sweep_ablation.py
 │   ├── test_report_plotting.py
 │   ├── test_plotting.py
 │   ├── test_eval_metrics.py
 │   ├── test_proposal_alignment.py
 │   ├── test_audit_fixes.py
-│   ├── test_coverage_gaps_v2.py
+│   ├── test_weather_ar1_and_coord_mask.py
 │   ├── test_weather_gym.py
 │   ├── test_weather_policy_rewards.py
 │   ├── test_weather_integration.py
@@ -205,12 +204,12 @@ python scripts/run_experiment.py configs/baseline.yaml --smoke
 Experiment configs specify environment, MAPPO hyper-parameters, curriculum
 stages, seed counts, and output paths in a single reproducible YAML file.
 
-### 7) Multi-seed evaluation
+### 7) Run MAPPO comparison vs baselines
 
 ```python
-from hmarl_mvp import run_multi_seed_policy_sweep, summarize_multi_seed
-df = run_multi_seed_policy_sweep(seeds=[42, 123, 256, 512, 1024], steps=20)
-summary = summarize_multi_seed(df)
+from hmarl_mvp.experiment import run_mappo_comparison
+results = run_mappo_comparison(train_iterations=50, rollout_length=64, eval_steps=20)
+# results contains per-policy DataFrames + training log
 ```
 
 ### 8) Use notebook for analysis

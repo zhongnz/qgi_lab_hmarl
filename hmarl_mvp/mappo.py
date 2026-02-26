@@ -97,6 +97,7 @@ class RunningMeanStd:
 
     @property
     def std(self) -> float:
+        """Running standard deviation (clamped above *epsilon*)."""
         return float(max(np.sqrt(max(self.var, 0.0)), self._epsilon))
 
 

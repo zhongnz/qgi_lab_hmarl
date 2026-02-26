@@ -49,6 +49,7 @@ class ForecastDataset:
     def to_tensors(
         self, device: torch.device | str = "cpu"
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert *inputs* and *targets* to float32 tensors on *device*."""
         return (
             torch.as_tensor(self.inputs, dtype=torch.float32, device=device),
             torch.as_tensor(self.targets, dtype=torch.float32, device=device),
@@ -163,6 +164,7 @@ class LearnedForecasterNet(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass: ``(batch, input_dim) -> (batch, output_dim)``."""
         return self.net(x)
 
 
@@ -194,6 +196,7 @@ class LearnedForecaster:
 
     @property
     def net(self) -> LearnedForecasterNet:
+        """Underlying PyTorch network module."""
         return self._net
 
     def predict(self, ports: list[PortState], rng: np.random.Generator | None = None) -> np.ndarray:

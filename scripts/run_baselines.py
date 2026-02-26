@@ -32,6 +32,7 @@ from hmarl_mvp.plotting import (
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the baseline runner."""
     parser = argparse.ArgumentParser(description="Run HMARL MVP baselines/ablations.")
     parser.add_argument("--steps", type=int, default=None, help="Override rollout steps.")
     parser.add_argument("--seed", type=int, default=42, help="Experiment seed.")
@@ -50,6 +51,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Run all heuristic baselines, save CSVs and plots."""
     args = parse_args()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

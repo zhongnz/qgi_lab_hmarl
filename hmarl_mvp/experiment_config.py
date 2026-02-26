@@ -174,6 +174,7 @@ def run_from_config(config: ExperimentConfig) -> dict[str, Any]:
     log_fn = None
     if tb_writer is not None:
         def log_fn(it: int, entry: dict[str, Any]) -> None:
+            """Write per-iteration scalars to TensorBoard."""
             _write_tb_scalars(tb_writer, it, entry)
 
     # Multi-seed or single-seed
@@ -222,11 +223,31 @@ def run_from_config(config: ExperimentConfig) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=True)
     save_experiment_config(config, out / "experiment_config.yaml")
 
+    # Save per-seed metrics CSVs
+    import pandas as pd
+
+    seeds = result.get("seeds", [])
+    histories = result.get("histories", [])
+    for seed_val, history in zip(seeds, histories):
+        seed_dir = out / f"seed_{seed_val}"
+        seed_dir.mkdir(parents=True, exist_ok=True)
+        if history:
+            pd.DataFrame(history).to_csv(seed_dir / "metrics.csv", index=False)
+
+    # Save summary CSV (one row per seed)
+    summaries = result.get("summaries", [])
+    if summaries:
+        summary_rows = []
+        for seed_val, s in zip(seeds, summaries):
+            row = {"seed": seed_val, **s}
+            summary_rows.append(row)
+        pd.DataFrame(summary_rows).to_csv(out / "summary.csv", index=False)
+
     # Save summary JSON
     summary_data = {
         "name": config.name,
         "config": config.to_dict(),
-        "summaries": result.get("summaries", []),
+        "summaries": summaries,
         "aggregate": result.get("aggregate_summary", {}),
     }
     with open(out / "experiment_summary.json", "w") as f:

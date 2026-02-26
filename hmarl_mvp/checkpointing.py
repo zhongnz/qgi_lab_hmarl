@@ -93,10 +93,12 @@ class TrainingCheckpoint:
 
     @property
     def best_metric(self) -> float:
+        """Best metric value observed so far."""
         return self._best_metric
 
     @property
     def best_iteration(self) -> int:
+        """Iteration number at which *best_metric* was recorded."""
         return self._best_iteration
 
     def save_history(self, path: str | Path | None = None) -> Path:
@@ -186,10 +188,12 @@ class EarlyStopping:
 
     @property
     def wait_count(self) -> int:
+        """Number of iterations since the last improvement."""
         return self._wait
 
     @property
     def stopped_iteration(self) -> int:
+        """Iteration at which early stopping was triggered (0 if not yet)."""
         return self._stopped_iteration
 
     def reset(self) -> None:
