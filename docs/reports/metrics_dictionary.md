@@ -190,3 +190,45 @@ This ensures the RL agent cannot select dangerously fast speeds in bad weather.
 All `run_mappo.py` subcommands accept:
 - `--weather`: enable weather effects in the environment.
 - `--sea-state-max FLOAT`: set the maximum sea-state value (default: 3.0).
+
+## Training Infrastructure Metrics
+
+### Per-Iteration Timing
+
+Each training iteration in `MAPPOTrainer.train()` logs:
+
+| Key             | Type  | Description                                |
+|-----------------|-------|--------------------------------------------|
+| `rollout_time`  | float | Seconds spent collecting rollout data.     |
+| `update_time`   | float | Seconds spent on PPO gradient updates.     |
+| `iter_time`     | float | Total wall-clock time for the iteration.   |
+| `total_train_time` | float | Cumulative training time (last entry only). |
+
+### Early Stopping
+
+`train(early_stopping_patience=N)` stops training after N consecutive
+iterations with no improvement in the checkpoint metric.
+
+| Key              | Type | Description                                    |
+|------------------|------|------------------------------------------------|
+| `early_stopped`  | bool | Present and True on the last entry if triggered. |
+
+### Multi-Seed Training (`train_multi_seed`)
+
+Runs N independent training seeds and aggregates learning curves.
+
+| Key                    | Type       | Description                              |
+|------------------------|------------|------------------------------------------|
+| `mean_reward_curve`    | ndarray    | Per-iteration mean reward across seeds.  |
+| `std_reward_curve`     | ndarray    | Per-iteration std across seeds.          |
+| `mean_best_mean_reward` | float     | Mean of per-seed best rewards.           |
+| `std_best_mean_reward`  | float     | Std of per-seed best rewards.            |
+| `mean_train_time`      | float      | Mean wall-clock time per seed.           |
+| `total_train_time`     | float      | Summed wall-clock time across all seeds. |
+
+### CLI Multi-Seed Subcommand
+
+`run_mappo.py multiseed` runs multi-seed training:
+- `--num-seeds N`: number of independent seeds (default: 3).
+- `--early-stopping N`: patience for early stopping per seed (default: 0).
+- `--no-plots`: skip generating learning curve and timing plots.

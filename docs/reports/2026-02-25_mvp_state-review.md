@@ -51,6 +51,14 @@ documentation alignment.
 9. ~~Gymnasium gym.Env wrapper.~~ **Done** (`gym_wrapper.py` wraps MaritimeEnv with standard Box observation/action spaces).
 10. ~~Investigate parameter-sharing ablations across agent types.~~ **Done** (ablation framework supports `env_` prefix overrides for environment config).
 11. ~~Weather-aware routing experiments (compare policies with/without weather).~~ **Done** (`run_weather_sweep()`, weather-aware policies in coordinator and vessel agents, weather reward shaping, `weather_on`/`weather_harsh` MAPPO ablation variants).
-12. (New) Profile training throughput and optimise buffer/network bottlenecks.
-13. (New) Run full hyperparameter sweeps and ablation experiments for final report.
-14. (New) End-to-end weather impact analysis across all policy types.
+12. ~~Curriculum weather ramp (sea-state, penalty factor, shaping weight, bool enable).~~ **Done** (`curriculum.py` rampable float & bool keys).
+13. ~~CLI --weather / --sea-state-max flags for MAPPO.~~ **Done** (shared parent parser in `run_mappo.py`).
+14. ~~Gym wrapper weather_matrix exposure.~~ **Done** (`gym_wrapper.py` step() info dict).
+15. ~~MAPPO vessel weather speed capping.~~ **Done** (`_vessel_weather_speed_cap()` + `speed_cap` param in `_nn_to_vessel_action()`).
+16. ~~Training profiling (rollout_time, update_time, iter_time per iteration).~~ **Done** (`train()` timing instrumentation + `total_train_time`).
+17. ~~Early stopping with patience in train().~~ **Done** (`early_stopping_patience` parameter).
+18. ~~Multi-seed training runner.~~ **Done** (`train_multi_seed()` in `mappo.py`).
+19. ~~Multi-seed learning curve + timing plots.~~ **Done** (`plot_multi_seed_curves()`, `plot_timing_breakdown()` in `plotting.py`).
+20. ~~CLI multiseed subcommand.~~ **Done** (`run_mappo.py multiseed`).
+21. (New) Run full hyperparameter sweeps and ablation experiments for final report.
+22. (New) End-to-end weather impact analysis across all policy types.

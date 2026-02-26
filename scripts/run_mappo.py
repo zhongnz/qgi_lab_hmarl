@@ -73,6 +73,8 @@ def parse_args() -> argparse.Namespace:
     train_p.add_argument("--output-dir", type=str, default="runs/mappo_train")
     train_p.add_argument("--vessels", type=int, default=None)
     train_p.add_argument("--ports", type=int, default=None)
+    train_p.add_argument("--early-stopping", type=int, default=0,
+                         help="Early stopping patience (0 = disabled)")
 
     # ---- compare ----
     cmp_p = sub.add_parser("compare", parents=[weather_parent],
@@ -98,6 +100,18 @@ def parse_args() -> argparse.Namespace:
     abl_p.add_argument("--rollout-length", type=int, default=64)
     abl_p.add_argument("--seed", type=int, default=42)
     abl_p.add_argument("--output-dir", type=str, default="runs/mappo_ablation")
+
+    # ---- multiseed ----
+    ms_p = sub.add_parser("multiseed", parents=[weather_parent],
+                          help="Multi-seed training with aggregated curves")
+    ms_p.add_argument("--iterations", type=int, default=50)
+    ms_p.add_argument("--rollout-length", type=int, default=64)
+    ms_p.add_argument("--lr", type=float, default=3e-4)
+    ms_p.add_argument("--num-seeds", type=int, default=3)
+    ms_p.add_argument("--early-stopping", type=int, default=0,
+                       help="Early stopping patience (0 = disabled)")
+    ms_p.add_argument("--output-dir", type=str, default="runs/mappo_multiseed")
+    ms_p.add_argument("--no-plots", action="store_true")
 
     return parser.parse_args()
 
@@ -148,6 +162,7 @@ def cmd_train(args: argparse.Namespace) -> None:
         eval_interval=args.eval_interval,
         log_fn=logger.log,
         checkpoint_dir=ckpt_dir,
+        early_stopping_patience=args.early_stopping,
     )
     elapsed = time.time() - t0
     logger.close()
@@ -275,10 +290,79 @@ def cmd_ablate(args: argparse.Namespace) -> None:
     print(f"Results: {out_dir / 'ablation_results.csv'}")
 
 
+def cmd_multiseed(args: argparse.Namespace) -> None:
+    """Run multi-seed training with aggregated learning curves."""
+    from hmarl_mvp.mappo import MAPPOConfig, train_multi_seed
+    from hmarl_mvp.plotting import plot_multi_seed_curves, plot_timing_breakdown
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    env_cfg: dict[str, Any] = {}
+    if getattr(args, "weather", False):
+        env_cfg["weather_enabled"] = True
+        env_cfg["sea_state_max"] = args.sea_state_max
+
+    mappo_cfg = MAPPOConfig(
+        rollout_length=args.rollout_length,
+        lr=args.lr,
+    )
+
+    seeds = [42 + i * 7 for i in range(args.num_seeds)]
+    print(f"Multi-seed MAPPO training: {args.iterations} iters × {len(seeds)} seeds")
+    print(f"  seeds: {seeds}")
+    if env_cfg.get("weather_enabled"):
+        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
+    t0 = time.time()
+
+    result = train_multi_seed(
+        env_config=env_cfg or None,
+        mappo_config=mappo_cfg,
+        num_iterations=args.iterations,
+        seeds=seeds,
+        early_stopping_patience=args.early_stopping,
+        checkpoint_dir=str(out_dir / "checkpoints"),
+    )
+    elapsed = time.time() - t0
+
+    # Save aggregate summary
+    agg = result["aggregate_summary"]
+    print(f"\nMulti-seed training complete in {elapsed:.1f}s")
+    print(f"  mean best reward: {agg.get('mean_best_mean_reward', 0):.4f}"
+          f" ± {agg.get('std_best_mean_reward', 0):.4f}")
+    print(f"  mean final reward: {agg.get('mean_final_mean_reward', 0):.4f}"
+          f" ± {agg.get('std_final_mean_reward', 0):.4f}")
+
+    # Save per-seed summaries
+    import json
+    with open(out_dir / "multiseed_summary.json", "w") as f:
+        json.dump({
+            "seeds": result["seeds"],
+            "summaries": result["summaries"],
+            "aggregate": agg,
+        }, f, indent=2, default=str)
+
+    if not args.no_plots:
+        plot_multi_seed_curves(
+            result,
+            metric="mean_reward",
+            out_path=str(out_dir / "multiseed_reward_curve.png"),
+        )
+        # Also plot timing from first seed's history as representative
+        if result["histories"]:
+            plot_timing_breakdown(
+                result["histories"][0],
+                out_path=str(out_dir / "timing_breakdown.png"),
+            )
+        print(f"Plots saved to {out_dir}")
+
+    print(f"Summary: {out_dir / 'multiseed_summary.json'}")
+
+
 def main() -> None:
     args = parse_args()
     if args.command is None:
-        print("No command specified. Use: train | compare | sweep | ablate")
+        print("No command specified. Use: train | compare | sweep | ablate | multiseed")
         sys.exit(1)
 
     dispatch = {
@@ -286,6 +370,7 @@ def main() -> None:
         "compare": cmd_compare,
         "sweep": cmd_sweep,
         "ablate": cmd_ablate,
+        "multiseed": cmd_multiseed,
     }
     dispatch[args.command](args)
 

@@ -415,6 +415,109 @@ def plot_training_dashboard(
     _save_or_show(fig, out_path)
 
 
+def plot_multi_seed_curves(
+    multi_seed_result: dict[str, Any],
+    metric: str = "mean_reward",
+    title: str | None = None,
+    out_path: str | None = None,
+) -> None:
+    """Plot learning curves with confidence bands across multiple seeds.
+
+    Parameters
+    ----------
+    multi_seed_result:
+        Output from ``train_multi_seed()`` containing ``histories``
+        and ``seeds`` keys.
+    metric:
+        Per-iteration metric to plot (default ``"mean_reward"``).
+    title:
+        Optional plot title.
+    out_path:
+        If provided, save figure to this path.
+    """
+    import numpy as np
+
+    histories = multi_seed_result["histories"]
+    seeds = multi_seed_result.get("seeds", list(range(len(histories))))
+    max_len = max(len(h) for h in histories) if histories else 0
+    if max_len == 0:
+        return
+
+    # Build (num_seeds x max_iters) matrix
+    mat = np.full((len(histories), max_len), np.nan, dtype=np.float64)
+    for si, hist in enumerate(histories):
+        for ti, entry in enumerate(hist):
+            mat[si, ti] = entry.get(metric, np.nan)
+
+    iters = np.arange(max_len)
+    with np.errstate(all="ignore"):
+        mean = np.nanmean(mat, axis=0)
+        std = np.nanstd(mat, axis=0)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Individual seed traces (translucent)
+    for si in range(len(histories)):
+        valid = ~np.isnan(mat[si])
+        ax.plot(
+            iters[valid], mat[si][valid],
+            alpha=0.25, linewidth=0.8, color="steelblue",
+        )
+
+    # Mean ± 1 std band
+    valid = ~np.isnan(mean)
+    ax.plot(iters[valid], mean[valid], color="darkblue", linewidth=2, label="mean")
+    ax.fill_between(
+        iters[valid],
+        (mean - std)[valid],
+        (mean + std)[valid],
+        alpha=0.2, color="steelblue", label="± 1 std",
+    )
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel(metric.replace("_", " ").title())
+    ax.legend(fontsize=9)
+    ax.set_title(title or f"Multi-Seed Training ({len(seeds)} seeds)")
+    plt.tight_layout()
+    _save_or_show(fig, out_path)
+
+
+def plot_timing_breakdown(
+    history: list[dict[str, Any]],
+    out_path: str | None = None,
+) -> None:
+    """Stacked area chart of rollout vs update time per iteration.
+
+    Parameters
+    ----------
+    history:
+        Per-iteration log from ``MAPPOTrainer.train()`` with
+        ``rollout_time`` and ``update_time`` keys.
+    """
+    import pandas as pd
+
+    df = pd.DataFrame(history)
+    if "rollout_time" not in df.columns or "update_time" not in df.columns:
+        return
+    iters = df["iteration"] if "iteration" in df.columns else range(len(df))
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.stackplot(
+        iters,
+        df["rollout_time"],
+        df["update_time"],
+        labels=["Rollout", "Update"],
+        alpha=0.7,
+        colors=["#4c72b0", "#dd8452"],
+    )
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Time (s)")
+    ax.set_title("Training Time Breakdown")
+    ax.legend(loc="upper left", fontsize=9)
+    plt.tight_layout()
+    _save_or_show(fig, out_path)
+
+
 def _isnan(val: Any) -> bool:
     """Check if a value is NaN."""
     try:

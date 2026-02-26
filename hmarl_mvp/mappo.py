@@ -949,6 +949,7 @@ class MAPPOTrainer:
         log_fn: Any | None = None,
         checkpoint_dir: str | None = None,
         checkpoint_metric: str = "mean_reward",
+        early_stopping_patience: int = 0,
     ) -> list[dict[str, Any]]:
         """Run a complete training loop with optional curriculum scheduling.
 
@@ -971,14 +972,18 @@ class MAPPOTrainer:
         checkpoint_metric:
             The log entry key used to decide the "best" model.
             Default ``"mean_reward"`` (higher is better).
+        early_stopping_patience:
+            If > 0, stop training after this many consecutive iterations
+            with no improvement in *checkpoint_metric*.  0 disables.
 
         Returns
         -------
         list[dict[str, Any]]
             Per-iteration log entries with rewards, update metrics, LR,
-            diagnostics, and optional eval metrics.
+            diagnostics, timing, and optional eval metrics.
         """
         import os
+        import time
 
         self.mappo_cfg.total_iterations = max(
             self.mappo_cfg.total_iterations, num_iterations
@@ -986,11 +991,15 @@ class MAPPOTrainer:
         history: list[dict[str, Any]] = []
         prev_cfg_key: str | None = None
         best_metric: float = float("-inf")
+        patience_counter: int = 0
+        train_start = time.perf_counter()
 
         if checkpoint_dir is not None:
             os.makedirs(checkpoint_dir, exist_ok=True)
 
         for it in range(num_iterations):
+            iter_start = time.perf_counter()
+
             # --- Curriculum: rebuild env if config changes ---
             if curriculum is not None:
                 cur_cfg = curriculum.get_config(it, num_iterations)
@@ -999,9 +1008,16 @@ class MAPPOTrainer:
                     self._rebuild_env(cur_cfg)
                     prev_cfg_key = cfg_key
 
-            # --- Collect + Update ---
+            # --- Collect + Update (with timing) ---
+            t0 = time.perf_counter()
             rollout_info = self.collect_rollout()
+            rollout_time = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
             update_info = self.update()
+            update_time = time.perf_counter() - t0
+
+            iter_time = time.perf_counter() - iter_start
 
             entry: dict[str, Any] = {
                 "iteration": it,
@@ -1012,6 +1028,9 @@ class MAPPOTrainer:
                 "coordinator_mean_reward": rollout_info.get("coordinator_mean_reward", 0.0),
                 "lr": self.current_lr,
                 "entropy_coeff": self.current_entropy_coeff,
+                "rollout_time": rollout_time,
+                "update_time": update_time,
+                "iter_time": iter_time,
             }
             for agent_type, res in update_info.items():
                 entry[f"{agent_type}_policy_loss"] = res.policy_loss
@@ -1033,12 +1052,25 @@ class MAPPOTrainer:
                 log_fn(it, entry)
 
             # --- Auto-checkpoint best model ---
-            if checkpoint_dir is not None:
-                metric_val = entry.get(checkpoint_metric, float("-inf"))
-                if isinstance(metric_val, (int, float)) and metric_val > best_metric:
-                    best_metric = metric_val
+            metric_val = entry.get(checkpoint_metric, float("-inf"))
+            improved = isinstance(metric_val, (int, float)) and metric_val > best_metric
+            if improved:
+                best_metric = metric_val
+                patience_counter = 0
+                if checkpoint_dir is not None:
                     prefix = os.path.join(checkpoint_dir, "best")
                     self.save_models(prefix)
+            else:
+                patience_counter += 1
+
+            # --- Early stopping ---
+            if early_stopping_patience > 0 and patience_counter >= early_stopping_patience:
+                entry["early_stopped"] = True
+                break
+
+        total_time = time.perf_counter() - train_start
+        if history:
+            history[-1]["total_train_time"] = total_time
 
         return history
 
@@ -1418,3 +1450,121 @@ class MAPPOTrainer:
                 summary[f"final_{mr_key}"] = mr_vals[-1]
 
         return summary
+
+
+# ---------------------------------------------------------------------------
+# Multi-seed training
+# ---------------------------------------------------------------------------
+
+
+def train_multi_seed(
+    env_config: dict[str, Any] | None = None,
+    mappo_config: MAPPOConfig | None = None,
+    num_iterations: int = 50,
+    seeds: list[int] | None = None,
+    num_seeds: int = 3,
+    curriculum: Any | None = None,
+    eval_interval: int = 0,
+    early_stopping_patience: int = 0,
+    checkpoint_dir: str | None = None,
+) -> dict[str, Any]:
+    """Train across multiple seeds and aggregate learning curves.
+
+    Parameters
+    ----------
+    env_config:
+        Environment configuration dict.
+    mappo_config:
+        MAPPO hyper-parameters.
+    num_iterations:
+        Training iterations per seed.
+    seeds:
+        Explicit list of seeds.  If *None*, generates ``num_seeds``
+        deterministic seeds starting from 42.
+    num_seeds:
+        Number of seeds when *seeds* is not provided.
+    curriculum:
+        Optional ``CurriculumScheduler``.
+    eval_interval:
+        Passed to ``MAPPOTrainer.train()``.
+    early_stopping_patience:
+        Passed to ``MAPPOTrainer.train()``.
+    checkpoint_dir:
+        If provided, per-seed checkpoints are saved in sub-directories.
+
+    Returns
+    -------
+    dict with:
+        ``seeds`` — list of seeds used.
+        ``histories`` — list of per-seed training histories.
+        ``mean_reward_curve`` — np.ndarray of shape (max_iters,) with
+            per-iteration mean reward averaged across seeds.
+        ``std_reward_curve`` — np.ndarray of corresponding std.
+        ``summaries`` — list of per-seed training summaries.
+        ``aggregate_summary`` — aggregated summary across all seeds.
+    """
+    import os
+
+    if seeds is None:
+        seeds = [42 + i * 7 for i in range(num_seeds)]
+
+    histories: list[list[dict[str, Any]]] = []
+    summaries: list[dict[str, Any]] = []
+
+    for seed in seeds:
+        ckpt = None
+        if checkpoint_dir is not None:
+            ckpt = os.path.join(checkpoint_dir, f"seed_{seed}")
+        trainer = MAPPOTrainer(
+            env_config=env_config,
+            mappo_config=mappo_config,
+            seed=seed,
+        )
+        history = trainer.train(
+            num_iterations=num_iterations,
+            curriculum=curriculum,
+            eval_interval=eval_interval,
+            early_stopping_patience=early_stopping_patience,
+            checkpoint_dir=ckpt,
+        )
+        histories.append(history)
+        summaries.append(MAPPOTrainer.training_summary(history))
+
+    # Align curves to the longest run and aggregate
+    max_len = max(len(h) for h in histories) if histories else 0
+    reward_matrix = np.full((len(seeds), max_len), np.nan, dtype=np.float64)
+    for si, hist in enumerate(histories):
+        for ti, entry in enumerate(hist):
+            reward_matrix[si, ti] = entry.get("mean_reward", np.nan)
+
+    with np.errstate(all="ignore"):
+        mean_curve = np.nanmean(reward_matrix, axis=0)
+        std_curve = np.nanstd(reward_matrix, axis=0)
+
+    # Aggregate summary
+    agg: dict[str, Any] = {
+        "num_seeds": len(seeds),
+        "num_iterations": num_iterations,
+    }
+    for key in ("best_mean_reward", "final_mean_reward", "reward_improvement"):
+        vals = [s.get(key, 0.0) for s in summaries]
+        agg[f"mean_{key}"] = float(np.mean(vals))
+        agg[f"std_{key}"] = float(np.std(vals))
+
+    # Timing aggregation
+    total_times = []
+    for hist in histories:
+        if hist and "total_train_time" in hist[-1]:
+            total_times.append(hist[-1]["total_train_time"])
+    if total_times:
+        agg["mean_train_time"] = float(np.mean(total_times))
+        agg["total_train_time"] = float(np.sum(total_times))
+
+    return {
+        "seeds": seeds,
+        "histories": histories,
+        "mean_reward_curve": mean_curve,
+        "std_reward_curve": std_curve,
+        "summaries": summaries,
+        "aggregate_summary": agg,
+    }
