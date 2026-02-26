@@ -152,6 +152,7 @@ class PPOUpdateResult:
     approx_kl: float = 0.0
     entropy_coeff: float = 0.0
     kl_early_stopped: bool = False
+    explained_variance: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +397,30 @@ class MAPPOTrainer:
         return self._obs_normalizers[agent_type].normalize(obs).astype(np.float32)
 
     # ------------------------------------------------------------------
+    # Action mask helpers
+    # ------------------------------------------------------------------
+
+    def _build_port_mask(self, port_idx: int) -> np.ndarray:
+        """Build a boolean action mask for a port's service-rate action.
+
+        Valid service rates are ``[0 .. available_docks]`` where
+        ``available_docks = docks - occupied``.  Higher indices are masked
+        out to prevent the agent from selecting impossible rates.
+        """
+        port = self.env.ports[port_idx]
+        available = max(port.docks - port.occupied, 0)
+        act_dim = int(self.cfg["docks_per_port"]) + 1
+        mask = np.zeros(act_dim, dtype=np.float32)
+        mask[: available + 1] = 1.0
+        return mask
+
+    def _port_mask_tensor(self, port_idx: int) -> torch.Tensor:
+        """Return port mask as a boolean tensor on the trainer device."""
+        return torch.as_tensor(
+            self._build_port_mask(port_idx), dtype=torch.bool, device=self.device
+        ).unsqueeze(0)
+
+    # ------------------------------------------------------------------
     # Buffer setup
     # ------------------------------------------------------------------
 
@@ -422,6 +447,7 @@ class MAPPOTrainer:
             gamma=g,
             lam=lam,
             global_state_dim=self.global_dim,
+            mask_dim=int(self.cfg["docks_per_port"]) + 1,
         )
         self.coordinator_buf = MultiAgentRolloutBuffer(
             num_agents=self.env.num_coordinators,
@@ -493,8 +519,9 @@ class MAPPOTrainer:
                     p_obs_t = torch.as_tensor(
                         p_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
+                    p_mask = self._port_mask_tensor(i)
                     action_t, log_prob_t, value_t = port_ac.get_action_and_value(
-                        p_obs_t, gs_tensor
+                        p_obs_t, gs_tensor, action_mask=p_mask
                     )
                     action_dict = _nn_to_port_action(action_t.squeeze(0), i, self.env)
                     port_actions_list.append(action_dict)
@@ -506,6 +533,7 @@ class MAPPOTrainer:
                         log_prob=log_prob_t.item(),
                         value=value_t.item(),
                         global_state=gs_np,
+                        action_mask=self._build_port_mask(i),
                     )
 
             # --- Coordinator actions ---
@@ -639,6 +667,7 @@ class MAPPOTrainer:
         all_values: list[torch.Tensor] = []
         all_advantages: list[torch.Tensor] = []
         all_returns: list[torch.Tensor] = []
+        all_masks: list[torch.Tensor] = []
 
         # Fallback global state when buffer has no per-step data
         fallback_gs = self.env.get_global_state()
@@ -662,6 +691,8 @@ class MAPPOTrainer:
             all_values.append(data["values"])
             all_advantages.append(data["advantages"])
             all_returns.append(data["returns"])
+            if "action_masks" in data:
+                all_masks.append(data["action_masks"])
 
         if not all_obs:
             return PPOUpdateResult()
@@ -673,6 +704,9 @@ class MAPPOTrainer:
         old_values_t = torch.cat(all_values)
         advantages_t = torch.cat(all_advantages)
         returns_t = torch.cat(all_returns)
+        masks_t: torch.Tensor | None = (
+            torch.cat(all_masks) if all_masks else None
+        )
 
         # Normalise advantages
         if advantages_t.numel() > 1:
@@ -705,8 +739,11 @@ class MAPPOTrainer:
                 mb_old_val = old_values_t[idx]
                 mb_adv = advantages_t[idx]
                 mb_ret = returns_t[idx]
+                mb_mask = masks_t[idx] if masks_t is not None else None
 
-                new_lp, entropy, values = ac.evaluate(mb_obs, mb_global, mb_actions)
+                new_lp, entropy, values = ac.evaluate(
+                    mb_obs, mb_global, mb_actions, action_mask=mb_mask
+                )
 
                 # Clipped surrogate objective
                 ratio = (new_lp - mb_old_lp).exp()
@@ -769,6 +806,17 @@ class MAPPOTrainer:
             sum(p.data.norm().item() ** 2 for p in ac.parameters()) ** 0.5
         )
 
+        # Explained variance: how well values predict returns
+        # EV = 1 - Var(returns - old_values) / Var(returns)
+        with torch.no_grad():
+            var_returns = returns_t.var()
+            if var_returns.item() < 1e-8:
+                explained_var = 0.0
+            else:
+                explained_var = float(
+                    1.0 - (returns_t - old_values_t).var() / var_returns
+                )
+
         denom = max(num_updates, 1)
         return PPOUpdateResult(
             policy_loss=epoch_policy_loss / denom,
@@ -781,6 +829,7 @@ class MAPPOTrainer:
             approx_kl=epoch_approx_kl / denom,
             entropy_coeff=ent_coeff,
             kl_early_stopped=kl_early_stopped,
+            explained_variance=explained_var,
         )
 
     # ------------------------------------------------------------------
@@ -864,6 +913,7 @@ class MAPPOTrainer:
                 entry[f"{agent_type}_grad_norm"] = res.grad_norm
                 entry[f"{agent_type}_approx_kl"] = res.approx_kl
                 entry[f"{agent_type}_kl_early_stopped"] = res.kl_early_stopped
+                entry[f"{agent_type}_explained_variance"] = res.explained_variance
 
             # --- Optional eval ---
             if eval_interval > 0 and (it + 1) % eval_interval == 0:
@@ -984,8 +1034,9 @@ class MAPPOTrainer:
                     p_t = torch.as_tensor(
                         p_obs_n, dtype=torch.float32, device=self.device
                     ).unsqueeze(0)
+                    p_mask = self._port_mask_tensor(i)
                     a, _, _ = port_ac.get_action_and_value(
-                        p_t, gs_tensor, deterministic=deterministic
+                        p_t, gs_tensor, deterministic=deterministic, action_mask=p_mask
                     )
                     port_actions.append(_nn_to_port_action(a.squeeze(0), i, self.env))
 

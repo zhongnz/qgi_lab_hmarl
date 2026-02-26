@@ -464,31 +464,37 @@ def run_mappo_comparison(
     coord_ac.eval()
     device = trainer.device
 
+    from .mappo import _nn_to_coordinator_action, _nn_to_port_action, _nn_to_vessel_action
+
     for step_i in range(eval_steps):
         global_state = trainer.env.get_global_state()
         gs_tensor = torch.as_tensor(
             global_state, dtype=torch.float32, device=device
         ).unsqueeze(0)
 
-        from .mappo import _nn_to_coordinator_action, _nn_to_port_action, _nn_to_vessel_action
-
         with torch.no_grad():
             vessel_actions = []
             for v_obs in obs["vessels"]:
-                v_t = torch.as_tensor(v_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                v_obs_n = trainer._eval_normalize_obs(v_obs, "vessel")
+                v_t = torch.as_tensor(v_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
                 a, _, _ = vessel_ac.get_action_and_value(v_t, gs_tensor, deterministic=True)
                 vessel_actions.append(_nn_to_vessel_action(a.squeeze(0), trainer.cfg))
 
             port_actions = []
             for i, p_obs in enumerate(obs["ports"]):
-                p_t = torch.as_tensor(p_obs, dtype=torch.float32, device=device).unsqueeze(0)
-                a, _, _ = port_ac.get_action_and_value(p_t, gs_tensor, deterministic=True)
+                p_obs_n = trainer._eval_normalize_obs(p_obs, "port")
+                p_t = torch.as_tensor(p_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
+                p_mask = trainer._port_mask_tensor(i)
+                a, _, _ = port_ac.get_action_and_value(
+                    p_t, gs_tensor, deterministic=True, action_mask=p_mask
+                )
                 port_actions.append(_nn_to_port_action(a.squeeze(0), i, trainer.env))
 
             assignments = trainer.env._build_assignments()
             coord_actions = []
             for i, c_obs in enumerate(obs["coordinators"]):
-                c_t = torch.as_tensor(c_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                c_obs_n = trainer._eval_normalize_obs(c_obs, "coordinator")
+                c_t = torch.as_tensor(c_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
                 a, _, _ = coord_ac.get_action_and_value(c_t, gs_tensor, deterministic=True)
                 coord_actions.append(
                     _nn_to_coordinator_action(a.squeeze(0), i, trainer.env, assignments)

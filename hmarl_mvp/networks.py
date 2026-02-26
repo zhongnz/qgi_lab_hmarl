@@ -123,18 +123,34 @@ class DiscreteActor(nn.Module):
         hidden_dims = hidden_dims or [64, 64]
         self.logit_net = _make_mlp(obs_dim, hidden_dims, num_actions)
 
-    def forward(self, obs: torch.Tensor) -> torch.distributions.Categorical:
-        """Return a Categorical distribution over actions."""
+    def forward(
+        self,
+        obs: torch.Tensor,
+        action_mask: torch.Tensor | None = None,
+    ) -> torch.distributions.Categorical:
+        """Return a Categorical distribution over actions.
+
+        Parameters
+        ----------
+        obs:
+            Observation tensor.
+        action_mask:
+            Optional boolean tensor (True = valid).  Invalid actions
+            receive ``-inf`` logits so they are never sampled.
+        """
         logits = self.logit_net(obs)
+        if action_mask is not None:
+            logits = logits.masked_fill(~action_mask, float("-inf"))
         return torch.distributions.Categorical(logits=logits)
 
     def get_action(
         self,
         obs: torch.Tensor,
         deterministic: bool = False,
+        action_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample an action and return ``(action, log_prob)``."""
-        dist = self.forward(obs)
+        dist = self.forward(obs, action_mask=action_mask)
         if deterministic:
             action = dist.probs.argmax(dim=-1)
         else:
@@ -146,9 +162,10 @@ class DiscreteActor(nn.Module):
         self,
         obs: torch.Tensor,
         actions: torch.Tensor,
+        action_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate log-prob and entropy for given obs-action pairs."""
-        dist = self.forward(obs)
+        dist = self.forward(obs, action_mask=action_mask)
         log_prob = dist.log_prob(actions.long().squeeze(-1))
         entropy = dist.entropy()
         return log_prob, entropy
@@ -222,9 +239,22 @@ class ActorCritic(nn.Module):
         obs: torch.Tensor,
         global_state: torch.Tensor,
         deterministic: bool = False,
+        action_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return ``(action, log_prob, value)``."""
-        action, log_prob = self.actor.get_action(obs, deterministic=deterministic)
+        """Return ``(action, log_prob, value)``.
+
+        Parameters
+        ----------
+        action_mask:
+            Optional boolean mask for discrete actors (True = valid).
+            Ignored for continuous actors.
+        """
+        if isinstance(self.actor, DiscreteActor):
+            action, log_prob = self.actor.get_action(
+                obs, deterministic=deterministic, action_mask=action_mask
+            )
+        else:
+            action, log_prob = self.actor.get_action(obs, deterministic=deterministic)
         value = self.critic(global_state)
         return action, log_prob, value
 
@@ -233,9 +263,20 @@ class ActorCritic(nn.Module):
         obs: torch.Tensor,
         global_state: torch.Tensor,
         actions: torch.Tensor,
+        action_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return ``(log_prob, entropy, value)`` for given transitions."""
-        log_prob, entropy = self.actor.evaluate(obs, actions)
+        """Return ``(log_prob, entropy, value)`` for given transitions.
+
+        Parameters
+        ----------
+        action_mask:
+            Optional boolean mask for discrete actors (True = valid).
+            Ignored for continuous actors.
+        """
+        if isinstance(self.actor, DiscreteActor):
+            log_prob, entropy = self.actor.evaluate(obs, actions, action_mask=action_mask)
+        else:
+            log_prob, entropy = self.actor.evaluate(obs, actions)
         value = self.critic(global_state)
         return log_prob, entropy, value
 

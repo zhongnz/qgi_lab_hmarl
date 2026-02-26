@@ -27,6 +27,7 @@ class RolloutBuffer:
     gamma: float = 0.99
     lam: float = 0.95
     global_state_dim: int = 0
+    mask_dim: int = 0
 
     # Internal storage (populated by ``add``).
     _obs: np.ndarray = field(init=False, repr=False)
@@ -38,6 +39,7 @@ class RolloutBuffer:
     _advantages: np.ndarray = field(init=False, repr=False)
     _returns: np.ndarray = field(init=False, repr=False)
     _global_states: np.ndarray = field(init=False, repr=False)
+    _action_masks: np.ndarray = field(init=False, repr=False)
     _ptr: int = field(init=False, repr=False, default=0)
 
     def __post_init__(self) -> None:
@@ -55,6 +57,8 @@ class RolloutBuffer:
         self._returns = np.zeros(self.capacity, dtype=np.float32)
         gs_dim = max(self.global_state_dim, 1)
         self._global_states = np.zeros((self.capacity, gs_dim), dtype=np.float32)
+        md = max(self.mask_dim, 1)
+        self._action_masks = np.ones((self.capacity, md), dtype=np.float32)
         self._ptr = 0
 
     @property
@@ -76,6 +80,7 @@ class RolloutBuffer:
         log_prob: float = 0.0,
         value: float = 0.0,
         global_state: np.ndarray | None = None,
+        action_mask: np.ndarray | None = None,
     ) -> None:
         """Append a single transition.  Raises if buffer is full."""
         if self._ptr >= self.capacity:
@@ -90,6 +95,9 @@ class RolloutBuffer:
         if global_state is not None and self.global_state_dim > 0:
             gs = np.asarray(global_state, dtype=np.float32).ravel()[: self.global_state_dim]
             self._global_states[self._ptr] = gs
+        if action_mask is not None and self.mask_dim > 0:
+            m = np.asarray(action_mask, dtype=np.float32).ravel()[: self.mask_dim]
+            self._action_masks[self._ptr] = m
         self._ptr += 1
 
     def set_reward(self, index: int, reward: float) -> None:
@@ -152,6 +160,10 @@ class RolloutBuffer:
             result["global_states"] = torch.as_tensor(
                 self._global_states[:n], dtype=torch.float32, device=device
             )
+        if self.mask_dim > 0:
+            result["action_masks"] = torch.as_tensor(
+                self._action_masks[:n], dtype=torch.float32, device=device
+            ).bool()
         return result
 
     def minibatch_iter(
@@ -193,6 +205,7 @@ class MultiAgentRolloutBuffer:
     gamma: float = 0.99
     lam: float = 0.95
     global_state_dim: int = 0
+    mask_dim: int = 0
 
     _buffers: list[RolloutBuffer] = field(init=False, repr=False)
 
@@ -205,6 +218,7 @@ class MultiAgentRolloutBuffer:
                 gamma=self.gamma,
                 lam=self.lam,
                 global_state_dim=self.global_state_dim,
+                mask_dim=self.mask_dim,
             )
             for _ in range(self.num_agents)
         ]
