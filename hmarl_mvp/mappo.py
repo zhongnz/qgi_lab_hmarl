@@ -239,12 +239,17 @@ class MAPPOConfig:
     # Optimiser
     lr: float = 3e-4
     lr_end: float = 0.0
+    weight_decay: float = 0.0
     gamma: float = 0.99
     gae_lambda: float = 0.95
     # KL early stopping (set target_kl=0 to disable)
     target_kl: float = 0.02
     # Entropy scheduling (linear decay from entropy_coeff → entropy_coeff_end)
     entropy_coeff_end: float | None = None
+    # LR warmup (fraction of total_iterations for linear warmup)
+    lr_warmup_fraction: float = 0.0
+    # Gradient accumulation (effective batch = minibatch_size * grad_accum_steps)
+    grad_accumulation_steps: int = 1
     # Training schedule
     total_iterations: int = 0
     # Misc
@@ -273,6 +278,11 @@ class MAPPOTrainer:
     ) -> None:
         self.mappo_cfg = mappo_config or MAPPOConfig()
         self.device = torch.device(self.mappo_cfg.device)
+        self._seed = seed
+
+        # Reproducibility: seed all RNGs before any init
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         # Build environment
         env_config = dict(env_config or {})
@@ -298,7 +308,11 @@ class MAPPOTrainer:
 
         # Optimisers (one per agent type)
         self.optimizers: dict[str, torch.optim.Optimizer] = {
-            name: torch.optim.Adam(ac.parameters(), lr=self.mappo_cfg.lr)
+            name: torch.optim.Adam(
+                ac.parameters(),
+                lr=self.mappo_cfg.lr,
+                weight_decay=self.mappo_cfg.weight_decay,
+            )
             for name, ac in self.actor_critics.items()
         }
 
@@ -331,13 +345,30 @@ class MAPPOTrainer:
     # ------------------------------------------------------------------
 
     def _step_lr(self) -> None:
-        """Apply linear LR annealing if ``total_iterations`` is configured."""
+        """Apply LR scheduling: optional linear warmup then linear annealing.
+
+        Warmup phase: linearly ramp from 0 to ``lr`` over
+        ``lr_warmup_fraction * total_iterations`` iterations.
+        Annealing phase: linearly decay from ``lr`` to ``lr_end``
+        over the remaining iterations.
+        """
         self._iteration += 1
         total = self.mappo_cfg.total_iterations
         if total <= 0:
             return
-        frac = max(1.0 - self._iteration / total, 0.0)
-        lr = self.mappo_cfg.lr_end + frac * (self.mappo_cfg.lr - self.mappo_cfg.lr_end)
+
+        warmup_iters = int(self.mappo_cfg.lr_warmup_fraction * total)
+        if warmup_iters > 0 and self._iteration <= warmup_iters:
+            # Linear warmup: 0 → lr
+            lr = self.mappo_cfg.lr * (self._iteration / warmup_iters)
+        else:
+            # Linear annealing: lr → lr_end over remaining iterations
+            anneal_start = warmup_iters
+            anneal_total = max(total - anneal_start, 1)
+            progress = (self._iteration - anneal_start) / anneal_total
+            frac = max(1.0 - progress, 0.0)
+            lr = self.mappo_cfg.lr_end + frac * (self.mappo_cfg.lr - self.mappo_cfg.lr_end)
+
         for opt in self.optimizers.values():
             for pg in opt.param_groups:
                 pg["lr"] = lr
@@ -723,11 +754,14 @@ class MAPPOTrainer:
         kl_early_stopped = False
 
         ent_coeff = self.current_entropy_coeff
+        grad_accum = max(cfg.grad_accumulation_steps, 1)
+        accum_count = 0
 
         for _epoch in range(cfg.num_epochs):
             if kl_early_stopped:
                 break
             perm = torch.randperm(total_n, device=self.device)
+            optimizer.zero_grad()
             for start in range(0, total_n, cfg.minibatch_size):
                 end = min(start + cfg.minibatch_size, total_n)
                 idx = perm[start:end]
@@ -772,28 +806,40 @@ class MAPPOTrainer:
                     policy_loss
                     + cfg.value_coeff * value_loss
                     - ent_coeff * entropy_mean
-                )
+                ) / grad_accum  # scale for accumulation
 
-                optimizer.zero_grad()
                 loss.backward()
+                accum_count += 1
 
-                # Capture pre-clip gradient norm for diagnostics
-                grad_norm_t = nn.utils.clip_grad_norm_(ac.parameters(), cfg.max_grad_norm)
-                optimizer.step()
+                # Step optimizer every grad_accum minibatches
+                if accum_count % grad_accum == 0:
+                    grad_norm_t = nn.utils.clip_grad_norm_(
+                        ac.parameters(), cfg.max_grad_norm
+                    )
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    epoch_grad_norm += float(grad_norm_t)
 
-                # Track metrics
+                # Track metrics (unscaled losses for reporting)
                 with torch.no_grad():
                     clip_frac = ((ratio - 1.0).abs() > cfg.clip_eps).float().mean().item()
-                    # Approximate KL divergence: mean((ratio - 1) - log(ratio))
                     log_ratio = new_lp - mb_old_lp
                     approx_kl = ((ratio - 1) - log_ratio).mean().item()
                 epoch_policy_loss += policy_loss.item()
                 epoch_value_loss += value_loss.item()
                 epoch_entropy += entropy_mean.item()
                 epoch_clip_frac += clip_frac
-                epoch_grad_norm += float(grad_norm_t)
                 epoch_approx_kl += approx_kl
                 num_updates += 1
+
+            # Flush any remaining accumulated gradients at epoch end
+            if accum_count % grad_accum != 0:
+                grad_norm_t = nn.utils.clip_grad_norm_(
+                    ac.parameters(), cfg.max_grad_norm
+                )
+                optimizer.step()
+                optimizer.zero_grad()
+                epoch_grad_norm += float(grad_norm_t)
 
             # KL early stopping: check after each full epoch
             if cfg.target_kl > 0 and num_updates > 0:
@@ -972,7 +1018,11 @@ class MAPPOTrainer:
             for ac in self.actor_critics.values():
                 ac.to(self.device)
             self.optimizers = {
-                name: torch.optim.Adam(ac.parameters(), lr=self.mappo_cfg.lr)
+                name: torch.optim.Adam(
+                    ac.parameters(),
+                    lr=self.mappo_cfg.lr,
+                    weight_decay=self.mappo_cfg.weight_decay,
+                )
                 for name, ac in self.actor_critics.items()
             }
             # Reset normalizers for new dimensions
@@ -1225,3 +1275,59 @@ class MAPPOTrainer:
         diag["iteration"] = float(self._iteration)
         diag["lr"] = self.current_lr
         return diag
+
+    @staticmethod
+    def training_summary(history: list[dict[str, Any]]) -> dict[str, Any]:
+        """Compute aggregate statistics from a training history.
+
+        Parameters
+        ----------
+        history:
+            List of per-iteration log dicts as returned by ``train()``.
+
+        Returns
+        -------
+        dict with:
+            ``total_iterations``, ``final_mean_reward``,
+            ``best_mean_reward``, ``best_iteration``,
+            ``reward_improvement`` (final − first),
+            ``mean_*_value_loss`` and ``mean_*_policy_loss`` per agent,
+            ``mean_*_explained_variance`` per agent,
+            ``final_lr``, ``final_entropy_coeff``.
+        """
+        if not history:
+            return {"total_iterations": 0}
+
+        rewards = [h["mean_reward"] for h in history if "mean_reward" in h]
+        best_reward = max(rewards) if rewards else 0.0
+        best_it = int(np.argmax(rewards)) if rewards else 0
+        first_reward = rewards[0] if rewards else 0.0
+        final_reward = rewards[-1] if rewards else 0.0
+
+        summary: dict[str, Any] = {
+            "total_iterations": len(history),
+            "final_mean_reward": final_reward,
+            "best_mean_reward": best_reward,
+            "best_iteration": best_it,
+            "reward_improvement": final_reward - first_reward,
+            "final_lr": history[-1].get("lr", 0.0),
+            "final_entropy_coeff": history[-1].get("entropy_coeff", 0.0),
+        }
+
+        # Per-agent-type aggregates
+        for agent in ("vessel", "port", "coordinator"):
+            vl_key = f"{agent}_value_loss"
+            pl_key = f"{agent}_policy_loss"
+            ev_key = f"{agent}_explained_variance"
+            vl_vals = [h[vl_key] for h in history if vl_key in h]
+            pl_vals = [h[pl_key] for h in history if pl_key in h]
+            ev_vals = [h[ev_key] for h in history if ev_key in h]
+            if vl_vals:
+                summary[f"mean_{vl_key}"] = float(np.mean(vl_vals))
+            if pl_vals:
+                summary[f"mean_{pl_key}"] = float(np.mean(pl_vals))
+            if ev_vals:
+                summary[f"mean_{ev_key}"] = float(np.mean(ev_vals))
+                summary[f"final_{ev_key}"] = ev_vals[-1]
+
+        return summary
