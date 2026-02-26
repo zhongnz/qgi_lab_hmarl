@@ -488,8 +488,10 @@ class MaritimeEnv:
         # Apply weather shaping bonus for vessels that slow in rough seas.
         if self._weather_enabled and self._weather is not None:
             for i, v in enumerate(self.vessels):
-                speed = float(vessel_step_stats.get(v.vessel_id, {}).get("speed", 0.0))
-                sea = float(self._weather[v.location, v.location])  # local sea state
+                speed = float(v.speed) if v.at_sea else 0.0
+                src, dst = v.location, v.destination
+                n = self._weather.shape[0]
+                sea = float(self._weather[src, dst]) if 0 <= src < n and 0 <= dst < n else 0.0
                 vessel_rewards[i] += weather_vessel_shaping(speed, sea, self.cfg)
         port_rewards = [compute_port_reward(p, self.cfg) for p in self.ports]
         step_fuel_used = float(
@@ -509,13 +511,13 @@ class MaritimeEnv:
         ]
         # Apply weather shaping bonus for coordinators routing through calm seas.
         if self._weather_enabled and self._weather is not None:
-            destinations: dict[int, int] = {}
+            routes: list[tuple[int, int]] = []
             for v in self.vessels:
                 d = self.bus.get_latest_directive(v.vessel_id)
                 if d:
-                    destinations[v.location] = int(d.get("dest_port", v.location))
-            if destinations:
-                bonus = weather_coordinator_shaping(self._weather, destinations, self.cfg)
+                    routes.append((v.location, int(d.get("dest_port", v.destination))))
+            if routes:
+                bonus = weather_coordinator_shaping(self._weather, routes, self.cfg)
                 coordinator_rewards = [r + bonus for r in coordinator_rewards]
         return {
             "coordinator": coordinator_rewards[0],

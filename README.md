@@ -53,7 +53,6 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── run_baselines.py      # CLI: run heuristic baseline experiments
 │   ├── run_experiment.py     # CLI: run experiments from YAML configs
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
-│   ├── train_mappo.py        # CLI: standalone MAPPO training with checkpoints
 │   └── train_forecaster.py   # CLI: train the learned forecaster
 ├── tests/                    # 666 tests (pytest)
 │   ├── test_smoke.py
@@ -182,7 +181,7 @@ and writes model weights + evaluation metrics to `runs/forecaster/`.
 
 ```bash
 cd qgi_lab_hmarl
-python scripts/train_mappo.py --iterations 50 --rollout-length 64
+python scripts/run_mappo.py train --iterations 50 --rollout-length 64
 ```
 
 This runs the full MAPPO training loop: collecting rollouts with neural-network

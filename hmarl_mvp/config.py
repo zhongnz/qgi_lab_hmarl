@@ -47,6 +47,7 @@ class HMARLConfig:
     sea_state_max: float = 3.0
     weather_penalty_factor: float = 0.15
     weather_autocorrelation: float = 0.0
+    weather_shaping_weight: float = 0.3
     # Economic parameters (RQ4)
     cargo_value_per_vessel: float = 1_000_000.0
     fuel_price_per_ton: float = 600.0
@@ -106,6 +107,7 @@ class HMARLConfig:
             "sea_state_max": "float>0",
             "weather_penalty_factor": "float>=0",
             "weather_autocorrelation": "float>=0",
+            "weather_shaping_weight": "float>=0",
         }
         for name, rule in _rules.items():
             value = getattr(self, name)

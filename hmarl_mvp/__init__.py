@@ -1,252 +1,140 @@
 """HMARL maritime MVP package."""
 
-from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent, assign_vessels_to_coordinators
-from .analysis import (
-    compare_to_baselines,
-    compute_ablation_deltas,
-    compute_training_stats,
-    format_comparison_table,
-    rank_sweep_results,
-    summarize_experiment,
-)
+# --- Core types ---
+# --- Agents & Policies ---
+from .agents import FleetCoordinatorAgent, PortAgent, VesselAgent
 from .buffer import MultiAgentRolloutBuffer, RolloutBuffer
 from .checkpointing import EarlyStopping, TrainingCheckpoint
-from .config import (
-    DISTANCE_NM,
-    SEED,
-    DecisionCadence,
-    HMARLConfig,
-    generate_distance_matrix,
-    get_default_config,
-    resolve_distance_matrix,
-    should_update,
-    validate_config,
-)
-from .curriculum import (
-    CurriculumScheduler,
-    CurriculumStage,
-    make_curriculum_configs,
-)
-from .dynamics import (
-    compute_fuel_and_emissions,
-    dispatch_vessel,
-    generate_weather,
-    step_ports,
-    step_vessels,
-    update_weather_ar1,
-    weather_fuel_multiplier,
-    weather_speed_factor,
-)
+from .config import DISTANCE_NM, SEED, DecisionCadence, HMARLConfig, get_default_config
+from .curriculum import CurriculumScheduler, CurriculumStage
+from .dynamics import compute_fuel_and_emissions, generate_weather, update_weather_ar1
+
+# --- Environment ---
 from .env import MaritimeEnv
 from .experiment import (
     run_experiment,
-    run_horizon_sweep,
     run_mappo_ablation,
     run_mappo_comparison,
     run_mappo_hyperparam_sweep,
     run_multi_seed,
     run_multi_seed_mappo_comparison,
-    run_multi_seed_policy_sweep,
-    run_noise_sweep,
     run_policy_sweep,
-    run_sharing_sweep,
     run_weather_sweep,
-    save_result_dict,
-    summarize_multi_seed,
-    summarize_policy_results,
 )
-from .experiment_config import (
-    ExperimentConfig,
-    load_experiment_config,
-    run_from_config,
-    save_experiment_config,
-)
-from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+
+# --- Experiment management ---
+from .experiment_config import ExperimentConfig, load_experiment_config, run_from_config
+
+# --- Forecasting ---
+from .forecasts import MediumTermForecaster, ShortTermForecaster
 from .gym_wrapper import MaritimeGymEnv
-from .learned_forecaster import (
-    ForecastDataset,
-    LearnedForecaster,
-    TrainResult,
-    build_forecast_dataset,
-    collect_queue_traces,
-    train_forecaster,
-)
+
+# --- Utilities ---
 from .logger import TrainingLogger
-from .mappo import (
-    MAPPOConfig,
-    MAPPOTrainer,
-    ObsRunningMeanStd,
-    PPOUpdateResult,
-    RunningMeanStd,
-    global_state_dim_from_config,
-    train_multi_seed,
-)
-from .message_bus import MessageBus
+
+# --- Training ---
+from .mappo import MAPPOConfig, MAPPOTrainer, PPOUpdateResult, train_multi_seed
 from .metrics import (
-    compute_coordination_metrics,
     compute_coordinator_metrics,
     compute_economic_metrics,
-    compute_economic_step_deltas,
     compute_port_metrics,
     compute_vessel_metrics,
-    forecast_mae,
-    forecast_rmse,
 )
-from .networks import (
-    ActorCritic,
-    ContinuousActor,
-    Critic,
-    DiscreteActor,
-    apply_orthogonal_init,
-    build_actor_critics,
-    build_per_agent_actor_critics,
-    obs_dim_from_env,
-)
+from .networks import ActorCritic, build_actor_critics, build_per_agent_actor_critics
+
+# --- Plotting ---
 from .plotting import (
-    plot_ablation_bar,
-    plot_horizon_sweep,
     plot_mappo_comparison,
     plot_multi_seed_curves,
-    plot_noise_sweep,
     plot_policy_comparison,
-    plot_sharing_sweep,
     plot_sweep_heatmap,
-    plot_timing_breakdown,
     plot_training_curves,
     plot_training_dashboard,
 )
 from .policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
-from .report import (
-    generate_ablation_report,
-    generate_sweep_report,
-    generate_training_report,
-)
 from .rewards import (
     compute_coordinator_reward_step,
     compute_port_reward,
     compute_vessel_reward_step,
 )
 from .state import PortState, VesselState, initialize_ports, initialize_vessels, make_rng
-from .stats import (
-    bootstrap_ci,
-    compare_methods,
-    multi_method_comparison,
-    welch_t_test,
-)
+
+# --- Evaluation & Stats ---
+from .stats import bootstrap_ci, compare_methods, multi_method_comparison, welch_t_test
 
 __all__ = [
-    "ActorCritic",
-    "ContinuousActor",
-    "Critic",
-    "CurriculumScheduler",
-    "CurriculumStage",
+    # Core
     "DISTANCE_NM",
-    "DecisionCadence",
-    "DiscreteActor",
-    "EarlyStopping",
-    "ExperimentConfig",
-    "FleetCoordinatorAgent",
-    "FleetCoordinatorPolicy",
-    "ForecastDataset",
-    "HMARLConfig",
-    "LearnedForecaster",
-    "MAPPOConfig",
-    "MAPPOTrainer",
-    "MaritimeEnv",
-    "MaritimeGymEnv",
-    "MediumTermForecaster",
-    "MessageBus",
-    "MultiAgentRolloutBuffer",
-    "ObsRunningMeanStd",
-    "OracleForecaster",
-    "PPOUpdateResult",
-    "PortAgent",
-    "PortPolicy",
-    "PortState",
-    "RolloutBuffer",
-    "RunningMeanStd",
     "SEED",
-    "ShortTermForecaster",
-    "TrainResult",
-    "TrainingCheckpoint",
-    "TrainingLogger",
-    "VesselAgent",
-    "VesselPolicy",
-    "VesselState",
-    "apply_orthogonal_init",
-    "assign_vessels_to_coordinators",
-    "bootstrap_ci",
-    "build_actor_critics",
-    "build_per_agent_actor_critics",
-    "build_forecast_dataset",
-    "collect_queue_traces",
-    "compare_methods",
-    "compare_to_baselines",
-    "compute_ablation_deltas",
-    "compute_coordination_metrics",
-    "compute_coordinator_metrics",
-    "compute_coordinator_reward_step",
-    "compute_economic_metrics",
-    "compute_economic_step_deltas",
-    "compute_fuel_and_emissions",
-    "compute_port_metrics",
-    "compute_port_reward",
-    "compute_training_stats",
-    "compute_vessel_metrics",
-    "compute_vessel_reward_step",
-    "dispatch_vessel",
-    "forecast_mae",
-    "forecast_rmse",
-    "format_comparison_table",
-    "generate_ablation_report",
-    "generate_distance_matrix",
-    "generate_sweep_report",
-    "generate_training_report",
+    "DecisionCadence",
+    "HMARLConfig",
     "get_default_config",
-    "global_state_dim_from_config",
+    "PortState",
+    "VesselState",
     "initialize_ports",
     "initialize_vessels",
-    "load_experiment_config",
-    "make_curriculum_configs",
     "make_rng",
-    "multi_method_comparison",
-    "obs_dim_from_env",
-    "plot_ablation_bar",
-    "plot_horizon_sweep",
-    "plot_mappo_comparison",
-    "plot_multi_seed_curves",
-    "plot_noise_sweep",
-    "plot_policy_comparison",
-    "plot_sharing_sweep",
-    "plot_sweep_heatmap",
-    "plot_timing_breakdown",
-    "plot_training_curves",
-    "plot_training_dashboard",
-    "rank_sweep_results",
-    "resolve_distance_matrix",
-    "run_experiment",
+    # Environment
+    "MaritimeEnv",
+    "MaritimeGymEnv",
+    # Agents & Policies
+    "FleetCoordinatorAgent",
+    "PortAgent",
+    "VesselAgent",
+    "FleetCoordinatorPolicy",
+    "PortPolicy",
+    "VesselPolicy",
+    # Training
+    "MAPPOConfig",
+    "MAPPOTrainer",
+    "PPOUpdateResult",
+    "train_multi_seed",
+    "ActorCritic",
+    "build_actor_critics",
+    "build_per_agent_actor_critics",
+    "MultiAgentRolloutBuffer",
+    "RolloutBuffer",
+    "CurriculumScheduler",
+    "CurriculumStage",
+    # Experiment management
+    "ExperimentConfig",
+    "load_experiment_config",
     "run_from_config",
-    "run_horizon_sweep",
-    "run_mappo_ablation",
+    "run_experiment",
     "run_mappo_comparison",
     "run_mappo_hyperparam_sweep",
+    "run_mappo_ablation",
     "run_multi_seed",
     "run_multi_seed_mappo_comparison",
-    "run_multi_seed_policy_sweep",
-    "run_noise_sweep",
     "run_policy_sweep",
-    "run_sharing_sweep",
     "run_weather_sweep",
-    "save_experiment_config",
-    "save_result_dict",
-    "should_update",
-    "step_ports",
-    "step_vessels",
-    "summarize_experiment",
-    "summarize_multi_seed",
-    "summarize_policy_results",
-    "train_forecaster",
-    "train_multi_seed",
-    "validate_config",
+    # Evaluation & Stats
+    "bootstrap_ci",
+    "compare_methods",
+    "multi_method_comparison",
     "welch_t_test",
+    "compute_economic_metrics",
+    "compute_port_metrics",
+    "compute_vessel_metrics",
+    "compute_coordinator_metrics",
+    "compute_coordinator_reward_step",
+    "compute_port_reward",
+    "compute_vessel_reward_step",
+    # Forecasting
+    "MediumTermForecaster",
+    "ShortTermForecaster",
+    # Plotting
+    "plot_mappo_comparison",
+    "plot_multi_seed_curves",
+    "plot_policy_comparison",
+    "plot_sweep_heatmap",
+    "plot_training_curves",
+    "plot_training_dashboard",
+    # Utilities
+    "TrainingLogger",
+    "EarlyStopping",
+    "TrainingCheckpoint",
+    "compute_fuel_and_emissions",
+    "generate_weather",
+    "update_weather_ar1",
 ]

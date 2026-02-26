@@ -104,20 +104,28 @@ def weather_vessel_shaping(
 
 def weather_coordinator_shaping(
     weather: np.ndarray | None,
-    destinations: dict[int, int],
+    routes: list[tuple[int, int]] | dict[int, int],
     config: dict[str, Any],
 ) -> float:
     """Bonus for a coordinator that routes fleet through calmer seas.
 
     Computes mean sea-state along the chosen routes and rewards lower
-    values.  Returns 0.0 when weather is ``None`` or no destinations.
+    values.  Returns 0.0 when weather is ``None`` or no routes.
+
+    *routes* may be a list of ``(src_port, dst_port)`` tuples or a
+    legacy ``{src: dst}`` dict.
     """
-    if weather is None or not destinations:
+    if weather is None or not routes:
         return 0.0
     n = weather.shape[0]
+    pairs: list[tuple[int, int]]
+    if isinstance(routes, dict):
+        pairs = list(routes.items())
+    else:
+        pairs = list(routes)
     total_sea = 0.0
     count = 0
-    for src, dst in destinations.items():
+    for src, dst in pairs:
         if 0 <= src < n and 0 <= dst < n:
             total_sea += float(weather[src, dst])
             count += 1

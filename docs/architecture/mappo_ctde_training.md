@@ -17,7 +17,7 @@ uses only its local observation.
 | `checkpointing.py` | `TrainingCheckpoint` (periodic model saves), `EarlyStopping` (patience-based) |
 | `experiment.py` | `run_mappo_comparison()` — train + evaluate against heuristic baselines |
 | `plotting.py` | `plot_training_curves()`, `plot_mappo_comparison()` |
-| `scripts/train_mappo.py` | CLI entry point for standalone MAPPO training |
+| `scripts/run_mappo.py` | CLI entry point: `train`, `compare`, `sweep`, `ablate` subcommands |
 
 ## Architecture Diagram
 

@@ -32,19 +32,19 @@ mappo:
   normalize_rewards: true
 
 curriculum_stages:
-  - fraction: 0.25
-    config:
+  - fraction: 0.0
+    config_overrides:
       weather_enabled: false
   - fraction: 0.25
-    config:
+    config_overrides:
       weather_enabled: true
       weather_penalty_factor: 0.05
-  - fraction: 0.25
-    config:
+  - fraction: 0.50
+    config_overrides:
       weather_enabled: true
       weather_penalty_factor: 0.10
-  - fraction: 0.25
-    config:
+  - fraction: 0.75
+    config_overrides:
       weather_enabled: true
       weather_penalty_factor: 0.15
 
