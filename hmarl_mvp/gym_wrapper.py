@@ -151,6 +151,8 @@ class MaritimeGymEnv(gym.Env):
         info["vessel_reward"] = vessel_reward
         info["port_reward"] = port_reward
         info["coordinator_reward"] = coord_reward
+        if self._env._weather is not None:
+            info["weather_matrix"] = self._env._weather.copy()
 
         # Gymnasium convention: terminated vs truncated
         terminated = done

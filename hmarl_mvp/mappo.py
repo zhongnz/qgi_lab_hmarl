@@ -164,10 +164,21 @@ class PPOUpdateResult:
 def _nn_to_vessel_action(
     raw: torch.Tensor,
     config: dict[str, Any],
+    speed_cap: float | None = None,
 ) -> dict[str, Any]:
-    """Convert a 1-D continuous NN output to a vessel action dict."""
+    """Convert a 1-D continuous NN output to a vessel action dict.
+
+    Parameters
+    ----------
+    speed_cap:
+        Optional upper bound on speed (e.g. from weather conditions).
+        When provided, the speed is clamped to ``[speed_min, speed_cap]``.
+    """
     speed = float(raw.detach().cpu().item())
-    speed = max(config["speed_min"], min(config["speed_max"], speed))
+    max_speed = float(config["speed_max"])
+    if speed_cap is not None:
+        max_speed = min(max_speed, speed_cap)
+    speed = max(config["speed_min"], min(max_speed, speed))
     return {"target_speed": speed, "request_arrival_slot": True}
 
 
@@ -452,6 +463,32 @@ class MAPPOTrainer:
             self._build_port_mask(port_idx), dtype=torch.bool, device=self.device
         ).unsqueeze(0)
 
+    def _vessel_weather_speed_cap(self, vessel_idx: int) -> float | None:
+        """Return a speed cap for the vessel based on current weather.
+
+        Returns ``None`` when weather is disabled or calm, otherwise
+        caps speed at ``nominal_speed`` for moderate seas or
+        ``speed_min`` for very rough seas.
+        """
+        if not self.env._weather_enabled or self.env._weather is None:
+            return None
+        from .dynamics import weather_fuel_multiplier
+
+        vessel = self.env.vessels[vessel_idx]
+        loc = vessel.location
+        n = self.env._weather.shape[0]
+        if loc < 0 or loc >= n:
+            return None
+        # Mean sea-state from this vessel's location to all ports
+        sea_state = float(self.env._weather[loc].mean())
+        penalty = float(self.cfg.get("weather_penalty_factor", 0.15))
+        fuel_mult = weather_fuel_multiplier(sea_state, penalty)
+        if fuel_mult > 1.3:
+            return float(self.cfg["speed_min"])
+        if fuel_mult > 1.1:
+            return float(self.cfg["nominal_speed"])
+        return None
+
     # ------------------------------------------------------------------
     # Buffer setup
     # ------------------------------------------------------------------
@@ -534,7 +571,10 @@ class MAPPOTrainer:
                     action_t, log_prob_t, value_t = vessel_ac.get_action_and_value(
                         v_obs_t, gs_tensor
                     )
-                    action_dict = _nn_to_vessel_action(action_t.squeeze(0), self.cfg)
+                    speed_cap = self._vessel_weather_speed_cap(i)
+                    action_dict = _nn_to_vessel_action(
+                        action_t.squeeze(0), self.cfg, speed_cap=speed_cap
+                    )
                     vessel_actions_list.append(action_dict)
                     self.vessel_buf[i].add(
                         obs=v_obs_n,
@@ -1090,7 +1130,7 @@ class MAPPOTrainer:
             with torch.no_grad():
                 # Vessels
                 vessel_actions: list[dict[str, Any]] = []
-                for v_obs in obs["vessels"]:
+                for i, v_obs in enumerate(obs["vessels"]):
                     v_obs_n = self._eval_normalize_obs(v_obs, "vessel")
                     v_t = torch.as_tensor(
                         v_obs_n, dtype=torch.float32, device=self.device
@@ -1098,7 +1138,10 @@ class MAPPOTrainer:
                     a, _, _ = vessel_ac.get_action_and_value(
                         v_t, gs_tensor, deterministic=deterministic
                     )
-                    vessel_actions.append(_nn_to_vessel_action(a.squeeze(0), self.cfg))
+                    speed_cap = self._vessel_weather_speed_cap(i)
+                    vessel_actions.append(
+                        _nn_to_vessel_action(a.squeeze(0), self.cfg, speed_cap=speed_cap)
+                    )
 
                 # Ports
                 port_actions: list[dict[str, Any]] = []

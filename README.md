@@ -47,7 +47,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
 │   ├── train_mappo.py        # CLI: standalone MAPPO training with checkpoints
 │   └── train_forecaster.py   # CLI: train the learned forecaster
-├── tests/                    # 569 tests (pytest)
+├── tests/                    # 592 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
@@ -77,7 +77,8 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_audit_fixes.py
 │   ├── test_coverage_gaps_v2.py
 │   ├── test_weather_gym.py
-│   └── test_weather_policy_rewards.py
+│   ├── test_weather_policy_rewards.py
+│   └── test_weather_integration.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml

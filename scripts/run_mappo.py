@@ -49,8 +49,20 @@ def parse_args() -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", help="Experiment type")
 
+    # Shared weather flag added to all sub-commands
+    weather_parent = argparse.ArgumentParser(add_help=False)
+    weather_parent.add_argument(
+        "--weather", action="store_true", default=False,
+        help="Enable weather effects (sea-state penalties on fuel/speed)",
+    )
+    weather_parent.add_argument(
+        "--sea-state-max", type=float, default=3.0,
+        help="Maximum sea-state value when --weather is enabled (default: 3.0)",
+    )
+
     # ---- train ----
-    train_p = sub.add_parser("train", help="Train MAPPO with logging and checkpointing")
+    train_p = sub.add_parser("train", parents=[weather_parent],
+                             help="Train MAPPO with logging and checkpointing")
     train_p.add_argument("--iterations", type=int, default=100)
     train_p.add_argument("--rollout-length", type=int, default=64)
     train_p.add_argument("--lr", type=float, default=3e-4)
@@ -63,7 +75,8 @@ def parse_args() -> argparse.Namespace:
     train_p.add_argument("--ports", type=int, default=None)
 
     # ---- compare ----
-    cmp_p = sub.add_parser("compare", help="Train MAPPO and compare against baselines")
+    cmp_p = sub.add_parser("compare", parents=[weather_parent],
+                           help="Train MAPPO and compare against baselines")
     cmp_p.add_argument("--iterations", type=int, default=50)
     cmp_p.add_argument("--rollout-length", type=int, default=64)
     cmp_p.add_argument("--seed", type=int, default=42)
@@ -71,14 +84,16 @@ def parse_args() -> argparse.Namespace:
     cmp_p.add_argument("--no-plots", action="store_true")
 
     # ---- sweep ----
-    sweep_p = sub.add_parser("sweep", help="Hyperparameter grid sweep")
+    sweep_p = sub.add_parser("sweep", parents=[weather_parent],
+                             help="Hyperparameter grid sweep")
     sweep_p.add_argument("--iterations", type=int, default=30)
     sweep_p.add_argument("--rollout-length", type=int, default=64)
     sweep_p.add_argument("--seed", type=int, default=42)
     sweep_p.add_argument("--output-dir", type=str, default="runs/mappo_sweep")
 
     # ---- ablate ----
-    abl_p = sub.add_parser("ablate", help="Ablation study")
+    abl_p = sub.add_parser("ablate", parents=[weather_parent],
+                           help="Ablation study")
     abl_p.add_argument("--iterations", type=int, default=30)
     abl_p.add_argument("--rollout-length", type=int, default=64)
     abl_p.add_argument("--seed", type=int, default=42)
@@ -100,6 +115,9 @@ def cmd_train(args: argparse.Namespace) -> None:
     env_cfg.setdefault("num_vessels", 8)
     env_cfg.setdefault("num_ports", 5)
     env_cfg["rollout_steps"] = args.rollout_length + 5
+    if args.weather:
+        env_cfg["weather_enabled"] = True
+        env_cfg["sea_state_max"] = args.sea_state_max
 
     mappo_cfg = MAPPOConfig(
         rollout_length=args.rollout_length,
@@ -119,6 +137,8 @@ def cmd_train(args: argparse.Namespace) -> None:
     print(f"Starting MAPPO training: {args.iterations} iterations")
     print(f"  env: {env_cfg['num_vessels']} vessels, {env_cfg['num_ports']} ports")
     print(f"  lr={args.lr}, ent={args.entropy_coeff}, rollout={args.rollout_length}")
+    if args.weather:
+        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     print(f"  output: {out_dir}")
     t0 = time.time()
 

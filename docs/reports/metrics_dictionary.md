@@ -161,3 +161,32 @@ Default levels: `[0 (off), 1.5, 3.0, 5.0]`.
 The `ablate` command includes two weather variants:
 - `weather_on`: env_weather_enabled=True (standard sea states)
 - `weather_harsh`: env_weather_enabled=True, env_sea_state_max=5.0 (severe conditions)
+
+### Weather Curriculum Ramp
+
+The `CurriculumScheduler` supports ramping weather parameters during training:
+
+- `sea_state_max` (float): linearly interpolated from start to target.
+- `weather_penalty_factor` (float): linearly interpolated from start to target.
+- `weather_shaping_weight` (float): linearly interpolated from start to target.
+- `weather_enabled` (bool): switches on at `alpha ≥ 0.5` during linear warmup.
+
+This allows training to begin in calm conditions and progressively introduce weather,
+reducing the initial learning burden.
+
+### MAPPO Weather Speed Cap
+
+During MAPPO rollouts and evaluation, vessel actions are clamped based on current
+weather conditions:
+
+- `fuel_multiplier > 1.3` → speed capped at `speed_min` (very rough seas)
+- `fuel_multiplier > 1.1` → speed capped at `nominal_speed` (moderate seas)
+- Otherwise → no cap
+
+This ensures the RL agent cannot select dangerously fast speeds in bad weather.
+
+### CLI Weather Flag
+
+All `run_mappo.py` subcommands accept:
+- `--weather`: enable weather effects in the environment.
+- `--sea-state-max FLOAT`: set the maximum sea-state value (default: 3.0).

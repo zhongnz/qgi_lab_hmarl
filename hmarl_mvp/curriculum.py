@@ -34,6 +34,14 @@ _RAMPABLE_INT_KEYS = {
 # Parameters that support curriculum ramping (float-valued, ramped up)
 _RAMPABLE_FLOAT_KEYS = {
     "emission_lambda",
+    "sea_state_max",
+    "weather_penalty_factor",
+    "weather_shaping_weight",
+}
+
+# Parameters that support curriculum ramping (bool-valued, threshold at 0.5)
+_RAMPABLE_BOOL_KEYS = {
+    "weather_enabled",
 }
 
 
@@ -138,6 +146,17 @@ class CurriculumScheduler:
                 sf = float(start.get(key, target[key]))
                 tf = float(target[key])
                 result[key] = sf + alpha * (tf - sf)
+
+        # Bool ramp: enable when alpha crosses 0.5
+        for key in _RAMPABLE_BOOL_KEYS:
+            if key in target:
+                s_val = bool(start.get(key, False))
+                t_val = bool(target[key])
+                if s_val == t_val:
+                    result[key] = t_val
+                else:
+                    # Ramp from False → True: enable at alpha ≥ 0.5
+                    result[key] = alpha >= 0.5
 
         return result
 
