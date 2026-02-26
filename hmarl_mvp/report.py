@@ -139,7 +139,7 @@ def generate_training_report(
 def generate_sweep_report(
     sweep_df: Any,
     title: str = "Hyperparameter Sweep Report",
-    sort_by: str = "eval_total_reward",
+    sort_by: str = "total_reward",
 ) -> str:
     """Generate a Markdown report from a sweep results DataFrame.
 

@@ -45,6 +45,8 @@ documentation alignment.
 3. ~~Start MAPPO/CTDE training integration.~~ **Done.**
 4. ~~Expand scenario tests.~~ **Done.**
 5. ~~Add curriculum learning / adaptive difficulty scaling.~~ **Done** (`curriculum.py`).
-6. (New) Investigate parameter-sharing ablations across agent types.
-7. (New) Profile training throughput and optimise buffer/network bottlenecks.
-8. (New) Run full hyperparameter sweeps and ablation experiments for final report.
+6. ~~Proposal alignment audit.~~ **Done** (dock availability, trip duration, coordinator metrics, cadence defaults).
+7. ~~Codebase consistency audit.~~ **Done** (evaluate division bug, seed variation, metric key alignment, per-agent reward accumulation, dt_hours config, logger robustness).
+8. (New) Investigate parameter-sharing ablations across agent types.
+9. (New) Profile training throughput and optimise buffer/network bottlenecks.
+10. (New) Run full hyperparameter sweeps and ablation experiments for final report.

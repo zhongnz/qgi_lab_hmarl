@@ -225,7 +225,7 @@ def plot_sweep_heatmap(
     sweep_df: Any,
     x_param: str,
     y_param: str,
-    metric: str = "eval_total_reward",
+    metric: str = "total_reward",
     out_path: str | None = None,
 ) -> None:
     """Plot a 2-D heatmap of sweep results over two swept parameters.
@@ -297,7 +297,7 @@ def plot_ablation_bar(
     if "ablation" not in df.columns:
         return
 
-    metrics = metrics or ["final_mean_reward", "best_mean_reward", "eval_total_reward"]
+    metrics = metrics or ["final_mean_reward", "best_mean_reward", "total_reward"]
     metrics = [m for m in metrics if m in df.columns]
     if not metrics:
         return

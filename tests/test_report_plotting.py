@@ -124,9 +124,9 @@ class TestSweepReport(unittest.TestCase):
 
     def _make_sweep_df(self) -> pd.DataFrame:
         return pd.DataFrame([
-            {"lr": 1e-4, "entropy_coeff": 0.01, "eval_total_reward": -3.0, "final_mean_reward": -1.0},
-            {"lr": 3e-4, "entropy_coeff": 0.01, "eval_total_reward": -2.0, "final_mean_reward": -0.5},
-            {"lr": 1e-3, "entropy_coeff": 0.05, "eval_total_reward": -4.0, "final_mean_reward": -1.5},
+            {"lr": 1e-4, "entropy_coeff": 0.01, "total_reward": -3.0, "final_mean_reward": -1.0},
+            {"lr": 3e-4, "entropy_coeff": 0.01, "total_reward": -2.0, "final_mean_reward": -0.5},
+            {"lr": 1e-3, "entropy_coeff": 0.05, "total_reward": -4.0, "final_mean_reward": -1.5},
         ])
 
     def test_basic_sweep_report(self) -> None:
@@ -138,7 +138,7 @@ class TestSweepReport(unittest.TestCase):
 
     def test_sorted_by_metric(self) -> None:
         df = self._make_sweep_df()
-        report = generate_sweep_report(df, sort_by="eval_total_reward")
+        report = generate_sweep_report(df, sort_by="total_reward")
         # Best config (lr=3e-4) should appear first in results
         lines = report.split("\n")
         rank1_line = [l for l in lines if l.startswith("| 1 |")]
@@ -156,9 +156,9 @@ class TestAblationReport(unittest.TestCase):
 
     def _make_ablation_df(self) -> pd.DataFrame:
         return pd.DataFrame([
-            {"ablation": "baseline", "final_mean_reward": -1.0, "eval_total_reward": -3.0},
-            {"ablation": "no_reward_norm", "final_mean_reward": -1.5, "eval_total_reward": -4.0},
-            {"ablation": "high_entropy", "final_mean_reward": -0.8, "eval_total_reward": -2.5},
+            {"ablation": "baseline", "final_mean_reward": -1.0, "total_reward": -3.0},
+            {"ablation": "no_reward_norm", "final_mean_reward": -1.5, "total_reward": -4.0},
+            {"ablation": "high_entropy", "final_mean_reward": -0.8, "total_reward": -2.5},
         ])
 
     def test_basic_ablation_report(self) -> None:
@@ -190,10 +190,10 @@ class TestSweepHeatmap(unittest.TestCase):
 
     def test_heatmap_creates_file(self) -> None:
         df = pd.DataFrame([
-            {"lr": 1e-4, "entropy_coeff": 0.01, "eval_total_reward": -3.0},
-            {"lr": 3e-4, "entropy_coeff": 0.01, "eval_total_reward": -2.0},
-            {"lr": 1e-4, "entropy_coeff": 0.05, "eval_total_reward": -3.5},
-            {"lr": 3e-4, "entropy_coeff": 0.05, "eval_total_reward": -2.5},
+            {"lr": 1e-4, "entropy_coeff": 0.01, "total_reward": -3.0},
+            {"lr": 3e-4, "entropy_coeff": 0.01, "total_reward": -2.0},
+            {"lr": 1e-4, "entropy_coeff": 0.05, "total_reward": -3.5},
+            {"lr": 3e-4, "entropy_coeff": 0.05, "total_reward": -2.5},
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             out = os.path.join(tmpdir, "heatmap.png")
@@ -202,7 +202,7 @@ class TestSweepHeatmap(unittest.TestCase):
 
     def test_missing_param_noop(self) -> None:
         """Missing param should do nothing, not raise."""
-        df = pd.DataFrame([{"lr": 1e-4, "eval_total_reward": -3.0}])
+        df = pd.DataFrame([{"lr": 1e-4, "total_reward": -3.0}])
         plot_sweep_heatmap(df, "lr", "missing_param")  # Should not raise
 
 
@@ -211,8 +211,8 @@ class TestAblationBar(unittest.TestCase):
 
     def test_bar_creates_file(self) -> None:
         df = pd.DataFrame([
-            {"ablation": "baseline", "final_mean_reward": -1.0, "eval_total_reward": -3.0},
-            {"ablation": "variant_a", "final_mean_reward": -1.5, "eval_total_reward": -4.0},
+            {"ablation": "baseline", "final_mean_reward": -1.0, "total_reward": -3.0},
+            {"ablation": "variant_a", "final_mean_reward": -1.5, "total_reward": -4.0},
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             out = os.path.join(tmpdir, "ablation_bar.png")

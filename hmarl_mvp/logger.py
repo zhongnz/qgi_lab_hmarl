@@ -198,4 +198,12 @@ def _serializable(obj: Any) -> Any:
         return float(obj)
     if isinstance(obj, np.ndarray):
         return obj.tolist()
+    # Handle PyTorch tensors gracefully
+    try:
+        import torch
+
+        if isinstance(obj, torch.Tensor):
+            return obj.detach().cpu().tolist()
+    except ImportError:
+        pass
     return obj

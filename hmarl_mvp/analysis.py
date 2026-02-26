@@ -21,6 +21,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# Aliases for mapping between MAPPOTrainer.evaluate() keys and
+# run_experiment() DataFrame columns.
+_MAPPO_KEY_ALIASES: dict[str, str] = {
+    "avg_vessel_reward": "mean_vessel_reward",
+    "avg_port_reward": "mean_port_reward",
+    "coordinator_reward": "mean_coordinator_reward",
+}
+
 # ---------------------------------------------------------------------------
 # Baseline comparison
 # ---------------------------------------------------------------------------
@@ -49,9 +57,9 @@ def compare_to_baselines(
         plus a ``"rank"`` column for overall performance ordering.
     """
     metric_keys = metric_keys or [
-        "mean_vessel_reward",
-        "mean_port_reward",
-        "mean_coordinator_reward",
+        "avg_vessel_reward",
+        "avg_port_reward",
+        "coordinator_reward",
         "total_reward",
     ]
 
@@ -60,7 +68,9 @@ def compare_to_baselines(
     # MAPPO row
     mappo_row: dict[str, Any] = {"policy": "mappo"}
     for k in metric_keys:
-        mappo_row[k] = mappo_metrics.get(k, float("nan"))
+        # Map evaluate() keys → run_experiment() keys for interop
+        alt = _MAPPO_KEY_ALIASES.get(k, k)
+        mappo_row[k] = mappo_metrics.get(k, mappo_metrics.get(alt, float("nan")))
     rows.append(mappo_row)
 
     # Baseline rows

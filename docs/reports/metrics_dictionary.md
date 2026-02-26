@@ -69,6 +69,9 @@ Produced by `run_mappo_comparison()` under the `_train_log` key and by the
 - `iteration`: training iteration index (1-based).
 - `mean_reward`: mean episode reward for the iteration.
 - `total_reward`: total episode reward for the iteration.
+- `vessel_mean_reward`: mean vessel reward per agent per step across the rollout.
+- `port_mean_reward`: mean port reward per agent per step across the rollout.
+- `coordinator_mean_reward`: mean coordinator reward per agent per step across the rollout.
 - `vessel_value_loss`: critic MSE loss for the vessel actor-critic.
 - `port_value_loss`: critic MSE loss for the port actor-critic.
 - `coordinator_value_loss`: critic MSE loss for the coordinator actor-critic.
@@ -77,3 +80,28 @@ Produced by `run_mappo_comparison()` under the `_train_log` key and by the
 - `*_clip_fraction`: fraction of samples clipped per agent type.
 - `*_grad_norm`: gradient norm after clipping per agent type.
 - `*_weight_norm`: total parameter L2 norm per agent type.
+
+## MAPPO Evaluation Metrics
+
+Returned by `MAPPOTrainer.evaluate()`.
+
+- `mean_vessel_reward`: average vessel reward per step (over actual steps completed).
+- `mean_port_reward`: average port reward per step.
+- `mean_coordinator_reward`: average coordinator reward per step.
+- `total_reward`: total reward across all agent types and all steps.
+- Plus all vessel, port, and economic metrics listed above.
+
+## Coordinator-Level Metrics
+
+Returned by `compute_coordinator_metrics()`.
+
+- `emission_budget_compliance`: fraction of vessels within emission budget.
+- `avg_route_efficiency`: average ratio of direct distance to distance travelled.
+- `avg_trip_duration_hours`: average trip duration from dispatch to arrival.
+
+## Coordination Metrics
+
+Returned by `compute_coordination_metrics()`.
+
+- `policy_agreement_rate`: fraction of requests accepted vs submitted.
+- `communication_overhead`: total messages exchanged.

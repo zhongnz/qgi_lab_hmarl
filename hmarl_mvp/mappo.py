@@ -504,6 +504,9 @@ class MAPPOTrainer:
         obs = self.env.reset()
         self._obs = obs
         total_reward = 0.0
+        total_vessel_reward_rollout = 0.0
+        total_port_reward_rollout = 0.0
+        total_coord_reward_rollout = 0.0
 
         vessel_ac = self.actor_critics["vessel"]
         port_ac = self.actor_critics["port"]
@@ -613,6 +616,7 @@ class MAPPOTrainer:
                 buf = self.vessel_buf[i]
                 buf.set_reward(-1, rew)
                 buf.set_done(-1, float(done))
+                total_vessel_reward_rollout += raw_r
 
             for i, r in enumerate(rewards["ports"]):
                 raw_r = float(r)
@@ -621,6 +625,7 @@ class MAPPOTrainer:
                 buf = self.port_buf[i]
                 buf.set_reward(-1, rew)
                 buf.set_done(-1, float(done))
+                total_port_reward_rollout += raw_r
 
             for i, r in enumerate(rewards["coordinators"]):
                 raw_r = float(r)
@@ -629,6 +634,7 @@ class MAPPOTrainer:
                 buf = self.coordinator_buf[i]
                 buf.set_reward(-1, rew)
                 buf.set_done(-1, float(done))
+                total_coord_reward_rollout += raw_r
 
             step_reward = float(np.mean(rewards["vessels"])) + float(rewards["coordinator"])
             total_reward += step_reward
@@ -662,16 +668,17 @@ class MAPPOTrainer:
         mean_reward = total_reward / self.mappo_cfg.rollout_length
         self._episode_rewards.append(mean_reward)
 
-        # Per-agent-type reward breakdown
-        vessel_raw = [float(r) for r in rewards["vessels"]]
-        port_raw = [float(r) for r in rewards["ports"]]
-        coord_raw = [float(r) for r in rewards["coordinators"]]
+        # Per-agent-type reward breakdown (accumulated across all rollout steps)
+        num_vessels = max(len(self.env.vessels), 1)
+        num_ports = max(len(self.env.ports), 1)
+        num_coords = max(len(self.env.coordinators), 1)
+        rollout_len = self.mappo_cfg.rollout_length
         return {
             "mean_reward": mean_reward,
             "total_reward": total_reward,
-            "vessel_mean_reward": float(np.mean(vessel_raw)) if vessel_raw else 0.0,
-            "port_mean_reward": float(np.mean(port_raw)) if port_raw else 0.0,
-            "coordinator_mean_reward": float(np.mean(coord_raw)) if coord_raw else 0.0,
+            "vessel_mean_reward": total_vessel_reward_rollout / (num_vessels * rollout_len),
+            "port_mean_reward": total_port_reward_rollout / (num_ports * rollout_len),
+            "coordinator_mean_reward": total_coord_reward_rollout / (num_coords * rollout_len),
         }
 
     # ------------------------------------------------------------------
@@ -767,13 +774,13 @@ class MAPPOTrainer:
 
         ent_coeff = self.current_entropy_coeff
         grad_accum = max(cfg.grad_accumulation_steps, 1)
-        accum_count = 0
 
         for _epoch in range(cfg.num_epochs):
             if kl_early_stopped:
                 break
             perm = torch.randperm(total_n, device=self.device)
             optimizer.zero_grad()
+            accum_count = 0
             for start in range(0, total_n, cfg.minibatch_size):
                 end = min(start + cfg.minibatch_size, total_n)
                 idx = perm[start:end]
@@ -1072,6 +1079,7 @@ class MAPPOTrainer:
         total_vessel_reward = 0.0
         total_port_reward = 0.0
         total_coord_reward = 0.0
+        actual_steps = 0
 
         for _ in range(num_steps):
             global_state = self.env.get_global_state()
@@ -1127,6 +1135,7 @@ class MAPPOTrainer:
                 "ports": port_actions,
             }
             obs, rewards, done, _ = self.env.step(actions_dict)
+            actual_steps += 1
             total_vessel_reward += float(np.mean(rewards["vessels"]))
             total_port_reward += float(np.mean(rewards["ports"]))
             total_coord_reward += float(rewards["coordinator"])
@@ -1140,10 +1149,11 @@ class MAPPOTrainer:
             self.env.vessels, dict(self.cfg),
         )
 
+        denom = max(actual_steps, 1)
         result: dict[str, float] = {
-            "mean_vessel_reward": total_vessel_reward / num_steps,
-            "mean_port_reward": total_port_reward / num_steps,
-            "mean_coordinator_reward": total_coord_reward / num_steps,
+            "mean_vessel_reward": total_vessel_reward / denom,
+            "mean_port_reward": total_port_reward / denom,
+            "mean_coordinator_reward": total_coord_reward / denom,
             "total_reward": total_vessel_reward + total_port_reward + total_coord_reward,
         }
         result.update(vessel_metrics)
@@ -1178,12 +1188,15 @@ class MAPPOTrainer:
             ``episodes`` — list of per-episode metric dicts.
         """
         episodes: list[dict[str, float]] = []
-        for _ in range(num_episodes):
+        base_seed = self.env.seed
+        for ep_i in range(num_episodes):
+            self.env.seed = base_seed + ep_i
             ep_result = self.evaluate(
                 num_steps=num_steps,
                 deterministic=deterministic,
             )
             episodes.append(ep_result)
+        self.env.seed = base_seed  # restore original seed
 
         if not episodes:
             return {"mean": {}, "std": {}, "min": {}, "max": {}, "episodes": []}

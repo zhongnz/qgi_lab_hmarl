@@ -629,8 +629,8 @@ def run_mappo_hyperparam_sweep(
     pd.DataFrame
         One row per configuration.  Columns include each swept param,
         training curve summary (``final_mean_reward``, ``best_mean_reward``),
-        and evaluation metrics (``eval_total_reward``, ``eval_mean_vessel_reward``,
-        ``eval_mean_port_reward``, ``eval_mean_coordinator_reward``).
+        and evaluation metrics (``total_reward``, ``mean_vessel_reward``,
+        ``mean_port_reward``, ``mean_coordinator_reward``).
     """
     from .mappo import MAPPOConfig, MAPPOTrainer
 

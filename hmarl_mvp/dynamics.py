@@ -98,12 +98,26 @@ def dispatch_vessel(
     destination: int,
     speed: float,
     config: dict[str, Any],
+    current_step: int = 0,
 ) -> None:
     """Send a vessel to a destination at a clipped speed.
 
     If *destination* equals the vessel's current location the call is a
     no-op — dispatching to the same port would produce a zero-distance
     leg that arrives instantly and re-queues the vessel.
+
+    Parameters
+    ----------
+    vessel:
+        Vessel to dispatch.
+    destination:
+        Target port index.
+    speed:
+        Requested speed (will be clipped to [speed_min, speed_max]).
+    config:
+        Validated config dict.
+    current_step:
+        Current simulation step, recorded in ``vessel.trip_start_step``.
     """
     if int(destination) == vessel.location:
         return
@@ -111,5 +125,5 @@ def dispatch_vessel(
     vessel.speed = float(np.clip(speed, config["speed_min"], config["speed_max"]))
     vessel.position_nm = 0.0
     vessel.at_sea = True
-    vessel.trip_start_step = int(config.get("_current_step", 0))
+    vessel.trip_start_step = int(current_step)
 

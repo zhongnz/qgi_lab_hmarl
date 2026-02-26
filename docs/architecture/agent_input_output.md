@@ -5,8 +5,8 @@
 | Agent | Inputs | Outputs | Cadence (target) |
 |------|--------|---------|------------------|
 | Fleet Coordinator | Medium forecast, fleet summaries, cumulative emissions | Destination directive, departure window, emission budget | Every 12 steps |
-| Vessel Agent | Coordinator directive, short forecast, vessel local state | Target speed, arrival-slot request | Every step |
-| Port Agent | Queue/dock state, incoming requests, short forecast | Service rate, request acceptance, dock allocation | Every step |
+| Vessel Agent | Coordinator directive, short forecast, vessel local state (location, speed, fuel, emissions, dock availability) | Target speed, arrival-slot request | Every step |
+| Port Agent | Queue/dock state, incoming requests, short forecast | Service rate, request acceptance, dock allocation | Every 2 steps |
 
 ## Dataflow diagram
 

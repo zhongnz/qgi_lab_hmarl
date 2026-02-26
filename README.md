@@ -46,7 +46,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
 │   ├── train_mappo.py        # CLI: standalone MAPPO training with checkpoints
 │   └── train_forecaster.py   # CLI: train the learned forecaster
-├── tests/                    # 452 tests (pytest)
+├── tests/                    # 502 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
@@ -70,7 +70,10 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_new_features.py
 │   ├── test_sweep_ablation.py
 │   ├── test_report_plotting.py
-│   └── test_plotting.py
+│   ├── test_plotting.py
+│   ├── test_eval_metrics.py
+│   ├── test_proposal_alignment.py
+│   └── test_audit_fixes.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml
@@ -201,6 +204,6 @@ Project config is now validated through a typed schema (`HMARLConfig`) in
 | Month | Milestone |
 |-------|-----------|
 | Feb | ✅ MVP simulator, rewards, metrics, baseline runner, module-first refactor |
-| Mar | ✅ Trained forecasting models, heuristic baselines, RL infrastructure (MAPPO/CTDE), curriculum learning |
-| Apr | Tune hyperparameters, run ablation experiments, multi-seed evaluation |
+| Mar | ✅ Trained forecasting models, heuristic baselines, RL infrastructure (MAPPO/CTDE), curriculum learning || Mar | ✅ Proposal alignment audit: dock availability obs, trip duration metrics, coordinator metrics, decision cadence fixes |
+| Mar | ✅ Codebase audit: evaluate() early-termination fix, seed variation, metric key consistency, per-agent reward breakdown, dt_hours config, logger robustness || Apr | Tune hyperparameters, run ablation experiments, multi-seed evaluation |
 | May | Full ablation suite, final report |

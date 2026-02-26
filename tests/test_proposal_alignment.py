@@ -203,16 +203,14 @@ class TestTripStartTracking(unittest.TestCase):
 
     def test_dispatch_sets_trip_start_step(self) -> None:
         cfg = dict(get_default_config())
-        cfg["_current_step"] = 7
         v = VesselState(vessel_id=0, location=0, destination=0, speed=12.0)
-        dispatch_vessel(v, destination=2, speed=12.0, config=cfg)
+        dispatch_vessel(v, destination=2, speed=12.0, config=cfg, current_step=7)
         self.assertEqual(v.trip_start_step, 7)
 
     def test_dispatch_same_port_no_change(self) -> None:
         cfg = dict(get_default_config())
-        cfg["_current_step"] = 10
         v = VesselState(vessel_id=0, location=3, destination=3, speed=12.0, trip_start_step=0)
-        dispatch_vessel(v, destination=3, speed=12.0, config=cfg)
+        dispatch_vessel(v, destination=3, speed=12.0, config=cfg, current_step=10)
         # Dispatching to same port is a no-op
         self.assertEqual(v.trip_start_step, 0)
 

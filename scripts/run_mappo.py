@@ -215,7 +215,7 @@ def cmd_sweep(args: argparse.Namespace) -> None:
 
     df.to_csv(out_dir / "sweep_results.csv", index=False)
     print(f"\nSweep complete in {elapsed:.1f}s ({len(df)} configs)")
-    print(df.sort_values("eval_total_reward", ascending=False).head(5).to_string())
+    print(df.sort_values("total_reward", ascending=False).head(5).to_string())
     print(f"Results: {out_dir / 'sweep_results.csv'}")
 
 
@@ -248,7 +248,7 @@ def cmd_ablate(args: argparse.Namespace) -> None:
 
     df.to_csv(out_dir / "ablation_results.csv", index=False)
     print(f"\nAblation complete in {elapsed:.1f}s ({len(df)} variants)")
-    print(df[["ablation", "final_mean_reward", "best_mean_reward", "eval_total_reward"]].to_string())
+    print(df[["ablation", "final_mean_reward", "best_mean_reward", "total_reward"]].to_string())
     print(f"Results: {out_dir / 'ablation_results.csv'}")
 
 

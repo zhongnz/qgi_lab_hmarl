@@ -92,7 +92,30 @@ class MaritimeEnv:
         self,
         actions: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any], bool, dict[str, Any]]:
-        """Execute one environment tick."""
+        """Execute one environment tick.
+
+        Parameters
+        ----------
+        actions:
+            Dict with keys ``"coordinator"`` (single dict or empty),
+            ``"coordinators"`` (list of dicts), ``"vessels"`` (list of
+            dicts with ``"target_speed"`` and ``"request_arrival_slot"``),
+            ``"ports"`` (list of dicts with ``"service_rate"`` and
+            ``"accept_requests"``).
+
+        Returns
+        -------
+        obs : dict
+            ``{"vessels": [...], "ports": [...], "coordinators": [...]}``.
+        rewards : dict
+            ``{"vessels": [...], "ports": [...], "coordinator": float,
+            "coordinators": [...]}``.
+        done : bool
+            True when ``t >= rollout_steps``.
+        info : dict
+            Step-level metadata including ``"port_metrics"``,
+            ``"cadence_due"``, ``"requests_submitted"``, etc.
+        """
         due = self.cadence.due(self.t)
         delivered_responses = self.bus.deliver_due(self.t)
         assignments = self._build_assignments()
@@ -157,6 +180,7 @@ class MaritimeEnv:
                         destination=int(response["dest_port"]),
                         speed=float(normalized["target_speed"]),
                         config=self.cfg,
+                        current_step=self.t,
                     )
                 elif not response["accepted"] and not vessel.at_sea:
                     vessel.delay_hours += 1.0
