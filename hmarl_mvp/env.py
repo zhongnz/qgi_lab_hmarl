@@ -377,7 +377,14 @@ class MaritimeEnv:
                 directive = self._fallback_directive_for_vessel(
                     vessel.vessel_id, assignments
                 )
-            v_obs = vessel_agent.get_obs(short[dest], directive=directive)
+            # Dock availability fraction at destination port (proposal §4.1)
+            dest_port = self.ports[dest]
+            dock_avail = max(dest_port.docks - dest_port.occupied, 0) / max(
+                dest_port.docks, 1
+            )
+            v_obs = vessel_agent.get_obs(
+                short[dest], directive=directive, dock_availability=dock_avail,
+            )
             vessel_obs.append(v_obs)
 
         port_obs = []

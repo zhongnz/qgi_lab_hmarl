@@ -98,3 +98,78 @@ def compute_economic_step_deltas(
         "step_total_ops_cost_usd": float(fuel_cost + delay_cost + carbon_cost),
     }
 
+
+# ---------------------------------------------------------------------------
+# Coordinator-level metrics (proposal §6.3)
+# ---------------------------------------------------------------------------
+
+
+def compute_coordinator_metrics(
+    vessels: list[VesselState],
+    config: dict[str, Any],
+    distance_nm: np.ndarray | None = None,
+) -> dict[str, float]:
+    """Fleet-coordinator evaluation metrics from the proposal.
+
+    * **emission_budget_compliance**: fraction of vessels whose cumulative
+      emissions are within the coordinator's emission budget.
+    * **route_efficiency**: ratio of straight-line (optimal) trip distance
+      to actual distance implied by fuel usage, averaged across in-transit
+      or arrived vessels.  Falls back to 1.0 when data is insufficient.
+    * **avg_trip_duration_hours**: mean trip duration for vessels that have
+      completed at least one trip (requires ``trip_start_step`` > 0 and
+      current step stored via ``_current_step`` config key).
+    """
+    emission_budget = float(config.get("emission_budget", 50.0))
+    compliant = sum(1 for v in vessels if v.emissions <= emission_budget)
+    compliance = compliant / len(vessels) if vessels else 0.0
+
+    # Route efficiency: actual fuel vs minimum theoretical fuel for straight trip
+    route_efficiencies: list[float] = []
+    if distance_nm is not None:
+        for v in vessels:
+            if v.location != v.destination and v.at_sea:
+                optimal_dist = float(distance_nm[v.location, v.destination])
+                actual_dist = float(v.position_nm) if v.position_nm > 0 else optimal_dist
+                if actual_dist > 0:
+                    route_efficiencies.append(min(optimal_dist / actual_dist, 1.0))
+    avg_route_eff = float(np.mean(route_efficiencies)) if route_efficiencies else 1.0
+
+    # Trip duration
+    current_step = int(config.get("_current_step", 0))
+    trip_durations: list[float] = []
+    for v in vessels:
+        if v.trip_start_step > 0 and not v.at_sea:
+            # Arrived: trip duration = current_step - trip_start_step hours
+            dur = float(current_step - v.trip_start_step)
+            if dur > 0:
+                trip_durations.append(dur)
+    avg_trip_duration = float(np.mean(trip_durations)) if trip_durations else 0.0
+
+    return {
+        "emission_budget_compliance": float(compliance),
+        "avg_route_efficiency": float(avg_route_eff),
+        "avg_trip_duration_hours": float(avg_trip_duration),
+    }
+
+
+def compute_coordination_metrics(
+    requests_submitted: int,
+    requests_accepted: int,
+    messages_exchanged: int,
+) -> dict[str, float]:
+    """Coordination quality metrics from the proposal (§6.3).
+
+    * **policy_agreement_rate**: fraction of vessel arrival requests
+      that were accepted by port agents.
+    * **communication_overhead**: total inter-agent messages exchanged
+      during the episode.
+    """
+    agreement = (
+        requests_accepted / requests_submitted if requests_submitted > 0 else 0.0
+    )
+    return {
+        "policy_agreement_rate": float(agreement),
+        "communication_overhead": float(messages_exchanged),
+    }
+

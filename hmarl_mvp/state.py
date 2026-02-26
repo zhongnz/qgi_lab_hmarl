@@ -36,6 +36,7 @@ class VesselState:
     emissions: float = 0.0
     delay_hours: float = 0.0
     at_sea: bool = False
+    trip_start_step: int = 0
 
 
 def make_rng(seed: int = SEED) -> np.random.Generator:

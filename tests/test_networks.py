@@ -115,7 +115,7 @@ class FactoryTests(unittest.TestCase):
             num_ports=5, num_vessels=8, short_horizon_hours=12, medium_horizon_days=5
         )
         dims = obs_dim_from_env(cfg)
-        self.assertEqual(dims["vessel"], 4 + 12 + 3)  # local + forecast + directive
+        self.assertEqual(dims["vessel"], 5 + 12 + 3)  # local(5) + forecast + directive
         self.assertEqual(dims["port"], 3 + 12 + 1)  # local + forecast + incoming
         self.assertEqual(dims["coordinator"], 5 * 5 + 8 * 4 + 1)  # forecast + vessels + total_em
 

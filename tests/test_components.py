@@ -65,7 +65,7 @@ class AgentInterfaceTests(unittest.TestCase):
             short_forecast_row=np.ones(cfg["short_horizon_hours"]),
             directive={"dest_port": 2, "departure_window_hours": 12, "emission_budget": 42.0},
         )
-        self.assertEqual(len(obs), 4 + cfg["short_horizon_hours"] + 3)
+        self.assertEqual(len(obs), 5 + cfg["short_horizon_hours"] + 3)
 
         action = vessel.apply_action({"target_speed": 100.0, "request_arrival_slot": True})
         self.assertEqual(action["target_speed"], cfg["speed_max"])

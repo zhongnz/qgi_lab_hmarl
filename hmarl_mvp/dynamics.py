@@ -111,4 +111,5 @@ def dispatch_vessel(
     vessel.speed = float(np.clip(speed, config["speed_min"], config["speed_max"]))
     vessel.position_nm = 0.0
     vessel.at_sea = True
+    vessel.trip_start_step = int(config.get("_current_step", 0))
 

@@ -34,16 +34,20 @@ def compute_vessel_reward_step(
 
 
 def compute_port_reward(port: PortState, config: dict[str, Any]) -> float:
-    """Per-step port reward as negative queue + idle dock penalty.
+    """Per-step port reward as negative queue wait rate + idle dock penalty.
 
-    Returns ``-(queue + dock_idle_weight * idle_docks)``.
+    Uses the queue-length-weighted waiting rate (``queue * dt``) as a
+    proxy for waiting-time accumulation, matching the proposal's
+    :math:`R_P = -(\\text{Queue waiting time} + \\text{Dock idle time})`.
     With default 3 docks and weight 0.5, range is roughly [−1.5, −10+]
     depending on queue buildup.
     """
-    queue_penalty = float(port.queue)
+    # queue * dt_hours measures per-step waiting-time accumulation
+    dt_hours = float(config.get("dt_hours", 1.0))
+    wait_penalty = float(port.queue) * dt_hours
     idle_docks = max(port.docks - port.occupied, 0)
     idle_penalty = config["dock_idle_weight"] * idle_docks
-    return -(queue_penalty + idle_penalty)
+    return -(wait_penalty + idle_penalty)
 
 
 def compute_coordinator_reward_step(

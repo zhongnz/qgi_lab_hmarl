@@ -25,7 +25,7 @@ class HMARLConfig:
     # Asynchronous cadence (simulation steps)
     coord_decision_interval_steps: int = 12
     vessel_decision_interval_steps: int = 1
-    port_decision_interval_steps: int = 1
+    port_decision_interval_steps: int = 2
     message_latency_steps: int = 1
     # Reward weights (alpha, beta, gamma, lambda)
     fuel_weight: float = 1.0

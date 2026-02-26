@@ -65,6 +65,8 @@ from .mappo import (
 )
 from .message_bus import MessageBus
 from .metrics import (
+    compute_coordination_metrics,
+    compute_coordinator_metrics,
     compute_economic_metrics,
     compute_economic_step_deltas,
     compute_port_metrics,
@@ -149,6 +151,8 @@ __all__ = [
     "collect_queue_traces",
     "compare_to_baselines",
     "compute_ablation_deltas",
+    "compute_coordination_metrics",
+    "compute_coordinator_metrics",
     "compute_coordinator_reward_step",
     "compute_economic_metrics",
     "compute_economic_step_deltas",

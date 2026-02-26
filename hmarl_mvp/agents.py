@@ -36,8 +36,21 @@ class VesselAgent:
         self,
         short_forecast_row: np.ndarray,
         directive: dict[str, Any] | None = None,
+        dock_availability: float = 0.0,
     ) -> np.ndarray:
-        """Build local vessel observation vector."""
+        """Build local vessel observation vector.
+
+        Parameters
+        ----------
+        short_forecast_row:
+            Short-term congestion forecast for the vessel's destination port.
+        directive:
+            Latest strategic directive from the fleet coordinator.
+        dock_availability:
+            Fraction of available (unoccupied) docks at the destination port.
+            This corresponds to the "dock availability signals from ports"
+            specified in the proposal (Section 4.1).
+        """
         directive = directive or {}
         directive_vec = np.array(
             [
@@ -55,6 +68,7 @@ class VesselAgent:
                         self.state.speed,
                         self.state.fuel,
                         self.state.emissions,
+                        dock_availability,
                     ],
                     dtype=float,
                 ),
