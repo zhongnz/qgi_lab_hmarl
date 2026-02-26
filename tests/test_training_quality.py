@@ -354,5 +354,288 @@ class TestTrainingLogger(unittest.TestCase):
         self.assertEqual(summary["num_iterations"], 3)
 
 
+# ===================================================================
+# KL early stopping
+# ===================================================================
+
+
+class TestKLEarlyStopping(unittest.TestCase):
+    """Verify KL divergence tracking and early stopping."""
+
+    def _make_trainer(self, target_kl: float = 0.02) -> MAPPOTrainer:
+        cfg = MAPPOConfig(
+            rollout_length=4,
+            num_epochs=4,
+            target_kl=target_kl,
+        )
+        return MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+            seed=42,
+        )
+
+    def test_approx_kl_is_tracked(self) -> None:
+        """PPOUpdateResult should include approx_kl metric."""
+        trainer = self._make_trainer()
+        trainer.collect_rollout()
+        results = trainer.update()
+        for res in results.values():
+            self.assertIsInstance(res.approx_kl, float)
+            # KL should be non-negative (or very slightly negative due to numerical)
+            self.assertGreater(res.approx_kl, -0.1)
+
+    def test_kl_early_stop_flag(self) -> None:
+        """The kl_early_stopped flag should be a boolean."""
+        trainer = self._make_trainer()
+        trainer.collect_rollout()
+        results = trainer.update()
+        for res in results.values():
+            self.assertIsInstance(res.kl_early_stopped, bool)
+
+    def test_disabled_kl_does_not_stop(self) -> None:
+        """With target_kl=0, epochs should never be early-stopped."""
+        trainer = self._make_trainer(target_kl=0.0)
+        trainer.collect_rollout()
+        results = trainer.update()
+        for res in results.values():
+            self.assertFalse(res.kl_early_stopped)
+
+    def test_kl_in_train_log(self) -> None:
+        """The train() method should log approx_kl per agent type."""
+        trainer = self._make_trainer()
+        history = trainer.train(num_iterations=2)
+        for entry in history:
+            self.assertIn("vessel_approx_kl", entry)
+            self.assertIn("vessel_kl_early_stopped", entry)
+
+
+# ===================================================================
+# Entropy coefficient scheduling
+# ===================================================================
+
+
+class TestEntropyScheduling(unittest.TestCase):
+    """Verify entropy coefficient linear decay."""
+
+    def test_constant_when_no_end(self) -> None:
+        """Without entropy_coeff_end, coefficient stays fixed."""
+        cfg = MAPPOConfig(
+            rollout_length=4,
+            entropy_coeff=0.05,
+            entropy_coeff_end=None,
+            total_iterations=100,
+        )
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+        )
+        self.assertAlmostEqual(trainer.current_entropy_coeff, 0.05)
+        # Run some iterations
+        for _ in range(3):
+            trainer.collect_rollout()
+            trainer.update()
+        # Should still be 0.05
+        self.assertAlmostEqual(trainer.current_entropy_coeff, 0.05)
+
+    def test_decays_linearly(self) -> None:
+        """Entropy coeff should decay from start to end over iterations."""
+        cfg = MAPPOConfig(
+            rollout_length=4,
+            entropy_coeff=0.1,
+            entropy_coeff_end=0.01,
+            total_iterations=10,
+        )
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+        )
+        # At iteration 0, should be 0.1
+        self.assertAlmostEqual(trainer.current_entropy_coeff, 0.1)
+        # Simulate 5 iterations (half-way)
+        for _ in range(5):
+            trainer.collect_rollout()
+            trainer.update()
+        # Should be at ~0.055
+        mid = trainer.current_entropy_coeff
+        self.assertGreater(mid, 0.01)
+        self.assertLess(mid, 0.1)
+
+    def test_entropy_coeff_in_update_result(self) -> None:
+        """PPOUpdateResult should record the entropy coefficient used."""
+        cfg = MAPPOConfig(
+            rollout_length=4,
+            entropy_coeff=0.02,
+            entropy_coeff_end=0.001,
+            total_iterations=20,
+        )
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+        )
+        trainer.collect_rollout()
+        results = trainer.update()
+        for res in results.values():
+            self.assertGreater(res.entropy_coeff, 0.0)
+
+    def test_entropy_coeff_in_train_log(self) -> None:
+        """Train log entries should include entropy_coeff."""
+        cfg = MAPPOConfig(
+            rollout_length=4,
+            entropy_coeff=0.05,
+            entropy_coeff_end=0.01,
+        )
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+        )
+        history = trainer.train(num_iterations=2)
+        for entry in history:
+            self.assertIn("entropy_coeff", entry)
+            self.assertIsInstance(entry["entropy_coeff"], float)
+
+
+# ===================================================================
+# Multi-episode evaluation
+# ===================================================================
+
+
+class TestMultiEpisodeEvaluation(unittest.TestCase):
+    """Verify evaluate_episodes aggregation."""
+
+    def _make_trainer(self) -> MAPPOTrainer:
+        cfg = MAPPOConfig(rollout_length=4)
+        return MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+            seed=42,
+        )
+
+    def test_returns_aggregated_stats(self) -> None:
+        """Should return mean, std, min, max over episodes."""
+        trainer = self._make_trainer()
+        result = trainer.evaluate_episodes(num_episodes=3)
+        self.assertIn("mean", result)
+        self.assertIn("std", result)
+        self.assertIn("min", result)
+        self.assertIn("max", result)
+        self.assertIn("episodes", result)
+
+    def test_episode_count(self) -> None:
+        """Number of raw episodes should match num_episodes."""
+        trainer = self._make_trainer()
+        result = trainer.evaluate_episodes(num_episodes=4)
+        self.assertEqual(len(result["episodes"]), 4)
+
+    def test_aggregation_keys_match(self) -> None:
+        """All metric keys should appear in mean/std/min/max."""
+        trainer = self._make_trainer()
+        result = trainer.evaluate_episodes(num_episodes=2)
+        ep_keys = set(result["episodes"][0].keys())
+        self.assertEqual(set(result["mean"].keys()), ep_keys)
+        self.assertEqual(set(result["std"].keys()), ep_keys)
+        self.assertEqual(set(result["min"].keys()), ep_keys)
+        self.assertEqual(set(result["max"].keys()), ep_keys)
+
+    def test_min_le_mean_le_max(self) -> None:
+        """Min <= mean <= max for each metric."""
+        trainer = self._make_trainer()
+        result = trainer.evaluate_episodes(num_episodes=3)
+        for key in result["mean"]:
+            self.assertLessEqual(result["min"][key], result["mean"][key] + 1e-9)
+            self.assertLessEqual(result["mean"][key], result["max"][key] + 1e-9)
+
+    def test_single_episode(self) -> None:
+        """Single episode should have std=0 and min==mean==max."""
+        trainer = self._make_trainer()
+        result = trainer.evaluate_episodes(num_episodes=1)
+        for key in result["mean"]:
+            self.assertAlmostEqual(result["std"][key], 0.0)
+            self.assertAlmostEqual(result["min"][key], result["mean"][key])
+            self.assertAlmostEqual(result["max"][key], result["mean"][key])
+
+
+# ===================================================================
+# Auto-checkpoint best model
+# ===================================================================
+
+
+class TestAutoCheckpoint(unittest.TestCase):
+    """Verify best-model auto-save during training."""
+
+    def test_checkpoint_saves_best(self) -> None:
+        """Checkpoint dir should contain best model files after training."""
+        cfg = MAPPOConfig(rollout_length=4)
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+            seed=42,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_dir = os.path.join(tmpdir, "checkpoints")
+            trainer.train(num_iterations=3, checkpoint_dir=ckpt_dir)
+            # Should have created checkpoint files
+            self.assertTrue(os.path.isdir(ckpt_dir))
+            # Check for at least one .pt file
+            pt_files = [f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
+            self.assertGreater(len(pt_files), 0)
+            # Check for normalizer json
+            json_files = [f for f in os.listdir(ckpt_dir) if f.endswith(".json")]
+            self.assertGreater(len(json_files), 0)
+
+    def test_checkpoint_loadable(self) -> None:
+        """Saved checkpoint should be loadable into a fresh trainer."""
+        cfg = MAPPOConfig(rollout_length=4)
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+            seed=42,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_dir = os.path.join(tmpdir, "checkpoints")
+            trainer.train(num_iterations=3, checkpoint_dir=ckpt_dir)
+
+            # Load into fresh trainer
+            trainer2 = MAPPOTrainer(
+                env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+                mappo_config=cfg,
+                seed=42,
+            )
+            prefix = os.path.join(ckpt_dir, "best")
+            trainer2.load_models(prefix)
+            # Should evaluate without error
+            result = trainer2.evaluate(num_steps=3)
+            self.assertIn("total_reward", result)
+
+    def test_no_checkpoint_without_dir(self) -> None:
+        """Without checkpoint_dir, no files should be saved."""
+        cfg = MAPPOConfig(rollout_length=4)
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+        )
+        # Should run fine without checkpoint_dir
+        history = trainer.train(num_iterations=2)
+        self.assertEqual(len(history), 2)
+
+    def test_custom_metric(self) -> None:
+        """checkpoint_metric should pick the tracked metric for best model."""
+        cfg = MAPPOConfig(rollout_length=4)
+        trainer = MAPPOTrainer(
+            env_config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 10},
+            mappo_config=cfg,
+            seed=42,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_dir = os.path.join(tmpdir, "checkpoints")
+            trainer.train(
+                num_iterations=3,
+                checkpoint_dir=ckpt_dir,
+                checkpoint_metric="total_reward",
+            )
+            # Should still have saved files
+            pt_files = [f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
+            self.assertGreater(len(pt_files), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

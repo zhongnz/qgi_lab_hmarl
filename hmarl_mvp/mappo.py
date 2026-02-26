@@ -149,6 +149,9 @@ class PPOUpdateResult:
     clip_fraction: float = 0.0
     grad_norm: float = 0.0
     weight_norm: float = 0.0
+    approx_kl: float = 0.0
+    entropy_coeff: float = 0.0
+    kl_early_stopped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +240,10 @@ class MAPPOConfig:
     lr_end: float = 0.0
     gamma: float = 0.99
     gae_lambda: float = 0.95
+    # KL early stopping (set target_kl=0 to disable)
+    target_kl: float = 0.02
+    # Entropy scheduling (linear decay from entropy_coeff → entropy_coeff_end)
+    entropy_coeff_end: float | None = None
     # Training schedule
     total_iterations: int = 0
     # Misc
@@ -311,7 +318,7 @@ class MAPPOTrainer:
             "coordinator": ObsRunningMeanStd(self.obs_dims["coordinator"]),
         }
 
-        # Iteration counter for LR scheduling
+        # Iteration counter for LR / entropy scheduling
         self._iteration: int = 0
 
         # Episode bookkeeping
@@ -339,6 +346,28 @@ class MAPPOTrainer:
         """Return the current learning rate from the first optimiser."""
         opt = next(iter(self.optimizers.values()))
         return float(opt.param_groups[0]["lr"])
+
+    # ------------------------------------------------------------------
+    # Entropy coefficient scheduling
+    # ------------------------------------------------------------------
+
+    @property
+    def current_entropy_coeff(self) -> float:
+        """Return the current entropy coefficient after linear decay.
+
+        If ``entropy_coeff_end`` is *None* (default) the entropy
+        coefficient stays constant.  Otherwise it linearly decays
+        from ``entropy_coeff`` to ``entropy_coeff_end`` over
+        ``total_iterations``.
+        """
+        cfg = self.mappo_cfg
+        if cfg.entropy_coeff_end is None:
+            return cfg.entropy_coeff
+        total = cfg.total_iterations
+        if total <= 0:
+            return cfg.entropy_coeff
+        frac = max(1.0 - self._iteration / total, 0.0)
+        return cfg.entropy_coeff_end + frac * (cfg.entropy_coeff - cfg.entropy_coeff_end)
 
     # ------------------------------------------------------------------
     # Observation normalization
@@ -655,9 +684,15 @@ class MAPPOTrainer:
         epoch_entropy = 0.0
         epoch_clip_frac = 0.0
         epoch_grad_norm = 0.0
+        epoch_approx_kl = 0.0
         num_updates = 0
+        kl_early_stopped = False
+
+        ent_coeff = self.current_entropy_coeff
 
         for _epoch in range(cfg.num_epochs):
+            if kl_early_stopped:
+                break
             perm = torch.randperm(total_n, device=self.device)
             for start in range(0, total_n, cfg.minibatch_size):
                 end = min(start + cfg.minibatch_size, total_n)
@@ -693,13 +728,13 @@ class MAPPOTrainer:
                 else:
                     value_loss = nn.functional.mse_loss(values, mb_ret)
 
-                # Entropy bonus
+                # Entropy bonus (uses scheduled coefficient)
                 entropy_mean = entropy.mean()
 
                 loss = (
                     policy_loss
                     + cfg.value_coeff * value_loss
-                    - cfg.entropy_coeff * entropy_mean
+                    - ent_coeff * entropy_mean
                 )
 
                 optimizer.zero_grad()
@@ -712,12 +747,22 @@ class MAPPOTrainer:
                 # Track metrics
                 with torch.no_grad():
                     clip_frac = ((ratio - 1.0).abs() > cfg.clip_eps).float().mean().item()
+                    # Approximate KL divergence: mean((ratio - 1) - log(ratio))
+                    log_ratio = new_lp - mb_old_lp
+                    approx_kl = ((ratio - 1) - log_ratio).mean().item()
                 epoch_policy_loss += policy_loss.item()
                 epoch_value_loss += value_loss.item()
                 epoch_entropy += entropy_mean.item()
                 epoch_clip_frac += clip_frac
                 epoch_grad_norm += float(grad_norm_t)
+                epoch_approx_kl += approx_kl
                 num_updates += 1
+
+            # KL early stopping: check after each full epoch
+            if cfg.target_kl > 0 and num_updates > 0:
+                mean_kl = epoch_approx_kl / num_updates
+                if mean_kl > cfg.target_kl:
+                    kl_early_stopped = True
 
         # Compute weight norm across all parameters
         weight_norm = float(
@@ -733,6 +778,9 @@ class MAPPOTrainer:
             clip_fraction=epoch_clip_frac / denom,
             grad_norm=epoch_grad_norm / denom,
             weight_norm=weight_norm,
+            approx_kl=epoch_approx_kl / denom,
+            entropy_coeff=ent_coeff,
+            kl_early_stopped=kl_early_stopped,
         )
 
     # ------------------------------------------------------------------
@@ -745,6 +793,8 @@ class MAPPOTrainer:
         curriculum: Any | None = None,
         eval_interval: int = 0,
         log_fn: Any | None = None,
+        checkpoint_dir: str | None = None,
+        checkpoint_metric: str = "mean_reward",
     ) -> list[dict[str, Any]]:
         """Run a complete training loop with optional curriculum scheduling.
 
@@ -761,6 +811,12 @@ class MAPPOTrainer:
         log_fn:
             Optional callback ``(iteration, log_entry) -> None`` called
             after each iteration for external logging.
+        checkpoint_dir:
+            If set, the best model (by *checkpoint_metric*) is saved to
+            this directory automatically during training.
+        checkpoint_metric:
+            The log entry key used to decide the "best" model.
+            Default ``"mean_reward"`` (higher is better).
 
         Returns
         -------
@@ -768,11 +824,17 @@ class MAPPOTrainer:
             Per-iteration log entries with rewards, update metrics, LR,
             diagnostics, and optional eval metrics.
         """
+        import os
+
         self.mappo_cfg.total_iterations = max(
             self.mappo_cfg.total_iterations, num_iterations
         )
         history: list[dict[str, Any]] = []
         prev_cfg_key: str | None = None
+        best_metric: float = float("-inf")
+
+        if checkpoint_dir is not None:
+            os.makedirs(checkpoint_dir, exist_ok=True)
 
         for it in range(num_iterations):
             # --- Curriculum: rebuild env if config changes ---
@@ -792,6 +854,7 @@ class MAPPOTrainer:
                 "mean_reward": rollout_info["mean_reward"],
                 "total_reward": rollout_info["total_reward"],
                 "lr": self.current_lr,
+                "entropy_coeff": self.current_entropy_coeff,
             }
             for agent_type, res in update_info.items():
                 entry[f"{agent_type}_policy_loss"] = res.policy_loss
@@ -799,6 +862,8 @@ class MAPPOTrainer:
                 entry[f"{agent_type}_entropy"] = res.entropy
                 entry[f"{agent_type}_clip_frac"] = res.clip_fraction
                 entry[f"{agent_type}_grad_norm"] = res.grad_norm
+                entry[f"{agent_type}_approx_kl"] = res.approx_kl
+                entry[f"{agent_type}_kl_early_stopped"] = res.kl_early_stopped
 
             # --- Optional eval ---
             if eval_interval > 0 and (it + 1) % eval_interval == 0:
@@ -808,6 +873,14 @@ class MAPPOTrainer:
             history.append(entry)
             if log_fn is not None:
                 log_fn(it, entry)
+
+            # --- Auto-checkpoint best model ---
+            if checkpoint_dir is not None:
+                metric_val = entry.get(checkpoint_metric, float("-inf"))
+                if isinstance(metric_val, (int, float)) and metric_val > best_metric:
+                    best_metric = metric_val
+                    prefix = os.path.join(checkpoint_dir, "best")
+                    self.save_models(prefix)
 
         return history
 
@@ -949,6 +1022,63 @@ class MAPPOTrainer:
             "mean_port_reward": total_port_reward / num_steps,
             "mean_coordinator_reward": total_coord_reward / num_steps,
             "total_reward": total_vessel_reward + total_port_reward + total_coord_reward,
+        }
+
+    def evaluate_episodes(
+        self,
+        num_episodes: int = 5,
+        num_steps: int | None = None,
+        deterministic: bool = True,
+    ) -> dict[str, Any]:
+        """Run multiple evaluation episodes and return aggregated statistics.
+
+        Returns per-metric mean, std, min, and max across episodes,
+        plus the raw per-episode results.
+
+        Parameters
+        ----------
+        num_episodes:
+            Number of independent episodes to run.
+        num_steps:
+            Steps per episode (defaults to env rollout_steps).
+        deterministic:
+            Use deterministic (greedy) actions.
+
+        Returns
+        -------
+        dict with keys:
+            ``mean``, ``std``, ``min``, ``max`` — each a dict of floats.
+            ``episodes`` — list of per-episode metric dicts.
+        """
+        episodes: list[dict[str, float]] = []
+        for _ in range(num_episodes):
+            ep_result = self.evaluate(
+                num_steps=num_steps,
+                deterministic=deterministic,
+            )
+            episodes.append(ep_result)
+
+        if not episodes:
+            return {"mean": {}, "std": {}, "min": {}, "max": {}, "episodes": []}
+
+        keys = list(episodes[0].keys())
+        mean_d: dict[str, float] = {}
+        std_d: dict[str, float] = {}
+        min_d: dict[str, float] = {}
+        max_d: dict[str, float] = {}
+        for k in keys:
+            vals = np.array([ep[k] for ep in episodes])
+            mean_d[k] = float(np.mean(vals))
+            std_d[k] = float(np.std(vals))
+            min_d[k] = float(np.min(vals))
+            max_d[k] = float(np.max(vals))
+
+        return {
+            "mean": mean_d,
+            "std": std_d,
+            "min": min_d,
+            "max": max_d,
+            "episodes": episodes,
         }
 
     # ------------------------------------------------------------------
