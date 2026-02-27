@@ -43,6 +43,15 @@ from hmarl_mvp.plotting import plot_mappo_comparison, plot_training_curves
 from hmarl_mvp.report import generate_training_report
 
 
+def _weather_env_cfg(args: argparse.Namespace) -> dict[str, Any]:
+    """Build environment overrides from CLI weather flags."""
+    env_cfg: dict[str, Any] = {}
+    if getattr(args, "weather", False):
+        env_cfg["weather_enabled"] = True
+        env_cfg["sea_state_max"] = args.sea_state_max
+    return env_cfg
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run MAPPO experiments for HMARL maritime scheduling.",
@@ -202,13 +211,17 @@ def cmd_compare(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    env_cfg = _weather_env_cfg(args)
     print(f"Running MAPPO comparison: {args.iterations} iterations")
+    if env_cfg.get("weather_enabled"):
+        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     t0 = time.time()
 
     results = run_mappo_comparison(
         train_iterations=args.iterations,
         rollout_length=args.rollout_length,
         seed=args.seed,
+        config=env_cfg or None,
     )
     elapsed = time.time() - t0
 
@@ -232,12 +245,15 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    env_cfg = _weather_env_cfg(args)
     param_grid: dict[str, list[Any]] = {
         "lr": [1e-4, 3e-4, 1e-3],
         "entropy_coeff": [0.005, 0.01, 0.05],
     }
 
     print(f"Running MAPPO sweep: {args.iterations} iters, {len(param_grid)} params")
+    if env_cfg.get("weather_enabled"):
+        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     t0 = time.time()
 
     df = run_mappo_hyperparam_sweep(
@@ -245,6 +261,7 @@ def cmd_sweep(args: argparse.Namespace) -> None:
         train_iterations=args.iterations,
         rollout_length=args.rollout_length,
         seed=args.seed,
+        config=env_cfg or None,
     )
     elapsed = time.time() - t0
 
@@ -259,6 +276,7 @@ def cmd_ablate(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    env_cfg = _weather_env_cfg(args)
     ablations: dict[str, dict[str, Any]] = {
         "baseline": {},
         "no_reward_norm": {"normalize_rewards": False},
@@ -274,6 +292,8 @@ def cmd_ablate(args: argparse.Namespace) -> None:
     }
 
     print(f"Running MAPPO ablation: {args.iterations} iters, {len(ablations)} variants")
+    if env_cfg.get("weather_enabled"):
+        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     t0 = time.time()
 
     df = run_mappo_ablation(
@@ -281,6 +301,7 @@ def cmd_ablate(args: argparse.Namespace) -> None:
         train_iterations=args.iterations,
         rollout_length=args.rollout_length,
         seed=args.seed,
+        config=env_cfg or None,
     )
     elapsed = time.time() - t0
 

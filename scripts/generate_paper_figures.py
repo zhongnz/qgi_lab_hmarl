@@ -10,11 +10,13 @@ Run all experiments first, then::
 The script reads CSV result files from ``runs/`` sub-directories and
 produces PDF/PNG figures suitable for inclusion in a LaTeX paper.
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
@@ -25,11 +27,11 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Ensure project root is importable
 # ---------------------------------------------------------------------------
-_project_root = str(Path(__file__).resolve().parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-from hmarl_mvp.plotting import (
+from hmarl_mvp.plotting import (  # noqa: E402
     plot_ablation_bar,
     plot_multi_seed_curves,
     plot_policy_comparison,
@@ -55,6 +57,8 @@ PAPER_RC = {
     "savefig.pad_inches": 0.05,
 }
 
+_POLICY_NAMES = ("independent", "reactive", "forecast", "oracle", "mappo")
+
 
 def _load_csv(path: str | Path) -> pd.DataFrame | None:
     """Load a CSV silently; return None if missing."""
@@ -64,127 +68,347 @@ def _load_csv(path: str | Path) -> pd.DataFrame | None:
     return None
 
 
-def _save(fig: plt.Figure, out_dir: Path, name: str, formats: tuple[str, ...] = ("pdf", "png")) -> None:
-    """Save figure in multiple formats."""
-    for fmt in formats:
-        path = out_dir / f"{name}.{fmt}"
-        fig.savefig(str(path), format=fmt)
+def _formats(fmt: str) -> tuple[str, ...]:
+    if fmt == "both":
+        return ("pdf", "png")
+    return (fmt,)
+
+
+def _save_custom(fig: plt.Figure, out_dir: Path, name: str, formats: tuple[str, ...]) -> None:
+    """Save a manually-constructed figure in multiple formats."""
+    for ext in formats:
+        fig.savefig(out_dir / f"{name}.{ext}")
     plt.close(fig)
     print(f"  saved: {name}")
+
+
+def _call_plotter_multi(
+    plotter: Any,
+    *args: Any,
+    out_dir: Path,
+    name: str,
+    formats: tuple[str, ...],
+    **kwargs: Any,
+) -> None:
+    """Call a plotting helper once per format via its out_path parameter."""
+    for ext in formats:
+        out_path = out_dir / f"{name}.{ext}"
+        plotter(*args, out_path=str(out_path), **kwargs)
+    print(f"  saved: {name}")
+
+
+def _find_first_existing(paths: list[Path]) -> Path | None:
+    for p in paths:
+        if p.exists():
+            return p
+    return None
+
+
+def _load_policy_results(base_dir: Path, prefixes: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    """Load per-policy result CSVs from one directory."""
+    results: dict[str, pd.DataFrame] = {}
+    for policy in _POLICY_NAMES:
+        candidates: list[Path] = []
+        for prefix in prefixes:
+            if prefix:
+                candidates.append(base_dir / f"{prefix}_{policy}.csv")
+            else:
+                candidates.append(base_dir / f"{policy}.csv")
+        if policy == "mappo":
+            candidates.append(base_dir / "mappo.csv")
+        path = _find_first_existing(candidates)
+        if path is not None:
+            results[policy] = pd.read_csv(path)
+    return results
+
+
+def _find_policy_results(runs_dir: Path) -> dict[str, pd.DataFrame]:
+    """Find a usable policy-result dictionary for policy comparison plotting."""
+    search = [
+        (runs_dir / "full_run", ("mappo", "policy")),
+        (runs_dir / "mappo_compare", ("",)),
+        (runs_dir / "baselines", ("policy",)),
+        (runs_dir / "baseline_refactor", ("policy",)),
+    ]
+    for base_dir, prefixes in search:
+        if not base_dir.exists():
+            continue
+        results = _load_policy_results(base_dir, prefixes)
+        if len(results) >= 2:
+            return results
+    return {}
+
+
+def _coerce_policy_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize policy label column name for summary/economic tables."""
+    if "policy" in df.columns:
+        return df
+    unnamed = [c for c in df.columns if c.lower().startswith("unnamed")]
+    if unnamed:
+        return df.rename(columns={unnamed[0]: "policy"})
+    first = df.columns[0]
+    if first != "policy":
+        return df.rename(columns={first: "policy"})
+    return df
 
 
 # ---------------------------------------------------------------------------
 # Figure generators
 # ---------------------------------------------------------------------------
 
-def fig_training_curves(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 1: MAPPO training curves (reward, loss, entropy over iterations)."""
-    metrics = _load_csv(runs_dir / "baseline" / "metrics.csv")
-    if metrics is None:
-        metrics = _load_csv(runs_dir / "multi_seed" / "seed_42" / "metrics.csv")
-    if metrics is None:
-        print("  [skip] no baseline metrics.csv found")
+
+def fig_training_curves(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 1: MAPPO training curves (reward and critic loss)."""
+    path = _find_first_existing(
+        [
+            runs_dir / "full_run" / "mappo__train_log.csv",
+            runs_dir / "mappo_train" / "train_history.csv",
+            runs_dir / "baseline" / "seed_42" / "metrics.csv",
+            runs_dir / "multi_seed" / "seed_42" / "metrics.csv",
+        ]
+    )
+    if path is None:
+        print("  [skip] no training log CSV found")
         return
-    fig = plot_training_curves(metrics, title="MAPPO Training Curves")
-    _save(fig, out_dir, "fig1_training_curves")
-
-
-def fig_policy_comparison(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 2: Bar chart comparing heuristic baselines vs MAPPO."""
-    summary_path = runs_dir / "baseline" / "comparison_summary.csv"
-    df = _load_csv(summary_path)
-    if df is None:
-        print("  [skip] no comparison_summary.csv found")
+    df = pd.read_csv(path)
+    if "iteration" not in df.columns or "mean_reward" not in df.columns:
+        print(f"  [skip] training log missing required columns: {path}")
         return
-    fig = plot_policy_comparison(df)
-    _save(fig, out_dir, "fig2_policy_comparison")
+    _call_plotter_multi(
+        plot_training_curves,
+        df,
+        out_dir=out_dir,
+        name="fig1_training_curves",
+        formats=formats,
+    )
 
 
-def fig_multi_seed(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 3: Multi-seed training curves with mean and std bands."""
+def fig_policy_comparison(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 2: Policy comparison (time-series across policies)."""
+    results = _find_policy_results(runs_dir)
+    if len(results) < 2:
+        print("  [skip] no usable policy result files found")
+        return
+    _call_plotter_multi(
+        plot_policy_comparison,
+        results,
+        out_dir=out_dir,
+        name="fig2_policy_comparison",
+        formats=formats,
+    )
+
+
+def fig_multi_seed(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 3: Multi-seed learning curve with mean/std band."""
     ms_dir = runs_dir / "multi_seed"
-    seed_dfs = []
-    if ms_dir.exists():
-        for seed_dir in sorted(ms_dir.iterdir()):
-            csv = seed_dir / "metrics.csv"
-            if csv.exists():
-                df = pd.read_csv(csv)
-                df["seed"] = seed_dir.name
-                seed_dfs.append(df)
-    if not seed_dfs:
-        print("  [skip] no multi_seed results found")
+    if not ms_dir.exists():
+        print("  [skip] no multi_seed directory found")
         return
-    combined = pd.concat(seed_dfs, ignore_index=True)
-    fig = plot_multi_seed_curves(combined, title="Multi-Seed MAPPO Training")
-    _save(fig, out_dir, "fig3_multi_seed_curves")
 
+    histories: list[list[dict[str, Any]]] = []
+    seeds: list[int] = []
+    for seed_dir in sorted(ms_dir.iterdir()):
+        if not seed_dir.is_dir() or not seed_dir.name.startswith("seed_"):
+            continue
+        metrics_path = seed_dir / "metrics.csv"
+        if not metrics_path.exists():
+            continue
+        df = pd.read_csv(metrics_path)
+        if "mean_reward" not in df.columns:
+            continue
+        histories.append(df.to_dict(orient="records"))
+        try:
+            seeds.append(int(seed_dir.name.replace("seed_", "")))
+        except ValueError:
+            seeds.append(len(seeds))
 
-def fig_parameter_sharing(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 4: Ablation bar chart — shared vs independent parameters."""
-    shared = _load_csv(runs_dir / "multi_seed" / "summary.csv")
-    independent = _load_csv(runs_dir / "no_sharing" / "summary.csv")
-    if shared is None or independent is None:
-        print("  [skip] need both multi_seed/summary.csv and no_sharing/summary.csv")
+    if not histories:
+        print("  [skip] no per-seed metrics.csv found")
         return
-    results = {"Shared Parameters": shared, "Independent": independent}
-    fig = plot_ablation_bar(results, title="Parameter Sharing Ablation")
-    _save(fig, out_dir, "fig4_parameter_sharing")
+
+    multi_seed_result = {"histories": histories, "seeds": seeds}
+    _call_plotter_multi(
+        plot_multi_seed_curves,
+        multi_seed_result,
+        out_dir=out_dir,
+        name="fig3_multi_seed_curves",
+        formats=formats,
+        metric="mean_reward",
+    )
 
 
-def fig_weather_impact(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 5: Weather curriculum training dashboard."""
-    metrics = _load_csv(runs_dir / "weather_curriculum" / "metrics.csv")
-    if metrics is None:
-        print("  [skip] no weather_curriculum/metrics.csv found")
+def fig_parameter_sharing(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 4: Parameter-sharing ablation (shared vs no-sharing)."""
+    shared_path = runs_dir / "multi_seed" / "summary.csv"
+    no_share_path = runs_dir / "no_sharing" / "summary.csv"
+
+    if shared_path.exists() and no_share_path.exists():
+        shared = pd.read_csv(shared_path)
+        no_share = pd.read_csv(no_share_path)
+        rows: list[dict[str, Any]] = []
+
+        def _mean_row(df: pd.DataFrame, label: str) -> dict[str, Any]:
+            row: dict[str, Any] = {"ablation": label}
+            for col in ("final_mean_reward", "best_mean_reward", "total_reward"):
+                if col in df.columns:
+                    row[col] = float(df[col].mean())
+            return row
+
+        rows.append(_mean_row(shared, "shared"))
+        rows.append(_mean_row(no_share, "no_sharing"))
+        ablation_df = pd.DataFrame(rows)
+    else:
+        ablation_path = _find_first_existing(
+            [
+                runs_dir / "mappo_ablation" / "ablation_results.csv",
+                runs_dir / "ablation" / "ablation_results.csv",
+            ]
+        )
+        if ablation_path is None:
+            print("  [skip] no parameter-sharing ablation data found")
+            return
+        ablation_df = pd.read_csv(ablation_path)
+
+    if "ablation" not in ablation_df.columns:
+        print("  [skip] ablation data missing 'ablation' column")
         return
-    fig = plot_training_dashboard(metrics, title="Weather Curriculum Training")
-    _save(fig, out_dir, "fig5_weather_dashboard")
+
+    _call_plotter_multi(
+        plot_ablation_bar,
+        ablation_df,
+        out_dir=out_dir,
+        name="fig4_parameter_sharing",
+        formats=formats,
+    )
 
 
-def fig_hyperparam_heatmap(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 6: Hyperparameter sweep heatmap (LR vs entropy)."""
-    sweep_csv = runs_dir / "hyperparam_sweep" / "sweep_results.csv"
-    df = _load_csv(sweep_csv)
+def fig_weather_impact(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 5: Weather-curriculum dashboard."""
+    path = _find_first_existing(
+        [
+            runs_dir / "weather_curriculum" / "metrics.csv",
+            runs_dir / "weather_curriculum" / "seed_42" / "metrics.csv",
+        ]
+    )
+    if path is None:
+        print("  [skip] no weather curriculum metrics found")
+        return
+    df = pd.read_csv(path)
+    if "mean_reward" not in df.columns:
+        print(f"  [skip] weather metrics missing mean_reward: {path}")
+        return
+    _call_plotter_multi(
+        plot_training_dashboard,
+        df.to_dict(orient="records"),
+        out_dir=out_dir,
+        name="fig5_weather_dashboard",
+        formats=formats,
+    )
+
+
+def fig_hyperparam_heatmap(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 6: Hyperparameter sweep heatmap (lr vs entropy_coeff)."""
+    path = _find_first_existing(
+        [
+            runs_dir / "hyperparam_sweep" / "sweep_results.csv",
+            runs_dir / "mappo_sweep" / "sweep_results.csv",
+        ]
+    )
+    if path is None:
+        print("  [skip] no sweep_results.csv found")
+        return
+
+    df = pd.read_csv(path)
+    if "lr" not in df.columns or "entropy_coeff" not in df.columns:
+        print("  [skip] sweep results missing lr/entropy_coeff")
+        return
+
+    metric = "total_reward"
+    if metric not in df.columns:
+        if "final_mean_reward" in df.columns:
+            metric = "final_mean_reward"
+        elif "best_mean_reward" in df.columns:
+            metric = "best_mean_reward"
+        else:
+            print("  [skip] sweep results missing reward metric columns")
+            return
+
+    _call_plotter_multi(
+        plot_sweep_heatmap,
+        df,
+        out_dir=out_dir,
+        name="fig6_hyperparam_heatmap",
+        formats=formats,
+        x_param="lr",
+        y_param="entropy_coeff",
+        metric=metric,
+    )
+
+
+def fig_economic_comparison(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 7: Economic cost breakdown (stacked bar by policy)."""
+    df = _load_csv(runs_dir / "economic" / "cost_breakdown.csv")
+
     if df is None:
-        print("  [skip] no hyperparam_sweep/sweep_results.csv found")
-        return
-    fig = plot_sweep_heatmap(df, title="Hyperparameter Sweep")
-    _save(fig, out_dir, "fig6_hyperparam_heatmap")
+        summary_path = _find_first_existing(
+            [
+                runs_dir / "full_run" / "policy_summary.csv",
+                runs_dir / "baselines" / "policy_summary.csv",
+                runs_dir / "baseline_refactor" / "policy_summary.csv",
+            ]
+        )
+        if summary_path is not None:
+            df = pd.read_csv(summary_path)
+            df = _coerce_policy_column(df)
 
-
-def fig_economic_comparison(runs_dir: Path, out_dir: Path) -> None:
-    """Figure 7: Economic cost breakdown (stacked bar)."""
-    econ_csv = runs_dir / "economic" / "cost_breakdown.csv"
-    df = _load_csv(econ_csv)
     if df is None:
-        print("  [skip] no economic/cost_breakdown.csv found")
+        policy_results = _find_policy_results(runs_dir)
+        rows: list[dict[str, Any]] = []
+        for policy, policy_df in policy_results.items():
+            if policy_df.empty:
+                continue
+            last = policy_df.iloc[-1].to_dict()
+            last["policy"] = policy
+            rows.append(last)
+        if rows:
+            df = pd.DataFrame(rows)
+
+    if df is None:
+        print("  [skip] no economic data found")
         return
 
+    df = _coerce_policy_column(df)
     cost_cols = [c for c in df.columns if c.endswith("_cost_usd")]
     if not cost_cols:
-        print("  [skip] no cost columns in economic data")
+        print("  [skip] no *_cost_usd columns found")
         return
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    policy_col = "policy" if "policy" in df.columns else df.columns[0]
     bottom = None
     colors = plt.cm.Set2.colors  # type: ignore[attr-defined]
     for idx, col in enumerate(cost_cols):
         label = col.replace("_cost_usd", "").replace("_", " ").title()
-        vals = df[col].values
-        ax.bar(df[policy_col], vals, bottom=bottom, label=label,
-               color=colors[idx % len(colors)])
+        vals = df[col].to_numpy(dtype=float)
+        ax.bar(
+            df["policy"],
+            vals,
+            bottom=bottom,
+            label=label,
+            color=colors[idx % len(colors)],
+        )
         bottom = vals if bottom is None else bottom + vals
+
     ax.set_ylabel("Cost (USD)")
     ax.set_title("Economic Cost Comparison (RQ4)")
     ax.legend()
     fig.tight_layout()
-    _save(fig, out_dir, "fig7_economic_comparison")
+    _save_custom(fig, out_dir, "fig7_economic_comparison", formats)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 FIGURE_GENERATORS = [
     ("Fig 1: Training curves", fig_training_curves),
@@ -201,22 +425,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate paper figures from experiment results.")
     parser.add_argument("--runs-dir", default="runs", help="Root directory of experiment results")
     parser.add_argument("--out-dir", default="figures", help="Output directory for figures")
-    parser.add_argument("--format", choices=["pdf", "png", "both"], default="both",
-                        help="Output format (default: both)")
+    parser.add_argument(
+        "--format",
+        choices=["pdf", "png", "both"],
+        default="both",
+        help="Output format (default: both)",
+    )
     args = parser.parse_args()
 
     runs_dir = Path(args.runs_dir)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    formats = _formats(args.format)
 
     with plt.rc_context(PAPER_RC):
         print(f"Generating paper figures from {runs_dir} -> {out_dir}")
         for label, gen_fn in FIGURE_GENERATORS:
             print(f"\n{label}:")
             try:
-                gen_fn(runs_dir, out_dir)
-            except Exception as e:
-                print(f"  [error] {e}")
+                gen_fn(runs_dir, out_dir, formats)
+            except Exception as exc:  # pragma: no cover - defensive CLI guard
+                print(f"  [error] {exc}")
 
     print(f"\nDone. Figures saved to {out_dir}/")
 

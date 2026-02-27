@@ -8,6 +8,7 @@ import sys
 from typing import Any
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 from hmarl_mvp.config import get_default_config
@@ -198,6 +199,106 @@ class TestCLIWeatherFlag:
         with patch("sys.argv", ["prog", "train", "--iterations", "1"]):
             args = parse_args()
         assert args.weather is False
+
+
+class TestCLIWeatherWiring:
+    """Weather flags should be propagated into command execution config."""
+
+    def test_compare_passes_weather_config(self, tmp_path: Any) -> None:
+        from scripts.run_mappo import cmd_compare, parse_args
+
+        captured: dict[str, Any] = {}
+
+        def fake_compare(*args: Any, **kwargs: Any) -> dict[str, pd.DataFrame]:
+            captured["config"] = kwargs.get("config")
+            step_df = pd.DataFrame({"t": [0], "avg_queue": [1.0]})
+            train_df = pd.DataFrame({"iteration": [1], "mean_reward": [0.0]})
+            return {"mappo": step_df, "independent": step_df.copy(), "_train_log": train_df}
+
+        with patch("scripts.run_mappo.run_mappo_comparison", side_effect=fake_compare):
+            with patch(
+                "sys.argv",
+                [
+                    "prog",
+                    "compare",
+                    "--weather",
+                    "--sea-state-max",
+                    "4.0",
+                    "--no-plots",
+                    "--output-dir",
+                    str(tmp_path),
+                ],
+            ):
+                args = parse_args()
+            cmd_compare(args)
+
+        assert captured["config"]["weather_enabled"] is True
+        assert captured["config"]["sea_state_max"] == 4.0
+
+    def test_sweep_passes_weather_config(self, tmp_path: Any) -> None:
+        from scripts.run_mappo import cmd_sweep, parse_args
+
+        captured: dict[str, Any] = {}
+
+        def fake_sweep(*args: Any, **kwargs: Any) -> pd.DataFrame:
+            captured["config"] = kwargs.get("config")
+            return pd.DataFrame(
+                {"lr": [3e-4], "entropy_coeff": [0.01], "total_reward": [1.0]}
+            )
+
+        with patch("scripts.run_mappo.run_mappo_hyperparam_sweep", side_effect=fake_sweep):
+            with patch(
+                "sys.argv",
+                [
+                    "prog",
+                    "sweep",
+                    "--weather",
+                    "--sea-state-max",
+                    "3.5",
+                    "--output-dir",
+                    str(tmp_path),
+                ],
+            ):
+                args = parse_args()
+            cmd_sweep(args)
+
+        assert captured["config"]["weather_enabled"] is True
+        assert captured["config"]["sea_state_max"] == 3.5
+
+    def test_ablate_passes_weather_config(self, tmp_path: Any) -> None:
+        from scripts.run_mappo import cmd_ablate, parse_args
+
+        captured: dict[str, Any] = {}
+
+        def fake_ablate(*args: Any, **kwargs: Any) -> pd.DataFrame:
+            captured["config"] = kwargs.get("config")
+            return pd.DataFrame(
+                {
+                    "ablation": ["baseline"],
+                    "final_mean_reward": [0.0],
+                    "best_mean_reward": [0.0],
+                    "total_reward": [0.0],
+                }
+            )
+
+        with patch("scripts.run_mappo.run_mappo_ablation", side_effect=fake_ablate):
+            with patch(
+                "sys.argv",
+                [
+                    "prog",
+                    "ablate",
+                    "--weather",
+                    "--sea-state-max",
+                    "6.0",
+                    "--output-dir",
+                    str(tmp_path),
+                ],
+            ):
+                args = parse_args()
+            cmd_ablate(args)
+
+        assert captured["config"]["weather_enabled"] is True
+        assert captured["config"]["sea_state_max"] == 6.0
 
 
 # ── Gym wrapper weather info tests ───────────────────────────────────────
