@@ -41,7 +41,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── logger.py       # Structured JSONL training logger
 │   ├── checkpointing.py # Training checkpoints and early stopping
 │   ├── curriculum.py   # Curriculum learning scheduler
-│   ├── learned_forecaster.py  # Trainable MLP queue forecaster
+│   ├── learned_forecaster.py  # Trainable MLP/GRU queue forecaster
 │   └── gym_wrapper.py  # Gymnasium-compatible single-agent wrapper
 ├── configs/
 │   ├── baseline.yaml         # Standard MAPPO baseline experiment
@@ -54,7 +54,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
 │   ├── train_forecaster.py   # CLI: train the learned forecaster
 │   └── generate_paper_figures.py  # CLI: generate publication-ready figures
-├── tests/                    # 643 tests (pytest)
+├── tests/                    # 644 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py

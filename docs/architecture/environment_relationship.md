@@ -5,7 +5,7 @@ This diagram captures the high-level relationship in the HMARL maritime environm
 ```mermaid
 flowchart LR
     subgraph Forecasting
-      M[Medium-term forecast\\n3-7 days]
+      M[Medium-term forecast\ndefault 5 days\n(configurable medium_horizon_days)]
       S[Short-term forecast\\n6-24 hours]
     end
 

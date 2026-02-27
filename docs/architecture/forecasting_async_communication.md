@@ -15,9 +15,11 @@
 | `ShortTermForecaster` | `forecasts.py` | Queue + Gaussian noise |
 | `OracleForecaster` | `forecasts.py` | Perfect current-queue repeat |
 | `LearnedForecaster` | `learned_forecaster.py` | Trainable MLP (see `learned_forecaster.md`) |
+| `RNNForecaster` | `learned_forecaster.py` | Trainable GRU with rolling history buffer (`seq_len=8`, 5 features per port: queue, occupied, docks, wait_delta, served_delta). Used in April forecaster ablation (E9). |
 
 The `learned_forecast` policy type uses `LearnedForecaster.predict()` as a
-drop-in replacement for the heuristic forecasters.
+drop-in replacement for the heuristic forecasters. `RNNForecaster` is the
+GRU-based alternative used in the forecaster ablation experiment (E9).
 
 ## Asynchronous cadence model
 

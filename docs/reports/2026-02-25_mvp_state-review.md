@@ -61,10 +61,18 @@ documentation alignment.
 19. ~~Multi-seed learning curve + timing plots.~~ **Done** (`plot_multi_seed_curves()`, `plot_timing_breakdown()` in `plotting.py`).
 20. ~~CLI multiseed subcommand.~~ **Done** (`run_mappo.py multiseed`).
 21. ~~(New) Run full hyperparameter sweeps and ablation experiments for final report.~~
-    Partially addressed: YAML experiment config system (`experiment_config.py`),
-    experiment runner script (`scripts/run_experiment.py`), and example configs
-    in `configs/` provide infrastructure for systematic sweep execution.
-22. (New) End-to-end weather impact analysis across all policy types.
+    Infrastructure complete: YAML experiment config system (`experiment_config.py`),
+    `scripts/run_experiment.py`, `configs/` example configs, multi-seed runner.
+    Actual sweep execution (E1–E9 from `experiment_protocol.md`) is still outstanding
+    pending config scale fix (8v/5p) and compute time.
+22. ~~(New) End-to-end weather impact analysis across all policy types.~~
+    **Resolved**: `run_weather_sweep()` in `experiment.py` compares all policy
+    types under weather on/off conditions. Full multi-seed weather analysis
+    (E6 in `experiment_protocol.md`) pending final sweep run.
+23. (New) Scale experiment configs from 3v/2p to proposal-specified 8v/5p.
+    All YAML configs (`baseline.yaml`, `multi_seed.yaml`, etc.) currently use
+    `num_vessels: 3, num_ports: 2`. Must update to `num_vessels: 8, num_ports: 5`
+    before running E1–E9 results for the final report.
 23. ~~(New) YAML experiment configuration with save/load/run.~~ **Done** (`experiment_config.py`).
 24. ~~(New) Statistical evaluation module (Welch's t-test, bootstrap CI, method comparison).~~ **Done** (`stats.py`).
 25. ~~(New) Parameter sharing toggle for MAPPO ablation.~~ **Done** (`MAPPOConfig.parameter_sharing`, `build_per_agent_actor_critics()`).

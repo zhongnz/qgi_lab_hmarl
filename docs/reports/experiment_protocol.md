@@ -157,6 +157,39 @@ python scripts/run_experiment.py configs/weather_curriculum.yaml
 
 ---
 
+### E9 — Forecaster Ablation (RQ3)
+
+**Goal:** Determine whether a trainable forecaster (MLP or GRU) improves
+coordination quality over heuristic queue estimates.
+
+| Property | Value |
+|----------|-------|
+| Function | `run_experiment(policy_type=...)` with each forecaster variant |
+| Variants | Heuristic (`forecast`), MLP (`learned_forecast`), GRU (`rnn_forecast`) |
+| Seeds    | 3 (42, 49, 56) |
+| Iterations | 200 |
+| Key Metrics | `total_fuel`, `mean_delay_hours`, forecaster `val_loss` (MAE on held-out traces) |
+| Acceptance | MLP and/or GRU achieve statistically significant improvement (p < 0.05, Welch's) over heuristic on `total_fuel` or `mean_delay_hours`; report forecaster validation curves |
+
+**Training commands:**
+```bash
+# Train MLP forecaster
+python scripts/train_forecaster.py --episodes 20 --steps 40 --epochs 200
+
+# Train GRU forecaster
+python scripts/train_forecaster.py --model rnn --seq-len 8 --epochs 200
+```
+
+**Run ablation:**
+```python
+from hmarl_mvp import run_forecaster_ablation
+results = run_forecaster_ablation(seeds=[42, 49, 56], num_iterations=200)
+```
+
+> **Depends on**: E1 complete, YAML configs updated to 8v/5p scale (see Critical Prerequisites).
+
+---
+
 ## Statistical Methodology
 
 All multi-seed comparisons use:
@@ -167,16 +200,30 @@ All multi-seed comparisons use:
 
 ---
 
+## Critical Prerequisites
+
+> **BEFORE RUNNING ANY EXPERIMENT:** Update all YAML configs from the current
+> development scale (`num_vessels: 3, num_ports: 2`) to the proposal-specified
+> scale (`num_vessels: 8, num_ports: 5`). Results at 3v/2p are not comparable
+> to the research proposal and should not be used in the final report.
+>
+> Configs to update: `configs/baseline.yaml`, `configs/multi_seed.yaml`,
+> `configs/weather_curriculum.yaml`, `configs/no_sharing_ablation.yaml`.
+
+---
+
 ## Execution Plan
 
 | Phase | Experiments | Est. Time | Prerequisites |
 |-------|-------------|-----------|---------------|
-| 1. Validation | E1 (baseline sweep) | 2 hours | None |
+| 0. Scale fix | Update all configs to 8v/5p | 30 min | None |
+| 1. Validation | E1 (baseline sweep) | 2 hours | Phase 0 done |
 | 2. Ablations  | E2 (param sharing), E4 (noise), E5 (sharing) | 4 hours | E1 done |
 | 3. Horizons   | E3 (horizon sweep) | 3 hours | E1 done |
 | 4. Weather    | E6 (weather analysis) | 4 hours | E1 done |
 | 5. Tuning     | E7 (hyperparam sweep) | 8 hours | E1-E3 analysed |
-| 6. Economics  | E8 (cost analysis) | 1 hour  | E1, E6 done |
+| 6. Forecaster | E9 (forecaster ablation) | 3 hours | E1, E3 done |
+| 7. Economics  | E8 (cost analysis) | 1 hour  | E1, E6 done |
 
 ---
 

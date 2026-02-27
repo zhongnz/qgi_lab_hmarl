@@ -90,3 +90,60 @@ Outputs:
 | `batch_size` | 64 | Minibatch size |
 | `lr` | 1e-3 | Learning rate |
 | `val_fraction` | 0.1 | Validation split ratio |
+
+---
+
+## RNN Forecaster (GRU) — April Ablation (E9)
+
+`RNNForecaster` is a GRU-based alternative that consumes a rolling window of
+historical port state to predict future congestion. It is used in the E9
+forecaster ablation experiment to compare seq2seq forecasting against the
+stateless MLP baseline.
+
+### Module map
+
+| Class / Function | Purpose |
+|------------------|---------|
+| `RNNForecasterNet` | GRU encoder → linear decoder producing `(num_ports, horizon)` |
+| `RNNForecaster` | Wrapper maintaining a history buffer; `predict(ports)` API identical to `LearnedForecaster` |
+| `RNNForecastDataset` | PyTorch Dataset — `(seq_len, num_ports × 5)` inputs, `(num_ports × horizon)` targets |
+| `build_rnn_dataset` | Converts expanded queue traces to `RNNForecastDataset` |
+| `train_rnn_forecaster` | Training loop: MSE loss, Adam, train/val split, early stopping |
+| `collect_expanded_queue_traces` | Rollout collector producing 5 features per port per step |
+
+### Input features (5 per port)
+
+| Index | Feature | Description |
+|-------|---------|-------------|
+| 0 | `queue` | Number of vessels waiting |
+| 1 | `occupied` | Number of docks currently in service |
+| 2 | `docks` | Total dock capacity |
+| 3 | `wait_delta` | Change in queue length from previous step (∆ queue) |
+| 4 | `served_delta` | Change in occupied docks from previous step (∆ occupied) |
+
+### Network architecture
+
+```
+Input: (batch, seq_len, num_ports × 5)
+  └── GRU encoder (hidden_size=64, num_layers=1)
+       └── Last hidden state → Linear → (batch, num_ports × horizon)
+            └── ReLU → reshape to (batch, num_ports, horizon)
+```
+
+Default: `seq_len=8`, `hidden_size=64`, `horizon=config.short_horizon_hours`.
+
+### History buffer
+
+`RNNForecaster` maintains a `deque(maxlen=seq_len)` of port state features.
+On each `predict(ports)` call it appends the current state and pads with zeros
+if fewer than `seq_len` steps have been observed. This makes it usable from
+the first simulation step without special warm-up logic.
+
+### CLI usage
+
+```bash
+# Collect expanded traces and train GRU forecaster
+python scripts/train_forecaster.py --model rnn --seq-len 8 --epochs 200 --verbose
+```
+
+Outputs `runs/forecaster/rnn_forecaster_weights.pt` and `rnn_eval_metrics.json`.

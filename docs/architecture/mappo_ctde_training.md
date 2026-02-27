@@ -25,19 +25,29 @@ uses only its local observation.
 ┌────────────────────────────────────────────────────────────┐
 │                     MAPPOTrainer                           │
 │                                                            │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐         │
-│  │  Vessel   │  │   Port   │  │   Coordinator    │         │
-│  │ActorCritic│  │ActorCritic│  │  ActorCritic     │         │
-│  │(shared)   │  │(shared)   │  │  (shared)        │         │
-│  └─────┬─────┘  └─────┬─────┘  └────────┬─────────┘        │
-│        │              │                  │                  │
-│  ┌─────▼──────────────▼──────────────────▼──────────┐      │
-│  │            Shared Critic (CTDE)                   │      │
-│  │  Input: env.get_global_state()                    │      │
-│  │  = concat(coordinator_obs * N_c,                  │      │
-│  │           vessel_obs * N_v, port_obs * N_p,       │      │
-│  │           global_congestion, total_emissions)     │      │
-│  └──────────────────────────────────────────────────┘      │
+│  ┌──────────────┐  ┌────────────┐  ┌──────────────────┐   │
+│  │    Vessel     │  │    Port    │  │   Coordinator    │   │
+│  │  ActorCritic  │  │ ActorCritic│  │   ActorCritic    │   │
+│  │ ┌──────────┐  │  │ ┌────────┐│  │  ┌────────────┐  │   │
+│  │ │  Actor   │  │  │ │ Actor  ││  │  │   Actor    │  │   │
+│  │ │(ContinuousA) │  │ │(Discrete)│  │  │ (Discrete) │  │   │
+│  │ ├──────────┤  │  │ ├────────┤│  │  ├────────────┤  │   │
+│  │ │  Critic  │  │  │ │ Critic ││  │  │   Critic   │  │   │
+│  │ │(global   │  │  │ │(global ││  │  │  (global   │  │   │
+│  │ │ state)   │  │  │  state) ││  │  │   state)   │  │   │
+│  │ └──────────┘  │  │ └────────┘│  │  └────────────┘  │   │
+│  │ (param-shared │  │ (param-   │  │  (param-shared   │   │
+│  │  across all   │  │  shared   │  │   across all     │   │
+│  │  vessels)     │  │  across   │  │   coordinators)  │   │
+│  └──────────────┘  │  all ports)│  └──────────────────┘   │
+│                    └────────────┘                          │
+│  NOTE: Each agent type has its OWN Critic network.         │
+│  "CTDE" means critics observe the global state during      │
+│  training — not that all types share a single critic.      │
+│  All critics receive: env.get_global_state()               │
+│    = concat(coordinator_obs * N_c,                         │
+│             vessel_obs * N_v, port_obs * N_p,              │
+│             global_congestion, total_emissions)            │
 │                                                            │
 │  ┌──────────────────────────────────────────────────┐      │
 │  │         MultiAgentRolloutBuffer (per type)        │      │
@@ -47,6 +57,14 @@ uses only its local observation.
 │  └──────────────────────────────────────────────────┘      │
 └────────────────────────────────────────────────────────────┘
 ```
+
+> **CTDE clarification**: The current implementation has **three separate
+> `ActorCritic` modules** (one per agent type), each containing its own critic.
+> "Parameter sharing" means all agents of the same type share one network
+> (e.g., all vessels use the same `ActorCritic`), not that there is a single
+> monolithic shared critic across types. Each critic independently receives the
+> full global state during training, satisfying CTDE. A true single shared
+> critic across all agent types is a possible future extension.
 
 ## Actor / Action Spaces
 
