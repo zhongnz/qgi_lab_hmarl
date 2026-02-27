@@ -45,7 +45,7 @@ Code references:
    **Partially done** — `avg_route_efficiency` and `avg_trip_duration_hours` in
    coordinator metrics provide per-vessel attribution proxies.
 
-## Weather effects on emissions (added Mar 2026)
+## Weather effects on emissions (added Feb 2026)
 
 When `weather_enabled=True`, sea-state conditions affect fuel consumption and
 effective vessel speed on each route:
@@ -59,7 +59,7 @@ This creates a new strategic dimension: the coordinator must weigh routing
 through calm vs. rough sea lanes. Vessels experience higher emissions and slower
 progress in bad weather, which feeds back into all three reward functions.
 
-### Weather-Aware Reward Shaping (added)
+### Weather-Aware Reward Shaping (added Feb 2026)
 
 Two optional additive shaping terms encourage weather-efficient behaviour:
 
@@ -77,7 +77,7 @@ Code references:
 - `hmarl_mvp/rewards.py::weather_vessel_shaping`
 - `hmarl_mvp/rewards.py::weather_coordinator_shaping`
 
-### Weather-Aware Heuristic Policies (added)
+### Weather-Aware Heuristic Policies (added Feb 2026)
 
 In `forecast` mode, heuristic policies now condition on weather:
 

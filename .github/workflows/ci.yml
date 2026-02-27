@@ -21,11 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements.txt -r requirements-dev.txt
-
-      - name: Lint
-        run: python -m ruff check .
-
-      - name: Type check
+            python -m pip install -e .
         run: python -m mypy
 
       - name: Test

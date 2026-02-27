@@ -89,7 +89,7 @@ def welch_t_test(
 
 
 def bootstrap_ci(
-    data: list[float] | np.ndarray,
+    data: list[float] | list[int] | np.ndarray,
     confidence: float = 0.95,
     n_bootstrap: int = 10_000,
     statistic: str = "mean",
@@ -303,7 +303,7 @@ def _t_cdf_two_sided(t_abs: float, df: float) -> float:
         pass
 
     # Normal approximation: for df>30 this is very close; for smaller df
-    # it slightly underestimates p (conservative).
+    # it underestimates p-values (anti-conservative — more likely to reject H0).
     from math import erfc, sqrt
 
     return float(erfc(t_abs / sqrt(2)))

@@ -486,9 +486,12 @@ class MaritimeEnv:
             for v in self.vessels
         ]
         # Apply weather shaping bonus for vessels that slow in rough seas.
+        # Only at-sea vessels receive shaping — docked vessels make no routing decisions.
         if self._weather_enabled and self._weather is not None:
             for i, v in enumerate(self.vessels):
-                speed = float(v.speed) if v.at_sea else 0.0
+                if not v.at_sea:
+                    continue
+                speed = float(v.speed)
                 src, dst = v.location, v.destination
                 n = self._weather.shape[0]
                 sea = float(self._weather[src, dst]) if 0 <= src < n and 0 <= dst < n else 0.0

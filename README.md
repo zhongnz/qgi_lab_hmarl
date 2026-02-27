@@ -54,7 +54,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
 │   ├── train_forecaster.py   # CLI: train the learned forecaster
 │   └── generate_paper_figures.py  # CLI: generate publication-ready figures
-├── tests/                    # 639 tests (pytest)
+├── tests/                    # 643 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
@@ -88,7 +88,8 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_profiling_multiseed.py
 │   ├── test_experiment_config.py
 │   ├── test_stats.py
-│   └── test_parameter_sharing.py
+│   ├── test_parameter_sharing.py
+│   └── test_generate_paper_figures.py
 ├── .github/workflows/ci.yml
 ├── Makefile
 ├── pyproject.toml
@@ -236,8 +237,9 @@ Project config is now validated through a typed schema (`HMARLConfig`) in
 | Month | Milestone |
 |-------|-----------|
 | Feb | ✅ MVP simulator, rewards, metrics, baseline runner, module-first refactor |
-| Mar | ✅ Trained forecasting models, heuristic baselines, RL infrastructure (MAPPO/CTDE), curriculum learning || Mar | ✅ Proposal alignment audit: dock availability obs, trip duration metrics, coordinator metrics, decision cadence fixes |
-| Mar | ✅ Codebase audit: evaluate() early-termination fix, seed variation, metric key consistency, per-agent reward breakdown, dt_hours config, logger robustness |
-| Mar | ✅ Weather effects (sea-state fuel/speed penalties), Gymnasium gym.Env wrapper, coverage gap tests |
-| Apr | Tune hyperparameters, run ablation experiments, multi-seed evaluation |
-| May | Full ablation suite, final report |
+| Feb | ✅ Trained forecasting models, heuristic baselines, RL infrastructure (MAPPO/CTDE), curriculum learning |
+| Feb | ✅ Proposal alignment audit: dock availability obs, trip duration metrics, coordinator metrics, decision cadence fixes |
+| Feb | ✅ Codebase audit: evaluate() early-termination fix, seed variation, metric key consistency, per-agent reward breakdown, dt_hours config, logger robustness |
+| Feb | ✅ Weather effects (sea-state fuel/speed penalties), Gymnasium gym.Env wrapper, coverage gap tests |
+| Mar | Tune hyperparameters, run ablation experiments, multi-seed evaluation |
+| Apr | Full ablation suite, final report |

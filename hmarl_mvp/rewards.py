@@ -95,7 +95,7 @@ def weather_vessel_shaping(
     if fuel_mult <= 1.1:
         return 0.0
     # Bonus proportional to how much fuel was *saved* by slowing down.
-    nominal = float(config.get("nominal_speed", 14.0))
+    nominal = float(config.get("nominal_speed", 12.0))
     if speed <= nominal:
         bonus_weight = float(config.get("weather_shaping_weight", 0.3))
         return bonus_weight * (fuel_mult - 1.0)

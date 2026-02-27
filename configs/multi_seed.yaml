@@ -31,7 +31,7 @@ num_iterations: 200
 num_seeds: 5                    # run over 5 seeds for statistical evaluation
 seeds: [42, 49, 56, 63, 70]    # explicit seed list
 eval_interval: 20
-early_stopping_patience: 30     # stop if no improvement for 30 evals
+early_stopping_patience: 30     # stop if no improvement for 30 iterations
 checkpoint_dir: runs/multi_seed/checkpoints
 output_dir: runs/multi_seed
 tensorboard: false

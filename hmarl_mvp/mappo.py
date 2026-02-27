@@ -118,6 +118,8 @@ class ObsRunningMeanStd:
     def update(self, x: np.ndarray) -> None:
         """Incorporate a single observation vector."""
         x = np.asarray(x, dtype=np.float64).ravel()[:self.dim]
+        if not np.all(np.isfinite(x)):
+            return  # skip NaN / Inf to avoid corrupting running statistics
         self.count += 1.0
         delta = x - self.mean
         self.mean += delta / self.count
@@ -317,7 +319,10 @@ class MAPPOTrainer:
 
         # Build environment
         env_config = dict(env_config or {})
-        env_config.setdefault("rollout_steps", self.mappo_cfg.rollout_length + 5)
+        # Ensure rollout_steps is large enough for the configured rollout_length.
+        min_steps = self.mappo_cfg.rollout_length + 5
+        if int(env_config.get("rollout_steps", 0)) < min_steps:
+            env_config["rollout_steps"] = min_steps
         self.env = MaritimeEnv(config=env_config, seed=seed)
         self.cfg = self.env.cfg
 

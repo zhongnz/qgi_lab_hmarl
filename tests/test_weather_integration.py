@@ -336,7 +336,10 @@ class TestGymWrapperWeather:
             config={"num_vessels": 2, "num_ports": 2, "weather_enabled": True},
         )
         # Weather adds +1 per vessel to obs
-        diff = env_w.observation_space.shape[0] - env_no.observation_space.shape[0]
+        shape_w = env_w.observation_space.shape
+        shape_no = env_no.observation_space.shape
+        assert shape_w is not None and shape_no is not None
+        diff = shape_w[0] - shape_no[0]
         assert diff == 2  # +1 per vessel × 2 vessels
 
 

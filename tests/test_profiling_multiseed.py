@@ -268,7 +268,7 @@ class TestMultiSeedPlotting:
     def test_plot_empty_result_noop(self) -> None:
         from hmarl_mvp.plotting import plot_multi_seed_curves
 
-        result = {"seeds": [], "histories": []}
+        result: dict[str, list[Any]] = {"seeds": [], "histories": []}
         plot_multi_seed_curves(result)  # Should not raise
 
 
