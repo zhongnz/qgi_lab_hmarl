@@ -18,6 +18,9 @@ class HMARLConfig:
     num_ports: int = 5
     num_vessels: int = 8
     num_coordinators: int = 1
+    # Each port has docks_per_port berths.  Default is 3; the 8-port full-scale
+    # configuration uses 5.  Port observations expose both `docks` (total) and
+    # `occupied` so agents can infer free capacity.  Ports are NOT single-berth.
     docks_per_port: int = 3
     # Forecast horizons
     medium_horizon_days: int = 5

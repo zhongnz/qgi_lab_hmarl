@@ -439,12 +439,23 @@ class MaritimeEnv:
         vessel_obs = []
         for vessel_agent in self.vessel_agents:
             vessel = vessel_agent.state
-            dest = vessel.destination if vessel.destination < self.num_ports else 0
             directive = self.bus.get_latest_directive(vessel.vessel_id)
             if directive is None:
                 directive = self._fallback_directive_for_vessel(
                     vessel.vessel_id, assignments
                 )
+            # For vessels at sea, the navigation destination is correct.
+            # For docked/pending vessels the coordinator directive's dest_port is
+            # the relevant port — vessel.destination may be stale (last arrival).
+            # Using the directive keeps the forecast aligned with the FC assignment
+            # even across FC reassignments during the message-latency window.
+            if vessel.at_sea:
+                obs_dest = vessel.destination if vessel.destination < self.num_ports else 0
+            else:
+                obs_dest = int(directive.get("dest_port", vessel.destination))
+                obs_dest = obs_dest if 0 <= obs_dest < self.num_ports else 0
+
+            dest = obs_dest  # kept for dock_avail and weather indexing below
             # Dock availability fraction at destination port (proposal §4.1)
             dest_port = self.ports[dest]
             dock_avail = max(dest_port.docks - dest_port.occupied, 0) / max(

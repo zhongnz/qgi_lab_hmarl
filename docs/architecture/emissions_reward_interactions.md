@@ -40,7 +40,18 @@ Code references:
 1. ~~Add explicit penalty for emission budget violation at coordinator level.~~
    **Done** — `compute_coordinator_metrics()` tracks `emission_budget_compliance`.
 2. Add coordination term that rewards vessel-port agreement while penalizing high-emission recovery actions.
-3. Separate local and global emission costs to avoid over-penalizing a single layer.
+3. **Note on local vs. global emission penalisation**: `R_V` penalises each
+   vessel's own cumulative emissions; `R_C` penalises the fleet-total emissions
+   (the sum of all vessels).
+   These signals **intentionally overlap** — a vessel that burns excess fuel
+   is penalised locally (via `R_V`) *and* contributes to the global penalty
+   seen by the coordinator (via `R_C`). This creates aligned incentives across
+   the hierarchy: vessels are incentivised to reduce individual burn, and the
+   coordinator is incentivised to avoid dispatching vessels into high-emission
+   conditions fleet-wide.
+   The global penalty is *not* redundant: it captures cross-vessel emission
+   effects (e.g. spreading congestion to reduce stop-and-go) that are
+   invisible to any single vessel's local reward.
 4. ~~Track per-agent emission attribution to support diagnostics and ablation.~~
    **Partially done** — `avg_route_efficiency` and `avg_trip_duration_hours` in
    coordinator metrics provide per-vessel attribution proxies.

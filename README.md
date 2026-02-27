@@ -121,6 +121,7 @@ Start with:
 - `docs/README.md`
 - `docs/templates/meeting_minutes_template.md`
 - `docs/architecture/meeting-03_task-plan.md`
+- `docs/architecture/state_dynamics.md` — formal physics and state update equations for all agent types
 - `docs/reports/metrics_dictionary.md`
 
 ## Why This Refactor
