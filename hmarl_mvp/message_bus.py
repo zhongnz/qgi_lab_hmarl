@@ -20,9 +20,13 @@ class MessageBus:
     def __init__(self, num_ports: int) -> None:
         self.num_ports = num_ports
         self._directive_queue: list[tuple[int, int, dict[str, Any]]] = []
-        self._arrival_request_queue: list[tuple[int, int, int]] = []
+        self._arrival_request_queue: list[tuple[int, int, int, float]] = []
         self._slot_response_queue: list[tuple[int, int, bool, int]] = []
         self._pending_port_requests: dict[int, list[int]] = {
+            port_id: [] for port_id in range(num_ports)
+        }
+        # Parallel list storing the requested_arrival_time for each pending request.
+        self._pending_port_arrival_times: dict[int, list[float]] = {
             port_id: [] for port_id in range(num_ports)
         }
         self._awaiting_slot_response: set[int] = set()
@@ -38,6 +42,9 @@ class MessageBus:
         self._pending_port_requests = {
             port_id: [] for port_id in range(self.num_ports)
         }
+        self._pending_port_arrival_times = {
+            port_id: [] for port_id in range(self.num_ports)
+        }
         self._awaiting_slot_response = set()
         self._latest_directive_by_vessel = {}
 
@@ -50,10 +57,24 @@ class MessageBus:
         self._directive_queue.append((deliver_step, vessel_id, directive))
 
     def enqueue_arrival_request(
-        self, deliver_step: int, vessel_id: int, destination: int
+        self,
+        deliver_step: int,
+        vessel_id: int,
+        destination: int,
+        requested_arrival_time: float = 0.0,
     ) -> None:
-        """Queue a vessel arrival-slot request for delivery at *deliver_step*."""
-        self._arrival_request_queue.append((deliver_step, vessel_id, destination))
+        """Queue a vessel arrival-slot request for delivery at *deliver_step*.
+
+        Parameters
+        ----------
+        requested_arrival_time:
+            The absolute simulation step by which the vessel wants to arrive
+            (t_arr in the proposal).  A value of 0.0 means no preference;
+            ports use this to prioritise earlier-deadline vessels.
+        """
+        self._arrival_request_queue.append(
+            (deliver_step, vessel_id, destination, requested_arrival_time)
+        )
 
     def enqueue_slot_response(
         self, deliver_step: int, vessel_id: int, accepted: bool, port_id: int
@@ -93,6 +114,21 @@ class MessageBus:
     def clear_pending_requests(self, port_id: int) -> None:
         """Clear the pending request queue for *port_id*."""
         self._pending_port_requests[port_id] = []
+        self._pending_port_arrival_times[port_id] = []
+
+    def get_pending_requests_sorted(self, port_id: int) -> list[int]:
+        """Return vessel IDs with pending requests at *port_id*, sorted by requested
+        arrival time (earliest deadline first).  Vessels with ``requested_arrival_time
+        == 0.0`` (no preference) are placed last.
+        """
+        vessel_ids = self._pending_port_requests.get(port_id, [])
+        arrival_times = self._pending_port_arrival_times.get(port_id, [])
+        if not vessel_ids:
+            return []
+        # Pair up, put 0.0 (no preference) behind real deadlines.
+        paired = list(zip(arrival_times, vessel_ids))
+        paired.sort(key=lambda x: (x[0] == 0.0, x[0]))
+        return [vid for _, vid in paired]
 
     @property
     def queue_sizes(self) -> dict[str, int]:
@@ -129,13 +165,14 @@ class MessageBus:
         self._directive_queue = remaining
 
         # Arrival requests → pending port queues
-        remaining_requests: list[tuple[int, int, int]] = []
-        for deliver_step, vessel_id, destination in self._arrival_request_queue:
+        remaining_requests: list[tuple[int, int, int, float]] = []
+        for deliver_step, vessel_id, destination, arr_time in self._arrival_request_queue:
             if deliver_step <= current_step:
                 if 0 <= destination < self.num_ports:
                     self._pending_port_requests[destination].append(vessel_id)
+                    self._pending_port_arrival_times[destination].append(arr_time)
             else:
-                remaining_requests.append((deliver_step, vessel_id, destination))
+                remaining_requests.append((deliver_step, vessel_id, destination, arr_time))
         self._arrival_request_queue = remaining_requests
 
         # Slot responses
@@ -172,7 +209,7 @@ class MessageBus:
             if deliver_step <= current_step:
                 latest[vessel_id] = directive
 
-        for deliver_step, vessel_id, destination in self._arrival_request_queue:
+        for deliver_step, vessel_id, destination, _arr_time in self._arrival_request_queue:
             if deliver_step <= current_step and 0 <= destination < self.num_ports:
                 pending[destination].append(vessel_id)
 

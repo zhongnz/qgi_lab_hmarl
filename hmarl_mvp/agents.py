@@ -30,6 +30,7 @@ class VesselAgent:
         self.last_action: dict[str, Any] = {
             "target_speed": float(self.state.speed),
             "request_arrival_slot": False,
+            "requested_arrival_time": 0.0,
         }
 
     def get_obs(
@@ -78,7 +79,7 @@ class VesselAgent:
         )
 
     def apply_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Apply local control action (speed target and arrival-slot request)."""
+        """Apply local control action (speed target, arrival-slot request, and requested arrival time)."""
         speed = float(
             np.clip(
                 action.get("target_speed", self.state.speed),
@@ -89,6 +90,10 @@ class VesselAgent:
         normalized = {
             "target_speed": speed,
             "request_arrival_slot": bool(action.get("request_arrival_slot", False)),
+            # Explicit arrival time (t_arr) requested by the vessel agent.
+            # A value of 0.0 means "no preference"; positive values are absolute
+            # simulation steps by which the vessel wants to arrive.
+            "requested_arrival_time": float(action.get("requested_arrival_time", 0.0)),
         }
         self.state.speed = speed
         self.last_action = normalized

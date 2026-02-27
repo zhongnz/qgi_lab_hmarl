@@ -172,11 +172,15 @@ class MaritimeEnv:
                 if (
                     normalized.get("request_arrival_slot", False)
                     and not vessel.at_sea
+                    and not vessel.pending_departure
                     and not self.bus.is_awaiting(vessel_id)
                 ):
                     destination = int(directive.get("dest_port", vessel.destination))
                     self.bus.enqueue_arrival_request(
-                        self.t + self.cadence.message_latency_steps, vessel_id, destination
+                        self.t + self.cadence.message_latency_steps,
+                        vessel_id,
+                        destination,
+                        requested_arrival_time=float(normalized.get("requested_arrival_time", 0.0)),
                     )
                     self.bus.mark_awaiting(vessel_id)
                     step_requests_submitted += 1
@@ -186,12 +190,15 @@ class MaritimeEnv:
             response = delivered_responses.get(vessel_id)
             if response is not None:
                 if response["accepted"] and not vessel.at_sea:
+                    dep_window = int(directive.get("departure_window_hours", 0))
                     dispatch_vessel(
                         vessel=vessel,
                         destination=int(response["dest_port"]),
                         speed=float(normalized["target_speed"]),
                         config=self.cfg,
                         current_step=self.t,
+                        departure_window_hours=dep_window,
+                        dt_hours=float(self.cfg.get("dt_hours", 1.0)),
                     )
                 elif not response["accepted"] and not vessel.at_sea:
                     vessel.delay_hours += 1.0
@@ -210,6 +217,7 @@ class MaritimeEnv:
             config=self.cfg,
             dt_hours=1.0,
             weather=self._weather if self._weather_enabled else None,
+            current_step=self.t,
         )
 
         for vessel in self.vessels:

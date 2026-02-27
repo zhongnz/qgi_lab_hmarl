@@ -50,14 +50,14 @@ class FleetCoordinatorPolicy:
             return {
                 "dest_port": default_dest,
                 "per_vessel_dest": independent_destinations,
-                "departure_window_hours": 12,
+                "departure_window_hours": 0,
                 "emission_budget": 50.0,
             }
         if self.mode == "reactive":
             dest_port = int(np.argmin([p.queue for p in ports])) if ports else 0
             return {
                 "dest_port": dest_port,
-                "departure_window_hours": 12,
+                "departure_window_hours": 0,
                 "emission_budget": 50.0,
             }
         port_scores = medium_forecast.mean(axis=1)
@@ -84,7 +84,7 @@ class FleetCoordinatorPolicy:
         return {
             "dest_port": dest_port,
             "per_vessel_dest": forecast_destinations,
-            "departure_window_hours": 12,
+            "departure_window_hours": 0,
             "emission_budget": max(50.0 - total_emissions * 0.1, 10.0),
         }
 

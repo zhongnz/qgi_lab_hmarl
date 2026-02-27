@@ -109,16 +109,25 @@ def step_vessels(
     config: dict[str, Any],
     dt_hours: float = 1.0,
     weather: np.ndarray | None = None,
+    current_step: int = 0,
 ) -> dict[int, dict[str, float | bool]]:
     """Advance all in-transit vessels by one tick and return per-vessel step deltas.
 
     If *weather* is provided (a ``num_ports × num_ports`` sea-state matrix),
     fuel consumption is increased and effective distance covered is reduced
     proportionally.
+
+    Vessels with ``pending_departure=True`` are activated (``at_sea=True``) once
+    ``current_step >= vessel.depart_at_step`` (departure-window enforcement).
     """
     penalty = float(config.get("weather_penalty_factor", 0.15))
     step_stats: dict[int, dict[str, float | bool]] = {}
     for vessel in vessels:
+        # Activate pending departures when the coordinator's departure window opens.
+        if vessel.pending_departure and current_step >= vessel.depart_at_step:
+            vessel.at_sea = True
+            vessel.pending_departure = False
+
         fuel_used = 0.0
         co2 = 0.0
         arrived = False
@@ -204,6 +213,8 @@ def dispatch_vessel(
     speed: float,
     config: dict[str, Any],
     current_step: int = 0,
+    departure_window_hours: int = 0,
+    dt_hours: float = 1.0,
 ) -> None:
     """Send a vessel to a destination at a clipped speed.
 
@@ -223,12 +234,26 @@ def dispatch_vessel(
         Validated config dict.
     current_step:
         Current simulation step, recorded in ``vessel.trip_start_step``.
+    departure_window_hours:
+        Minimum number of hours to wait before departing, as instructed by
+        the fleet coordinator's directive.  When > 0 the vessel is placed in
+        ``pending_departure`` mode and ``step_vessels`` will activate it once
+        ``current_step >= depart_at_step``.
+    dt_hours:
+        Simulation time step in hours, used to convert the window to steps.
     """
     if int(destination) == vessel.location:
         return
     vessel.destination = int(destination)
     vessel.speed = float(np.clip(speed, config["speed_min"], config["speed_max"]))
     vessel.position_nm = 0.0
-    vessel.at_sea = True
     vessel.trip_start_step = int(current_step)
+    window_steps = int(departure_window_hours / dt_hours) if dt_hours > 0 else 0
+    if window_steps > 0:
+        vessel.pending_departure = True
+        vessel.depart_at_step = int(current_step) + window_steps
+        vessel.at_sea = False
+    else:
+        vessel.at_sea = True
+        vessel.pending_departure = False
 

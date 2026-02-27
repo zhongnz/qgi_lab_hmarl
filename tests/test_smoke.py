@@ -76,10 +76,10 @@ class SmokeTests(unittest.TestCase):
 
         fixed_actions = {
             "coordinators": [
-                {"dest_port": 1, "departure_window_hours": 12, "emission_budget": 50.0},
-                {"dest_port": 1, "departure_window_hours": 12, "emission_budget": 50.0},
+                {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
+                {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
             ],
-            "coordinator": {"dest_port": 1, "departure_window_hours": 12, "emission_budget": 50.0},
+            "coordinator": {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
             "vessels": [{"target_speed": cfg["nominal_speed"], "request_arrival_slot": True}],
             "ports": [
                 {"service_rate": 1, "accept_requests": 0},
@@ -150,6 +150,50 @@ class SmokeTests(unittest.TestCase):
         self.assertGreater(float(df["total_port_accepted"].iloc[-1]), 0.0)
         self.assertGreater(float(df["total_fuel_used"].iloc[-1]), 0.0)
         self.assertGreater(float(df["total_emissions_co2"].iloc[-1]), 0.0)
+
+    def test_departure_window_enforcement_delays_dispatch(self) -> None:
+        """Vessel stays pending until the coordinator's departure window elapses."""
+        from hmarl_mvp.dynamics import dispatch_vessel
+
+        cfg = get_default_config(
+            num_ports=2,
+            num_vessels=1,
+            docks_per_port=3,
+            rollout_steps=20,
+        )
+        env = MaritimeEnv(config=cfg, seed=0)
+        env.reset()
+        vessel = env.vessels[0]
+        vessel.location = 0
+        vessel.destination = 1
+        vessel.at_sea = False
+        vessel.position_nm = 0.0
+        vessel.pending_departure = False
+
+        # Dispatch with a 4-hour window (dt_hours=1 → 4 steps delay)
+        dispatch_vessel(
+            vessel=vessel,
+            destination=1,
+            speed=cfg["nominal_speed"],
+            config=cfg,
+            current_step=0,
+            departure_window_hours=4,
+            dt_hours=1.0,
+        )
+        self.assertTrue(vessel.pending_departure, "Vessel should be pending departure")
+        self.assertFalse(vessel.at_sea, "Vessel must not be at sea yet")
+        self.assertEqual(vessel.depart_at_step, 4)
+
+        # Simulate step_vessels ticking forward; vessel activates exactly at step 4
+        from hmarl_mvp.dynamics import step_vessels
+        import numpy as np
+
+        dist = np.array([[0, 500], [500, 0]], dtype=float)
+        for step in range(1, 4):
+            step_vessels([vessel], dist, cfg, dt_hours=1.0, current_step=step)
+            self.assertFalse(vessel.at_sea, f"Should still be pending at step {step}")
+        step_vessels([vessel], dist, cfg, dt_hours=1.0, current_step=4)
+        self.assertTrue(vessel.at_sea, "Vessel should be at sea after window elapses at step 4")
 
 
 if __name__ == "__main__":

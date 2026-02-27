@@ -44,10 +44,15 @@ from .gym_wrapper import MaritimeGymEnv
 from .learned_forecaster import (
     ForecastDataset,
     LearnedForecaster,
+    RNNForecastDataset,
+    RNNForecaster,
     TrainResult,
     build_forecast_dataset,
+    build_rnn_dataset,
+    collect_expanded_queue_traces,
     collect_queue_traces,
     train_forecaster,
+    train_rnn_forecaster,
 )
 from .logger import TrainingLogger
 from .mappo import MAPPOConfig, MAPPOTrainer, PPOUpdateResult, train_multi_seed
