@@ -105,6 +105,46 @@ class MaritimeEnv:
     ) -> tuple[dict[str, Any], dict[str, Any], bool, dict[str, Any]]:
         """Execute one environment tick.
 
+        Implements the joint transition kernel T(s' | s, a) in five ordered
+        phases:
+
+        Phase 0 – Message delivery
+            ``bus.deliver_due(t)`` fires all messages whose delivery step has
+            arrived: coordinator directives land in each vessel's mailbox;
+            vessel arrival requests land in port pending queues; port slot
+            responses are returned for processing in phase 2.
+
+        Phase 1 – Coordinator action
+            Each coordinator (on its sub-cadence) converts its action dict into
+            per-vessel directives enqueued on the bus with latency.  Directives
+            are visible to vessels only after delivery (phase 0 of a future tick).
+
+        Phase 2 – Vessel action + slot negotiation
+            Each vessel (on its sub-cadence) decides speed and whether to request
+            a berth slot.  If a slot response from phase 0 was *accepted*,
+            ``dispatch_vessel()`` commits ``vessel.destination``, ``vessel.at_sea``,
+            and ``vessel.position_nm = 0``.  Rejected or still-waiting vessels
+            accumulate ``delay_hours``.
+
+        Phase 3 – Physics tick
+            ``step_vessels()`` advances every in-transit vessel by one time step:
+            ``position_nm += speed * dt * weather_speed_factor(W_t)``.
+            Vessels that complete their leg flip ``at_sea = False`` and are
+            appended to their destination port's queue.
+
+        Phase 4 – Port action + service tick
+            Each port (on its sub-cadence) allocates berth slots from its pending
+            request backlog and enqueues accept/reject responses.  ``step_ports()``
+            drains berths whose service time has elapsed and admits queued vessels.
+
+        Phase 5 – Reward + clock advance
+            Rewards are computed from the state produced by phases 1–4 using
+            weather ``W_t`` (active during this tick).  Only then does the clock
+            advance (``t += 1``) and weather update to ``W_{t+1}`` via AR(1).
+            The observations returned therefore reflect ``W_{t+1}``; agents
+            should treat the weather in ``obs`` as the forecast for their
+            *next* action, not the one that generated the current reward.
+
         Parameters
         ----------
         actions:
@@ -118,6 +158,7 @@ class MaritimeEnv:
         -------
         obs : dict
             ``{"vessels": [...], "ports": [...], "coordinators": [...]}``.
+            Weather in obs reflects ``W_{t+1}`` (post-update).
         rewards : dict
             ``{"vessels": [...], "ports": [...], "coordinator": float,
             "coordinators": [...]}``.
@@ -127,6 +168,10 @@ class MaritimeEnv:
             Step-level metadata including ``"port_metrics"``,
             ``"cadence_due"``, ``"requests_submitted"``, etc.
         """
+        # ── Phase 0: message delivery ─────────────────────────────────────────
+        # Fire all messages whose deliver_step <= t.  Directives land in each
+        # vessel's mailbox; arrival requests land in port pending queues;
+        # slot responses are returned as delivered_responses for phase 2.
         due = self.cadence.due(self.t)
         delivered_responses = self.bus.deliver_due(self.t)
         assignments = self._build_assignments()
@@ -137,6 +182,10 @@ class MaritimeEnv:
         step_requests_accepted = 0
         step_requests_rejected = 0
 
+        # ── Phase 1: coordinator action ──────────────────────────────────────
+        # Each active coordinator converts its action into per-vessel directives
+        # and enqueues them with message_latency_steps delay.  Vessels will read
+        # these directives only after they are delivered in a future phase 0.
         coordinator_actions = self._normalize_coordinator_actions(actions)
         if due["coordinator"]:
             for coordinator_id, coordinator in enumerate(self.coordinators):
@@ -158,6 +207,11 @@ class MaritimeEnv:
                         vessel_directive,
                     )
 
+        # ── Phase 2: vessel action + slot negotiation ────────────────────────
+        # Each vessel reads its latest directive, decides speed and whether to
+        # request a berth slot.  If a slot response delivered in phase 0 is
+        # accepted, dispatch_vessel() commits the destination and sets at_sea.
+        # Rejected or still-waiting vessels accrue delay_hours.
         vessel_inputs = self._normalize_vessel_actions(actions)
         normalized_vessel_actions: list[dict[str, Any]] = []
         for idx, vessel_agent in enumerate(self.vessel_agents):
@@ -209,6 +263,11 @@ class MaritimeEnv:
                 step_delay_by_vessel[vessel_id] += 1.0
             normalized_vessel_actions.append(normalized)
 
+        # ── Phase 3: physics tick ────────────────────────────────────────────
+        # Advance all in-transit vessels using weather W_t (current tick).
+        # position_nm += speed * dt * weather_speed_factor(W_t).
+        # Vessels that complete their leg are appended to the destination
+        # port's queue and flipped to at_sea = False.
         pre_step_at_sea = {v.vessel_id: v.at_sea for v in self.vessels}
 
         vessel_step_stats = step_vessels(
@@ -228,6 +287,10 @@ class MaritimeEnv:
             ):
                 self.ports[vessel.location].queue += 1
 
+        # ── Phase 4: port action + service tick ──────────────────────────────
+        # Ports (on their sub-cadence) accept/reject pending berth requests and
+        # enqueue slot responses.  step_ports() then drains completed berths,
+        # admits queued vessels, and accumulates per-port wait-time statistics.
         port_inputs = self._normalize_port_actions(actions)
         if due["port"]:
             normalized_port_actions: list[dict[str, Any]] = []
@@ -268,11 +331,19 @@ class MaritimeEnv:
             service_time_hours=self.cfg["service_time_hours"],
         )
 
+        # ── Phase 5: reward computation ──────────────────────────────────────
+        # Rewards are computed from the state produced by phases 1–4, using
+        # weather W_t (the value active during this tick).  The clock and
+        # weather are advanced AFTER rewards so that r_t = R(s_t, a_t, W_t).
         rewards = self._compute_rewards(
             vessel_step_stats=vessel_step_stats,
             step_delay_by_vessel=step_delay_by_vessel,
         )
 
+        # ── Advance clock and environment stochastic state ───────────────────
+        # t increments here; _refresh_weather() advances W_t → W_{t+1} via
+        # AR(1).  Observations returned below therefore contain W_{t+1}, which
+        # agents should treat as the weather forecast for their *next* action.
         self.t += 1
         done = self.t >= self.cfg["rollout_steps"]
         self._refresh_weather()
