@@ -405,6 +405,7 @@ class MaritimeEnv:
                 vessels=local_vessels,
                 ports=self.ports,
                 rng=self.rng,
+                weather=self._weather if self._weather_enabled else None,
             )
             directives.append(
                 {
