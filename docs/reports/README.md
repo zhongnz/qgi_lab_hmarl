@@ -17,3 +17,6 @@ Example:
 ## Reference
 
 - `metrics_dictionary.md`: definitions of baseline CSV columns and reward/metric semantics.
+- `experiment_protocol.md`: full experiment design (E1–E9), statistical methodology, execution plan.
+- `2026-02-25_mvp_state-review.md`: 26-item implementation checklist; open items tracked.
+- `supervisor_report_2026-02-28.md`: comprehensive supervisor-facing project report (current state, design, experiments, next steps).
