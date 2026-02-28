@@ -168,12 +168,9 @@ class MaritimeEnv:
             Step-level metadata including ``"port_metrics"``,
             ``"cadence_due"``, ``"requests_submitted"``, etc.
         """
-        # ── Phase 0: message delivery ─────────────────────────────────────────
-        # Fire all messages whose deliver_step <= t.  Directives land in each
-        # vessel's mailbox; arrival requests land in port pending queues;
-        # slot responses are returned as delivered_responses for phase 2.
+        # ── Setup ─────────────────────────────────────────────────────────────
+        # Per-step bookkeeping: cadence flags, coordinator assignments, counters.
         due = self.cadence.due(self.t)
-        delivered_responses = self.bus.deliver_due(self.t)
         assignments = self._build_assignments()
         step_delay_by_vessel: dict[int, float] = {
             vessel.vessel_id: 0.0 for vessel in self.vessels
@@ -181,6 +178,12 @@ class MaritimeEnv:
         step_requests_submitted = 0
         step_requests_accepted = 0
         step_requests_rejected = 0
+
+        # ── Phase 0: message delivery ─────────────────────────────────────────
+        # Fire all messages whose deliver_step <= t.  Directives land in each
+        # vessel's mailbox; arrival requests land in port pending queues;
+        # slot responses are returned as delivered_responses for phase 2.
+        delivered_responses = self.bus.deliver_due(self.t)
 
         # ── Phase 1: coordinator action ──────────────────────────────────────
         # Each active coordinator converts its action into per-vessel directives
@@ -297,7 +300,7 @@ class MaritimeEnv:
             for port_id, (port_agent, action) in enumerate(zip(self.port_agents, port_inputs)):
                 normalized = port_agent.apply_action(action)
                 normalized_port_actions.append(normalized)
-                backlog = self.bus.get_pending_requests(port_id)
+                backlog = self.bus.get_pending_requests_sorted(port_id)
                 available_slots = max(port_agent.state.docks - port_agent.state.occupied, 0)
                 accept_limit = min(
                     len(backlog),
