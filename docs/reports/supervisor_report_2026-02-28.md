@@ -195,7 +195,7 @@ The weather matrix is observed directly by vessel and coordinator agents and ent
 
 The fleet coordinator can issue a `departure_window_hours` $W > 0$ alongside each vessel directive. When a vessel receives such a directive and its slot request is accepted, `dispatch_vessel()` computes:
 
-$$t_{\text{depart}} = t_{\text{slot\_accepted}} + \lfloor W / \Delta t \rfloor$$
+$$t_{\text{depart}} = t_{\text{accept}} + \lfloor W / \Delta t \rfloor$$
 
 and places the vessel in `pending_departure = True`. The vessel remains docked until `current_step >= depart_at_step`. This models real-world tide windows, traffic separation schemes, and berth pre-allocation windows.
 
@@ -297,7 +297,7 @@ rewarding vessels that voluntarily reduce speed in rough seas (beyond the thresh
 | `delay_cost_usd` | $h_{\text{fleet}} \times 5{,}000$ | \$5,000/hr |
 | `carbon_cost_usd` | $\Delta E_{\text{fleet}} \times 90$ | \$90/ton CO₂ |
 | `total_ops_cost_usd` | sum of above | — |
-| `cost_reliability` | $1 - \text{total\_cost} / \text{cargo\_value}$ | normalised |
+| `cost_reliability` | $1 - \text{total cost} / \text{cargo value}$ | normalised |
 
 These prices are configurable for sensitivity analysis (E8). The `cost_reliability` metric captures what fraction of cargo value is consumed by operational overhead, providing an investor-facing summary number.
 

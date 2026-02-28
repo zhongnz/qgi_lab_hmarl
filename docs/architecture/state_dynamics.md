@@ -82,7 +82,7 @@ Code: `env.MaritimeEnv.step` — `vessel.delay_hours += 1.0`
 
 When the fleet coordinator issues a directive with `departure_window_hours = W`:
 
-$$t_{\text{depart}} = t_{\text{slot\_accepted}} + \left\lfloor W / dt \right\rfloor \text{ steps}$$
+$$t_{\text{depart}} = t_{\text{accept}} + \left\lfloor W / dt \right\rfloor \text{ steps}$$
 
 Until $t \geq t_{\text{depart}}$ the vessel is in `pending_departure = True` and
 `at_sea = False`. Code: `dynamics.dispatch_vessel`, `dynamics.step_vessels`
@@ -159,7 +159,7 @@ The coordinator tracks:
 | $E_{\text{total}}$ | `cumulative_emissions` | $\sum_k E_k$ at last coordinator step |
 | $\Delta_{\text{coord}}$ | `coord_decision_interval_steps` | Steps between coordinator actions (default 12) |
 
-The coordinator issues directives $(\text{dest\_port}_k, W_k, B_e)$ for each
+The coordinator issues directives $(\text{dest port}_k, W_k, B_e)$ for each
 assigned vessel $k$ every $\Delta_{\text{coord}}$ steps. Directives are
 delivered after `message_latency_steps` steps.
 
