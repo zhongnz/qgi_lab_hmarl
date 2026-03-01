@@ -1,4 +1,33 @@
-"""Reward functions for coordinator, vessel, and port agents."""
+"""Reward functions for coordinator, vessel, and port agents.
+
+Reward Design
+=============
+The HMARL reward structure uses **three independent per-step reward
+signals** — one per agent type — plus two optional **weather-aware
+shaping terms** that encourage fuel-efficient behaviour in rough seas.
+
+Vessel reward (per step):
+    ``r_V = -(fuel_weight * fuel + delay_weight * delay + emission_weight * CO2)``
+    With defaults (1.0, 1.5, 0.7) rewards range from 0 (docked) to ~-20 (fast transit).
+
+Port reward (per step):
+    ``r_P = -(queue * dt_hours + dock_idle_weight * idle_docks)``
+    Penalises both accumulated waiting time and wasted berth capacity.
+
+Coordinator reward (per step):
+    ``r_C = -(fuel_used + avg_queue + emission_lambda * CO2)``
+    System-level signal; ``emission_lambda`` (default 2.0) amplifies CO2.
+
+Weather shaping (opt-in, additive):
+    * **Vessel**: bonus for slowing down when sea state raises fuel multiplier > 1.1.
+    * **Coordinator**: bonus for routing fleet through calmer seas.
+    Both are gated on ``weather_enabled=True`` and scale with ``weather_shaping_weight``.
+
+The rewards are consumed by ``env._compute_rewards()`` in Phase 5 of the
+transition kernel, using ``W_t`` (the weather active during the current
+tick).  Rewards are normalised in MAPPO via Welford running statistics
+when ``normalize_rewards=True``.
+"""
 
 from __future__ import annotations
 

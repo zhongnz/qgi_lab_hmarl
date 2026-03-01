@@ -566,7 +566,25 @@ class MaritimeEnv:
         vessel_step_stats: dict[int, dict[str, float | bool]] | None = None,
         step_delay_by_vessel: dict[int, float] | None = None,
     ) -> dict[str, Any]:
-        """Compute per-agent rewards from step-level physics deltas."""
+        """Compute per-agent rewards from step-level physics deltas.
+
+        Called in Phase 5 of the transition kernel, **before** the clock
+        advances and weather updates.  Therefore rewards use ``W_t`` — the
+        weather that was active during phases 1–4.
+
+        Returns
+        -------
+        dict with keys:
+            ``"vessels"``       — list[float], one reward per vessel.
+            ``"ports"``         — list[float], one reward per port.
+            ``"coordinator"``   — float, first coordinator's reward.
+            ``"coordinators"``  — list[float], one per coordinator.
+
+        Reward composition per agent type:
+            * Vessel:      base step reward + weather vessel shaping (if enabled).
+            * Port:        base step reward (queue wait + idle dock penalty).
+            * Coordinator: base step reward + weather coordinator shaping (if enabled).
+        """
         vessel_step_stats = vessel_step_stats or {}
         step_delay_by_vessel = step_delay_by_vessel or {}
         vessel_rewards = [
