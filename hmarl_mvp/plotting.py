@@ -74,7 +74,9 @@ def plot_sharing_sweep(
         axes[0].plot(df["t"], df["avg_queue"], label=label)
         axes[1].plot(df["t"], df["total_ops_cost_usd"], label=label)
     axes[0].set_title("Avg Queue")
+    axes[0].set_xlabel("Step")
     axes[1].set_title("Total Ops Cost ($)")
+    axes[1].set_xlabel("Step")
     axes[0].legend()
     axes[1].legend()
     plt.tight_layout(rect=(0, 0, 1, 0.93))
@@ -390,9 +392,9 @@ def plot_training_dashboard(
     ax.set_title("Approximate KL Divergence")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("KL")
+    ax.axhline(y=0.02, color="red", linestyle="--", alpha=0.5, label="target")
     if kl_cols:
         ax.legend(fontsize=8)
-        ax.axhline(y=0.02, color="red", linestyle="--", alpha=0.5, label="target")
 
     # Panel 4: Entropy
     ax = axes[1, 1]
