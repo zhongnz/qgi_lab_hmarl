@@ -53,6 +53,26 @@ class ModelCorrectnessTests(unittest.TestCase):
         self.assertEqual(port.occupied, 0)
         self.assertEqual(port.service_times, [])
 
+    def test_waiting_delay_scales_with_dt_hours(self) -> None:
+        cfg = get_default_config(
+            num_ports=2,
+            num_vessels=1,
+            rollout_steps=3,
+            message_latency_steps=2,
+            dt_hours=0.5,
+        )
+        env = MaritimeEnv(config=cfg, seed=42)
+        env.reset()
+
+        actions = {
+            "coordinators": [{"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0}],
+            "vessels": [{"target_speed": cfg["nominal_speed"], "request_arrival_slot": True}],
+            "ports": [{"service_rate": 0, "accept_requests": 0} for _ in range(cfg["num_ports"])],
+        }
+        _, _, _, info = env.step(actions)
+        self.assertAlmostEqual(env.vessels[0].delay_hours, 0.5, places=6)
+        self.assertAlmostEqual(float(info["step_delay_hours"]), 0.5, places=6)
+
     def test_non_default_port_topology_builds_valid_distance_matrix(self) -> None:
         cfg = get_default_config(num_ports=6, num_vessels=2, rollout_steps=2)
         env = MaritimeEnv(config=cfg, seed=42)

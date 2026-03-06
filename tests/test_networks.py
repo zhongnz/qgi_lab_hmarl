@@ -119,6 +119,19 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(dims["port"], 3 + 12 + 1)  # local + forecast + incoming
         self.assertEqual(dims["coordinator"], 5 * 5 + 8 * 4 + 1)  # forecast + vessels + total_em
 
+    def test_obs_dim_from_env_with_weather(self) -> None:
+        cfg = get_default_config(
+            num_ports=5,
+            num_vessels=8,
+            short_horizon_hours=12,
+            medium_horizon_days=5,
+            weather_enabled=True,
+        )
+        dims = obs_dim_from_env(cfg)
+        self.assertEqual(dims["vessel"], 5 + 12 + 3 + 1)
+        self.assertEqual(dims["port"], 3 + 12 + 1 + 3)
+        self.assertEqual(dims["coordinator"], 5 * 5 + 8 * 4 + 1 + 5 * 5)
+
     def test_build_actor_critics(self) -> None:
         cfg = get_default_config(num_ports=3, num_vessels=4, docks_per_port=2)
         dims = obs_dim_from_env(cfg)

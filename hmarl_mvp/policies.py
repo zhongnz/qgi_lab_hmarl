@@ -161,8 +161,18 @@ class PortPolicy:
         port_state: PortState,
         incoming_requests: int,
         short_forecast_row: np.ndarray,
+        weather_features: np.ndarray | None = None,
     ) -> dict[str, Any]:
-        """Produce a port action without mutating agent state."""
+        """Produce a port action without mutating agent state.
+
+        Parameters
+        ----------
+        weather_features:
+            Optional compact inbound-weather summary
+            ``[mean_inbound, max_inbound, rough_fraction]`` for this port.
+            In ``forecast`` mode this is used to make slot acceptance more
+            conservative during rough conditions.
+        """
         if self.mode == "independent":
             available_slots = max(port_state.docks - port_state.occupied, 0)
             return {"service_rate": 1, "accept_requests": int(min(incoming_requests, available_slots))}
@@ -174,14 +184,35 @@ class PortPolicy:
             }
         pressure = float(short_forecast_row.mean())
         if pressure > 4.0:
-            service_rate = port_state.docks
+            base_service_rate = port_state.docks
         elif port_state.queue > 2:
-            service_rate = min(port_state.docks, port_state.queue)
+            base_service_rate = min(port_state.docks, port_state.queue)
         else:
-            service_rate = min(port_state.docks, port_state.occupied + 1)
+            base_service_rate = min(port_state.docks, port_state.occupied + 1)
+
+        service_rate = int(base_service_rate)
+        available_slots = max(port_state.docks - port_state.occupied, 0)
+        accept_cap = int(available_slots)
+
+        # Rough inbound weather can increase ETA uncertainty. In forecast mode,
+        # keep one berth in reserve (when possible) while still prioritizing
+        # clearing queued vessels.
+        if weather_features is not None:
+            weather_vec = np.asarray(weather_features, dtype=float).ravel()
+            if weather_vec.size >= 3:
+                sea_max = float(self.cfg.get("sea_state_max", 3.0))
+                mean_inbound = max(float(weather_vec[0]), 0.0)
+                rough_fraction = float(np.clip(weather_vec[2], 0.0, 1.0))
+                norm_mean = np.clip(mean_inbound / max(sea_max, 1e-6), 0.0, 1.0)
+                rough_score = 0.5 * norm_mean + 0.5 * rough_fraction
+                if rough_score >= 0.6:
+                    if port_state.docks > 1:
+                        accept_cap = max(accept_cap - 1, 0)
+                    service_rate = min(
+                        port_state.docks,
+                        max(service_rate, max(port_state.queue, 1)),
+                    )
         return {
             "service_rate": int(service_rate),
-            "accept_requests": int(
-                min(incoming_requests, max(port_state.docks - port_state.occupied, 0))
-            ),
+            "accept_requests": int(min(incoming_requests, accept_cap)),
         }

@@ -172,10 +172,19 @@ class TestEnvWeatherIntegration(unittest.TestCase):
     def test_weather_obs_dim_increases(self) -> None:
         cfg_no_weather = get_default_config(num_vessels=2, num_ports=2)
         cfg_weather = get_default_config(num_vessels=2, num_ports=2, weather_enabled=True)
+        cfg_weather_no_port = get_default_config(
+            num_vessels=2,
+            num_ports=2,
+            weather_enabled=True,
+            port_weather_features=False,
+        )
         dims_no = obs_dim_from_env(cfg_no_weather)
         dims_yes = obs_dim_from_env(cfg_weather)
+        dims_no_port = obs_dim_from_env(cfg_weather_no_port)
         self.assertEqual(dims_yes["vessel"], dims_no["vessel"] + 1)
-        self.assertEqual(dims_yes["port"], dims_no["port"])  # ports unaffected
+        self.assertEqual(dims_yes["port"], dims_no["port"] + 3)
+        self.assertEqual(dims_yes["coordinator"], dims_no["coordinator"] + 4)
+        self.assertEqual(dims_no_port["port"], dims_no["port"])
 
     def test_weather_env_step_produces_info(self) -> None:
         env = MaritimeEnv(
@@ -199,6 +208,31 @@ class TestEnvWeatherIntegration(unittest.TestCase):
         no_dim = len(obs_no["vessels"][0])
         w_dim = len(obs_w["vessels"][0])
         self.assertEqual(w_dim, no_dim + 1)
+
+    def test_weather_port_obs_has_extra_dims_when_enabled(self) -> None:
+        env_no = MaritimeEnv(
+            config={
+                "num_vessels": 2,
+                "num_ports": 2,
+                "rollout_steps": 5,
+                "weather_enabled": True,
+                "port_weather_features": False,
+            }
+        )
+        env_w = MaritimeEnv(
+            config={
+                "num_vessels": 2,
+                "num_ports": 2,
+                "rollout_steps": 5,
+                "weather_enabled": True,
+                "port_weather_features": True,
+            }
+        )
+        obs_no = env_no.reset()
+        obs_w = env_w.reset()
+        no_dim = len(obs_no["ports"][0])
+        w_dim = len(obs_w["ports"][0])
+        self.assertEqual(w_dim, no_dim + 3)
 
 
 # ===================================================================

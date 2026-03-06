@@ -174,6 +174,9 @@ class TestMAPPOComparison:
         train_log = results["_train_log"]
         assert len(train_log) == 5
         assert "mean_reward" in train_log.columns
+        assert "vessel_mean_reward" in train_log.columns
+        assert "port_mean_reward" in train_log.columns
+        assert "coordinator_mean_reward" in train_log.columns
 
 
 # ---------------------------------------------------------------------------

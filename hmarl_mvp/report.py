@@ -77,6 +77,10 @@ def generate_training_report(
         lines.append(f"- **Best mean reward**: {max(rewards):.6f}")
         lines.append(f"- **Worst mean reward**: {min(rewards):.6f}")
         lines.append(f"- **Reward std**: {float(np.std(rewards)):.6f}")
+        for agent in ("vessel", "port", "coordinator"):
+            key = f"{agent}_mean_reward"
+            if key in history[-1]:
+                lines.append(f"- **Final {agent} mean reward**: {history[-1][key]:.6f}")
 
         # Improvement over training
         if n_iters >= 10:

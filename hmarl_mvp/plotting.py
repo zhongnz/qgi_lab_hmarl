@@ -128,20 +128,27 @@ def plot_training_curves(
     train_log: Any,
     out_path: str | None = None,
 ) -> None:
-    """Plot MAPPO training reward curve and value losses.
+    """Plot MAPPO training reward curves and value losses.
 
     Parameters
     ----------
     train_log:
         DataFrame with columns ``iteration``, ``mean_reward``,
-        and optional ``*_value_loss`` columns.
+        optional per-agent reward columns, and optional
+        ``*_value_loss`` columns.
     """
     import pandas as pd
 
     df = pd.DataFrame(train_log) if not isinstance(train_log, pd.DataFrame) else train_log
 
+    reward_cols = [
+        ("vessel_mean_reward", "Vessel", "#1b9e77"),
+        ("port_mean_reward", "Port", "#d95f02"),
+        ("coordinator_mean_reward", "Coordinator", "#7570b3"),
+    ]
+    has_agent_rewards = any(col in df.columns for col, _, _ in reward_cols)
     has_losses = any(c.endswith("_value_loss") for c in df.columns)
-    ncols = 2 if has_losses else 1
+    ncols = 1 + int(has_agent_rewards) + int(has_losses)
     fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 4))
     if ncols == 1:
         axes = [axes]
@@ -159,9 +166,24 @@ def plot_training_curves(
     ax.set_ylabel("Mean Reward")
     ax.set_title("Training Reward")
 
+    panel_idx = 1
+
+    # Per-agent reward curves
+    if has_agent_rewards:
+        ax = axes[panel_idx]
+        for col, label, color in reward_cols:
+            if col not in df.columns:
+                continue
+            ax.plot(df["iteration"], df[col], label=label, linewidth=1.4, color=color)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Reward")
+        ax.set_title("Per-Agent Reward")
+        ax.legend(fontsize=8)
+        panel_idx += 1
+
     # Value losses
     if has_losses:
-        ax = axes[1]
+        ax = axes[panel_idx]
         loss_cols = [c for c in df.columns if c.endswith("_value_loss")]
         for col in loss_cols:
             label = col.replace("_value_loss", "")

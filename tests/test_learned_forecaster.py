@@ -14,9 +14,14 @@ from hmarl_mvp.learned_forecaster import (
     ForecastDataset,
     LearnedForecaster,
     LearnedForecasterNet,
+    RNNForecastDataset,
+    RNNForecaster,
     build_forecast_dataset,
+    build_rnn_dataset,
+    collect_expanded_queue_traces,
     collect_queue_traces,
     train_forecaster,
+    train_rnn_forecaster,
 )
 from hmarl_mvp.state import PortState
 
@@ -162,6 +167,133 @@ class CollectQueueTracesTests(unittest.TestCase):
         self.assertEqual(len(traces[0]), 10)
         # Each snapshot: 3 ports * 3 features = 9 values
         self.assertEqual(len(traces[0][0]), 9)
+
+
+class ExpandedQueueTraceTests(unittest.TestCase):
+    def test_expanded_traces_shape(self) -> None:
+        cfg = get_default_config(num_ports=2, num_vessels=3, rollout_steps=8)
+        traces = collect_expanded_queue_traces(
+            num_episodes=1,
+            steps_per_episode=8,
+            config=cfg,
+            seed=42,
+            features_per_port=5,
+        )
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(len(traces[0]), 8)
+        # 2 ports * 5 features
+        self.assertEqual(len(traces[0][0]), 10)
+
+
+class RNNDatasetTests(unittest.TestCase):
+    def test_build_rnn_dataset(self) -> None:
+        # 1 episode, 12 steps, 2 ports, 3 features/port
+        traces: list[list[list[float]]] = []
+        episode: list[list[float]] = []
+        for t in range(12):
+            episode.append(
+                [
+                    float(t), 0.0, 3.0,      # port 0
+                    float(t + 1), 1.0, 3.0,  # port 1
+                ]
+            )
+        traces.append(episode)
+        ds = build_rnn_dataset(
+            queue_traces=traces,
+            horizon=3,
+            seq_len=4,
+            features_per_port=3,
+        )
+        # samples = T - horizon - seq_len = 12 - 3 - 4 = 5
+        self.assertEqual(len(ds), 5)
+        self.assertEqual(ds.inputs_seq.shape, (5, 4, 6))
+        self.assertEqual(ds.targets.shape, (5, 6))
+
+    def test_build_rnn_dataset_empty(self) -> None:
+        ds = build_rnn_dataset(queue_traces=[], horizon=3, seq_len=4)
+        self.assertEqual(len(ds), 0)
+
+
+class RNNForecasterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.forecaster = RNNForecaster(
+            num_ports=2,
+            horizon=3,
+            seq_len=4,
+            features_per_port=3,
+            hidden_size=32,
+            num_layers=1,
+        )
+        self.ports = [
+            PortState(port_id=0, queue=2, docks=3, occupied=1),
+            PortState(port_id=1, queue=1, docks=3, occupied=0),
+        ]
+
+    def test_predict_shape(self) -> None:
+        pred = self.forecaster.predict(self.ports)
+        self.assertEqual(pred.shape, (2, 3))
+        self.assertTrue(np.all(pred >= 0))
+
+    def test_history_buffer_trim_and_reset(self) -> None:
+        for _ in range(10):
+            _ = self.forecaster.predict(self.ports)
+        self.assertEqual(len(self.forecaster._history), self.forecaster.seq_len)
+        self.forecaster.reset()
+        self.assertEqual(len(self.forecaster._history), 0)
+
+    def test_rnn_save_and_load(self) -> None:
+        pred_before = self.forecaster.predict(self.ports)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "rnn_model.pt")
+            self.forecaster.save(path)
+            loaded = RNNForecaster(
+                num_ports=2,
+                horizon=3,
+                seq_len=4,
+                features_per_port=3,
+                hidden_size=32,
+                num_layers=1,
+            )
+            loaded.load(path)
+            pred_after = loaded.predict(self.ports)
+        np.testing.assert_array_almost_equal(pred_before, pred_after)
+
+
+class TrainRNNForecasterTests(unittest.TestCase):
+    def test_train_rnn_empty_dataset_returns_inf(self) -> None:
+        forecaster = RNNForecaster(num_ports=2, horizon=3, seq_len=4, num_layers=1)
+        empty_ds = RNNForecastDataset(
+            inputs_seq=np.zeros((0, 4, 6), dtype=np.float32),
+            targets=np.zeros((0, 6), dtype=np.float32),
+        )
+        result = train_rnn_forecaster(forecaster, empty_ds, epochs=5)
+        self.assertEqual(result.final_loss, float("inf"))
+        self.assertEqual(result.num_samples, 0)
+
+    def test_train_rnn_runs(self) -> None:
+        rng = np.random.default_rng(0)
+        n, seq_len, input_dim, out_dim = 32, 4, 6, 6
+        ds = RNNForecastDataset(
+            inputs_seq=rng.normal(size=(n, seq_len, input_dim)).astype(np.float32),
+            targets=np.abs(rng.normal(size=(n, out_dim)).astype(np.float32)),
+        )
+        forecaster = RNNForecaster(
+            num_ports=2,
+            horizon=3,
+            seq_len=seq_len,
+            features_per_port=3,
+            hidden_size=32,
+            num_layers=1,
+        )
+        result = train_rnn_forecaster(
+            forecaster,
+            ds,
+            epochs=5,
+            batch_size=8,
+            lr=1e-3,
+        )
+        self.assertGreater(len(result.epoch_losses), 0)
+        self.assertEqual(result.num_samples, n)
 
 
 if __name__ == "__main__":

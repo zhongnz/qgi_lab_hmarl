@@ -33,6 +33,9 @@ class TestTrainingReport(unittest.TestCase):
                 "iteration": i,
                 "mean_reward": -1.0 + 0.1 * i,
                 "total_reward": -5.0 + 0.5 * i,
+                "vessel_mean_reward": -0.7 + 0.05 * i,
+                "port_mean_reward": -0.4 + 0.03 * i,
+                "coordinator_mean_reward": -0.9 + 0.04 * i,
                 "lr": 3e-4 * (1 - i / n),
                 "entropy_coeff": 0.01,
                 "vessel_policy_loss": 0.5 - 0.02 * i,
@@ -103,6 +106,7 @@ class TestTrainingReport(unittest.TestCase):
         self.assertIn("vessel", report)
         self.assertIn("port", report)
         self.assertIn("coordinator", report)
+        self.assertIn("Final vessel mean reward", report)
 
     def test_empty_history(self) -> None:
         """Report should handle empty history gracefully."""

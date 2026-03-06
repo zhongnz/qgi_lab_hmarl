@@ -51,6 +51,8 @@ class HMARLConfig:
     weather_penalty_factor: float = 0.15
     weather_autocorrelation: float = 0.0
     weather_shaping_weight: float = 0.3
+    port_weather_features: bool = True
+    coordinator_departure_window_options: tuple[int, ...] = (0, 6, 12, 24)
     # Economic parameters (RQ4)
     cargo_value_per_vessel: float = 1_000_000.0
     fuel_price_per_ton: float = 600.0
@@ -141,6 +143,15 @@ class HMARLConfig:
                 "nominal_speed must be within [speed_min, speed_max], got "
                 f"{self.nominal_speed} not in [{self.speed_min}, {self.speed_max}]"
             )
+        if not isinstance(self.coordinator_departure_window_options, (list, tuple)):
+            raise TypeError("coordinator_departure_window_options must be a list/tuple")
+        if len(self.coordinator_departure_window_options) == 0:
+            raise ValueError("coordinator_departure_window_options must be non-empty")
+        for w in self.coordinator_departure_window_options:
+            if int(w) < 0:
+                raise ValueError(
+                    "coordinator_departure_window_options must contain non-negative hours"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a dict representation for runtime code."""

@@ -297,16 +297,19 @@ def build_actor_critics(
     """Create one ``ActorCritic`` per agent type for the HMARL hierarchy.
 
     Action spaces (based on current policy interface):
-    - Vessel: continuous ``[target_speed]`` (1-D)
+    - Vessel: continuous ``[target_speed, requested_arrival_time]`` (2-D)
     - Port: discrete ``service_rate`` (docks + 1 choices)
-    - Coordinator: discrete ``dest_port`` (num_ports choices)
+    - Coordinator: discrete ``dest_port × departure_window`` bins.
     """
     hidden_dims = hidden_dims or [64, 64]
+    dep_windows = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
+    num_windows = len(dep_windows) if isinstance(dep_windows, (list, tuple)) else 1
+    coordinator_actions = int(config["num_ports"]) * max(int(num_windows), 1)
     return {
         "vessel": ActorCritic(
             obs_dim=vessel_obs_dim,
             global_state_dim=global_state_dim,
-            act_dim=1,
+            act_dim=2,
             discrete=False,
             hidden_dims=hidden_dims,
         ),
@@ -320,7 +323,7 @@ def build_actor_critics(
         "coordinator": ActorCritic(
             obs_dim=coordinator_obs_dim,
             global_state_dim=global_state_dim,
-            act_dim=config["num_ports"],
+            act_dim=coordinator_actions,
             discrete=True,
             hidden_dims=hidden_dims,
         ),
@@ -345,13 +348,16 @@ def build_per_agent_actor_critics(
     against the default shared-parameter CTDE architecture.
     """
     hidden_dims = hidden_dims or [64, 64]
+    dep_windows = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
+    num_windows = len(dep_windows) if isinstance(dep_windows, (list, tuple)) else 1
+    coordinator_actions = int(config["num_ports"]) * max(int(num_windows), 1)
     nets: dict[str, ActorCritic] = {}
 
     for i in range(config["num_vessels"]):
         nets[f"vessel_{i}"] = ActorCritic(
             obs_dim=vessel_obs_dim,
             global_state_dim=global_state_dim,
-            act_dim=1,
+            act_dim=2,
             discrete=False,
             hidden_dims=hidden_dims,
         )
@@ -369,7 +375,7 @@ def build_per_agent_actor_critics(
         nets[f"coordinator_{i}"] = ActorCritic(
             obs_dim=coordinator_obs_dim,
             global_state_dim=global_state_dim,
-            act_dim=config["num_ports"],
+            act_dim=coordinator_actions,
             discrete=True,
             hidden_dims=hidden_dims,
         )
@@ -387,7 +393,9 @@ def obs_dim_from_env(
               + short_horizon_hours (forecast) + 3 (directive)
               + 1 if weather_enabled (sea_state)
     - Port: 3 (local) + short_horizon_hours (forecast) + 1 (incoming)
+            + 3 if weather_enabled and port_weather_features
     - Coordinator: num_ports * medium_horizon_days + num_vessels * 4 + 1
+                   + num_ports * num_ports if weather_enabled (flattened weather matrix)
     """
     short_h = config["short_horizon_hours"]
     num_ports = config["num_ports"]
@@ -398,7 +406,11 @@ def obs_dim_from_env(
     if config.get("weather_enabled", False):
         vessel_dim += 1  # sea_state on current route
     port_dim = 3 + short_h + 1
+    if config.get("weather_enabled", False) and config.get("port_weather_features", True):
+        port_dim += 3  # inbound weather summary (mean, max, rough_fraction)
     coordinator_dim = num_ports * medium_d + num_vessels * 4 + 1
+    if config.get("weather_enabled", False):
+        coordinator_dim += num_ports * num_ports
 
     return {
         "vessel": vessel_dim,

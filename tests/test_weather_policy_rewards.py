@@ -7,7 +7,7 @@ import pytest
 
 from hmarl_mvp.config import get_default_config
 from hmarl_mvp.experiment import run_experiment
-from hmarl_mvp.policies import FleetCoordinatorPolicy, VesselPolicy
+from hmarl_mvp.policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
 from hmarl_mvp.rewards import weather_coordinator_shaping, weather_vessel_shaping
 from hmarl_mvp.state import PortState, VesselState
 
@@ -173,6 +173,61 @@ class TestVesselWeatherSpeed:
         policy = VesselPolicy(cfg, mode="reactive")
         action = policy.propose_action(np.zeros((3, 3)), {"dest_port": 0}, sea_state=3.0)
         assert action["target_speed"] == cfg["nominal_speed"]
+
+
+# ── PortPolicy weather tests ────────────────────────────────────────────
+
+
+class TestPortWeatherPolicy:
+    """Port forecast mode should adjust acceptance under rough weather."""
+
+    def test_forecast_mode_rough_weather_reduces_acceptance(self, cfg) -> None:
+        policy = PortPolicy(cfg, mode="forecast")
+        port = PortState(port_id=0, queue=2, docks=3, occupied=1)
+        no_weather = policy.propose_action(
+            port_state=port,
+            incoming_requests=2,
+            short_forecast_row=np.array([2.0, 2.0, 2.0]),
+        )
+        rough_weather = policy.propose_action(
+            port_state=port,
+            incoming_requests=2,
+            short_forecast_row=np.array([2.0, 2.0, 2.0]),
+            weather_features=np.array([2.8, 3.0, 1.0]),
+        )
+        assert rough_weather["accept_requests"] < no_weather["accept_requests"]
+
+    def test_forecast_mode_calm_weather_no_change(self, cfg) -> None:
+        policy = PortPolicy(cfg, mode="forecast")
+        port = PortState(port_id=0, queue=2, docks=3, occupied=1)
+        no_weather = policy.propose_action(
+            port_state=port,
+            incoming_requests=2,
+            short_forecast_row=np.array([2.0, 2.0, 2.0]),
+        )
+        calm_weather = policy.propose_action(
+            port_state=port,
+            incoming_requests=2,
+            short_forecast_row=np.array([2.0, 2.0, 2.0]),
+            weather_features=np.array([0.2, 0.3, 0.0]),
+        )
+        assert calm_weather["accept_requests"] == no_weather["accept_requests"]
+
+    def test_reactive_mode_ignores_weather(self, cfg) -> None:
+        policy = PortPolicy(cfg, mode="reactive")
+        port = PortState(port_id=0, queue=2, docks=3, occupied=1)
+        no_weather = policy.propose_action(
+            port_state=port,
+            incoming_requests=2,
+            short_forecast_row=np.array([2.0, 2.0, 2.0]),
+        )
+        with_weather = policy.propose_action(
+            port_state=port,
+            incoming_requests=2,
+            short_forecast_row=np.array([2.0, 2.0, 2.0]),
+            weather_features=np.array([2.8, 3.0, 1.0]),
+        )
+        assert with_weather == no_weather
 
 
 # ── Weather reward shaping tests ────────────────────────────────────────

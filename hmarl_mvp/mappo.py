@@ -11,9 +11,9 @@ Design decisions
 * **Parameter sharing**: all vessels share a single ``ActorCritic``, all
   ports share one, and the coordinator(s) share one.
 * Action translation:
-  - Vessel (continuous, dim=1): NN output → clamp to [speed_min, speed_max].
+  - Vessel (continuous, dim=2): NN output → speed + requested arrival time.
   - Port (discrete, dim=docks+1): NN output index → ``service_rate``.
-  - Coordinator (discrete, dim=num_ports): NN output index → ``dest_port``.
+  - Coordinator (discrete): NN output index → ``(dest_port, departure_window)``.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def global_state_dim_from_config(config: dict[str, Any]) -> int:
     Each coordinator's observation is **zero-padded** to the maximum
     coordinator dimension so the global state has a deterministic size::
 
-        N_c * (num_ports * medium_d + num_vessels * 4 + 1)
+        N_c * (num_ports * medium_d + num_vessels * 4 + 1 [+ num_ports^2 if weather])
         + num_vessels * vessel_dim + num_ports * port_dim
         + num_ports + 1
     """
@@ -168,21 +168,68 @@ def _nn_to_vessel_action(
     raw: torch.Tensor,
     config: dict[str, Any],
     speed_cap: float | None = None,
+    current_step: int = 0,
+    arrival_horizon_steps: int | None = None,
 ) -> dict[str, Any]:
-    """Convert a 1-D continuous NN output to a vessel action dict.
+    """Convert continuous NN output to a vessel action dict.
+
+    Action layout:
+    - ``raw[0]``: speed control
+    - ``raw[1]``: requested arrival-time offset (optional)
 
     Parameters
     ----------
     speed_cap:
         Optional upper bound on speed (e.g. from weather conditions).
         When provided, the speed is clamped to ``[speed_min, speed_cap]``.
+    current_step:
+        Current simulation step used to convert offset to absolute
+        ``requested_arrival_time``.
+    arrival_horizon_steps:
+        Maximum offset in steps for non-zero arrival-time requests.
     """
-    speed = float(raw.detach().cpu().item())
+    raw_arr = raw.detach().cpu().numpy().ravel()
+    speed_raw = float(raw_arr[0]) if raw_arr.size >= 1 else float(config["nominal_speed"])
+    arrival_raw = float(raw_arr[1]) if raw_arr.size >= 2 else 0.0
+
+    speed = speed_raw
     max_speed = float(config["speed_max"])
     if speed_cap is not None:
         max_speed = min(max_speed, speed_cap)
     speed = max(config["speed_min"], min(max_speed, speed))
-    return {"target_speed": speed, "request_arrival_slot": True}
+
+    horizon = (
+        int(arrival_horizon_steps)
+        if arrival_horizon_steps is not None
+        else int(config.get("rollout_steps", 20))
+    )
+    horizon = max(horizon, 1)
+
+    # Keep 0.0 as "no preference". Positive values are absolute target steps.
+    if arrival_raw <= 0.0:
+        requested_arrival_time = 0.0
+    else:
+        offset = max(1.0, min(arrival_raw, float(horizon)))
+        requested_arrival_time = float(current_step) + offset
+
+    return {
+        "target_speed": speed,
+        "request_arrival_slot": True,
+        "requested_arrival_time": requested_arrival_time,
+    }
+
+
+def _coordinator_departure_window_options(config: dict[str, Any]) -> list[int]:
+    """Return sorted unique non-negative departure-window options (hours)."""
+    raw = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
+    if isinstance(raw, (int, float)):
+        raw_opts = [raw]
+    elif isinstance(raw, (list, tuple)):
+        raw_opts = list(raw)
+    else:
+        raw_opts = [0, 6, 12, 24]
+    opts = sorted({max(int(v), 0) for v in raw_opts})
+    return opts if opts else [0]
 
 
 def _nn_to_port_action(
@@ -210,10 +257,21 @@ def _nn_to_coordinator_action(
     each vessel receives a unique (or near-unique) destination rather than
     all being sent to the same place — matching the per-vessel routing that
     heuristic policies already perform.
+
+    Action layout:
+    ``index = window_idx * num_ports + dest_port``.
     """
-    dest_port = int(raw.detach().cpu().item())
+    raw_idx = int(raw.detach().cpu().view(-1)[0].item())
     local_ids = assignments.get(coordinator_idx, [])
     num_ports = env.num_ports
+    window_options = _coordinator_departure_window_options(env.cfg)
+    num_windows = len(window_options)
+    total_actions = max(num_ports * num_windows, 1)
+
+    action_idx = max(0, min(raw_idx, total_actions - 1))
+    window_idx = action_idx // num_ports
+    dest_port = action_idx % num_ports
+    departure_window_hours = int(window_options[window_idx])
 
     # Build port ordering: primary first, then by ascending distance
     distances = env.distance_nm[dest_port]
@@ -227,7 +285,7 @@ def _nn_to_coordinator_action(
     return {
         "dest_port": dest_port,
         "per_vessel_dest": per_vessel_dest,
-        "departure_window_hours": 12,
+        "departure_window_hours": departure_window_hours,
         "emission_budget": max(50.0 - total_emissions * 0.1, 10.0),
     }
 
@@ -541,22 +599,28 @@ class MAPPOTrainer:
         return None
 
     def _build_coordinator_mask(self) -> np.ndarray:
-        """Build a boolean action mask for the coordinator's destination action.
+        """Build an action mask for coordinator composite actions.
 
         A port is masked out when its docks are fully occupied *and* its
         queue already exceeds available capacity — sending more vessels
-        there would guarantee delays.  At least one port is always valid;
-        if all ports are congested the mask allows all of them.
+        there would guarantee delays.
+
+        The same per-port validity is replicated across all departure-window
+        bins: ``len(mask) = num_ports * num_windows``.
+        At least one action is always valid; if all ports are congested the
+        mask allows all actions.
         """
         num_ports = self.env.num_ports
-        mask = np.ones(num_ports, dtype=np.float32)
+        base_mask = np.ones(num_ports, dtype=np.float32)
         for p in range(num_ports):
             port = self.env.ports[p]
             if port.occupied >= port.docks and port.queue >= port.docks:
-                mask[p] = 0.0
-        # Safety: ensure at least one port is valid
-        if mask.sum() == 0:
-            mask[:] = 1.0
+                base_mask[p] = 0.0
+        # Safety: ensure at least one port is valid.
+        if base_mask.sum() == 0:
+            base_mask[:] = 1.0
+        num_windows = len(_coordinator_departure_window_options(self.cfg))
+        mask = np.tile(base_mask, max(num_windows, 1))
         return mask
 
     def _coordinator_mask_tensor(self) -> torch.Tensor:
@@ -579,7 +643,7 @@ class MAPPOTrainer:
             num_agents=self.env.num_vessels,
             capacity=rl,
             obs_dim=self.obs_dims["vessel"],
-            act_dim=1,
+            act_dim=2,  # speed + requested_arrival_time
             gamma=g,
             lam=lam,
             global_state_dim=self.global_dim,
@@ -602,7 +666,7 @@ class MAPPOTrainer:
             gamma=g,
             lam=lam,
             global_state_dim=self.global_dim,
-            mask_dim=self.env.num_ports,
+            mask_dim=self.env.num_ports * len(_coordinator_departure_window_options(self.cfg)),
         )
 
     # ------------------------------------------------------------------
@@ -646,7 +710,10 @@ class MAPPOTrainer:
                     )
                     speed_cap = self._vessel_weather_speed_cap(i)
                     action_dict = _nn_to_vessel_action(
-                        action_t.squeeze(0), self.cfg, speed_cap=speed_cap
+                        action_t.squeeze(0),
+                        self.cfg,
+                        speed_cap=speed_cap,
+                        current_step=self.env.t,
                     )
                     vessel_actions_list.append(action_dict)
                     self.vessel_buf[i].add(
@@ -1289,7 +1356,12 @@ class MAPPOTrainer:
                     )
                     speed_cap = self._vessel_weather_speed_cap(i)
                     vessel_actions.append(
-                        _nn_to_vessel_action(a.squeeze(0), self.cfg, speed_cap=speed_cap)
+                        _nn_to_vessel_action(
+                            a.squeeze(0),
+                            self.cfg,
+                            speed_cap=speed_cap,
+                            current_step=self.env.t,
+                        )
                     )
 
                 # Ports

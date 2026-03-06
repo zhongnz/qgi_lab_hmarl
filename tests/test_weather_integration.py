@@ -166,6 +166,9 @@ class TestCLIWeatherFlag:
         )
         assert "--weather" in result.stdout
         assert "--sea-state-max" in result.stdout
+        assert "--weather-autocorrelation" in result.stdout
+        assert "--port-weather-features" in result.stdout
+        assert "--departure-window-options" in result.stdout
 
     def test_ablate_help_includes_weather(self) -> None:
         result = subprocess.run(
@@ -200,6 +203,29 @@ class TestCLIWeatherFlag:
             args = parse_args()
         assert args.weather is False
 
+    def test_parse_extended_weather_and_window_flags(self) -> None:
+        from scripts.run_mappo import parse_args
+
+        with patch(
+            "sys.argv",
+            [
+                "prog",
+                "train",
+                "--weather-autocorrelation",
+                "0.8",
+                "--weather-penalty-factor",
+                "0.2",
+                "--no-port-weather-features",
+                "--departure-window-options",
+                "0,4,8",
+            ],
+        ):
+            args = parse_args()
+        assert args.weather_autocorrelation == pytest.approx(0.8)
+        assert args.weather_penalty_factor == pytest.approx(0.2)
+        assert args.port_weather_features is False
+        assert tuple(args.departure_window_options) == (0, 4, 8)
+
 
 class TestCLIWeatherWiring:
     """Weather flags should be propagated into command execution config."""
@@ -224,6 +250,13 @@ class TestCLIWeatherWiring:
                     "--weather",
                     "--sea-state-max",
                     "4.0",
+                    "--weather-autocorrelation",
+                    "0.75",
+                    "--weather-penalty-factor",
+                    "0.2",
+                    "--no-port-weather-features",
+                    "--departure-window-options",
+                    "0,8,16",
                     "--no-plots",
                     "--output-dir",
                     str(tmp_path),
@@ -234,6 +267,10 @@ class TestCLIWeatherWiring:
 
         assert captured["config"]["weather_enabled"] is True
         assert captured["config"]["sea_state_max"] == 4.0
+        assert captured["config"]["weather_autocorrelation"] == pytest.approx(0.75)
+        assert captured["config"]["weather_penalty_factor"] == pytest.approx(0.2)
+        assert captured["config"]["port_weather_features"] is False
+        assert tuple(captured["config"]["coordinator_departure_window_options"]) == (0, 8, 16)
 
     def test_sweep_passes_weather_config(self, tmp_path: Any) -> None:
         from scripts.run_mappo import cmd_sweep, parse_args
@@ -340,7 +377,10 @@ class TestGymWrapperWeather:
         shape_no = env_no.observation_space.shape
         assert shape_w is not None and shape_no is not None
         diff = shape_w[0] - shape_no[0]
-        assert diff == 2  # +1 per vessel × 2 vessels
+        # Weather adds +1 per vessel, +3 per port (port weather summary),
+        # and +num_ports^2 to coordinator obs.
+        expected = 2 + (2 * 3) + (2 * 2)
+        assert diff == expected
 
 
 # ── MAPPO weather speed cap tests ────────────────────────────────────────
@@ -467,7 +507,7 @@ class TestWeatherCurriculumIntegration:
             assert len(env.ports) > 0
 
     def test_weather_ramp_affects_observations(self) -> None:
-        """When weather ramps on, vessel obs should gain extra dimension."""
+        """When weather ramps on, weather-dependent observation dims should increase."""
         from hmarl_mvp.networks import obs_dim_from_env
 
         scheduler = CurriculumScheduler(
@@ -476,7 +516,7 @@ class TestWeatherCurriculumIntegration:
                 "num_ports": 2,
                 "weather_enabled": True,
             },
-            start_config={"weather_enabled": False},
+            start_config={"num_vessels": 3, "num_ports": 2, "weather_enabled": False},
             warmup_fraction=0.5,
         )
         # Before weather (progress < 0.25 → alpha < 0.5)
@@ -488,3 +528,5 @@ class TestWeatherCurriculumIntegration:
         d_late = obs_dim_from_env(cfg_late)
 
         assert d_late["vessel"] == d_early["vessel"] + 1
+        assert d_late["port"] == d_early["port"] + 3
+        assert d_late["coordinator"] == d_early["coordinator"] + (cfg_late["num_ports"] ** 2)

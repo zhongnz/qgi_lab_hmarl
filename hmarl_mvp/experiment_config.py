@@ -63,9 +63,25 @@ class ExperimentConfig:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ExperimentConfig":
-        """Construct from a plain dict (e.g. loaded from YAML)."""
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> "ExperimentConfig":
+        """Construct from a plain dict (e.g. loaded from YAML).
+
+        Parameters
+        ----------
+        strict:
+            When True (default), raise ``KeyError`` if unknown top-level
+            keys are present.  This prevents silent config typos.
+            When False, unknown keys are ignored.
+        """
         known = {f.name for f in cls.__dataclass_fields__.values()}
+        unknown = sorted(k for k in data.keys() if k not in known)
+        if strict and unknown:
+            raise KeyError(f"Unknown experiment config keys: {unknown}")
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
 
@@ -97,10 +113,20 @@ def save_experiment_config(config: ExperimentConfig, path: str | Path) -> None:
             json.dump(data, f, indent=2, default=str)
 
 
-def load_experiment_config(path: str | Path) -> ExperimentConfig:
+def load_experiment_config(
+    path: str | Path,
+    *,
+    strict: bool = True,
+) -> ExperimentConfig:
     """Load an experiment config from YAML or JSON.
 
     Supports ``.yaml``, ``.yml``, and ``.json`` extensions.
+
+    Parameters
+    ----------
+    strict:
+        Passed through to :meth:`ExperimentConfig.from_dict`.
+        When True, unknown top-level keys raise ``KeyError``.
     """
     path = Path(path)
     text = path.read_text()
@@ -129,7 +155,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     if not isinstance(data, dict):
         raise ValueError(f"Expected a dict from {path}, got {type(data).__name__}")
 
-    return ExperimentConfig.from_dict(data)
+    return ExperimentConfig.from_dict(data, strict=strict)
 
 
 def run_from_config(config: ExperimentConfig) -> dict[str, Any]:

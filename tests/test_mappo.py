@@ -66,6 +66,17 @@ class TestActionTranslation:
         action = _nn_to_vessel_action(torch.tensor([-100.0]), cfg)
         assert action["target_speed"] == cfg["speed_min"]
         assert action["request_arrival_slot"] is True
+        assert action["requested_arrival_time"] == 0.0
+
+    def test_vessel_action_includes_arrival_time(self) -> None:
+        cfg = get_default_config(rollout_steps=30)
+        action = _nn_to_vessel_action(
+            torch.tensor([12.0, 7.0]),
+            cfg,
+            current_step=5,
+        )
+        assert action["request_arrival_slot"] is True
+        assert action["requested_arrival_time"] == pytest.approx(12.0)
 
     def test_port_action_discrete(self) -> None:
         cfg = get_default_config(num_ports=3, num_vessels=4)
@@ -84,6 +95,7 @@ class TestActionTranslation:
         assert action["dest_port"] == 1
         assert "per_vessel_dest" in action
         assert "emission_budget" in action
+        assert action["departure_window_hours"] in (0, 6, 12, 24)
 
 
 class TestMAPPOTrainer:

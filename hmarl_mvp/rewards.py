@@ -7,15 +7,15 @@ signals** — one per agent type — plus two optional **weather-aware
 shaping terms** that encourage fuel-efficient behaviour in rough seas.
 
 Vessel reward (per step):
-    ``r_V = -(fuel_weight * fuel + delay_weight * delay + emission_weight * CO2)``
+    ``r_V(t) = -(fuel_weight * Δfuel_t + delay_weight * Δdelay_t + emission_weight * ΔCO2_t)``
     With defaults (1.0, 1.5, 0.7) rewards range from 0 (docked) to ~-20 (fast transit).
 
 Port reward (per step):
-    ``r_P = -(queue * dt_hours + dock_idle_weight * idle_docks)``
+    ``r_P(t) = -(queue_t * dt_hours + dock_idle_weight * idle_docks_t)``
     Penalises both accumulated waiting time and wasted berth capacity.
 
 Coordinator reward (per step):
-    ``r_C = -(fuel_used + avg_queue + emission_lambda * CO2)``
+    ``r_C(t) = -(Δfuel_total_t + avg_queue_t + emission_lambda * ΔCO2_total_t)``
     System-level signal; ``emission_lambda`` (default 2.0) amplifies CO2.
 
 Weather shaping (opt-in, additive):
@@ -48,7 +48,7 @@ def compute_vessel_reward_step(
 ) -> float:
     """Per-step vessel reward using step-level deltas.
 
-    Returns ``-(fuel_weight * fuel + delay_weight * delay + emission_weight * co2)``.
+    Returns ``-(fuel_weight * Δfuel + delay_weight * Δdelay + emission_weight * Δco2)``.
     With default weights (1.0, 1.5, 0.7) and typical per-step values
     (fuel ~ 0–7, co2 ~ 0–22, delay 0–1 h) rewards range roughly from
     0 (docked, no delay) to about −20 (fast transit).
@@ -88,7 +88,7 @@ def compute_coordinator_reward_step(
 ) -> float:
     """System-level coordinator reward using step-level deltas.
 
-    Returns ``-(fuel_used + avg_queue + emission_lambda * co2_emitted)``.
+    Returns ``-(Δfuel_total + avg_queue + emission_lambda * Δco2_total)``.
     The emission_lambda (default 2.0) intentionally amplifies the
     CO2 signal at the coordinator level relative to vessel rewards.
     """

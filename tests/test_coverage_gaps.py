@@ -59,6 +59,16 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         expected = 5 * self.cfg["medium_horizon_days"] + 3 * 4 + 1
         self.assertEqual(obs.shape, (expected,))
 
+    def test_get_obs_includes_weather_matrix_when_enabled(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=2, weather_enabled=True)
+        agent = FleetCoordinatorAgent(config=cfg, coordinator_id=0)
+        vessels = initialize_vessels(2, 3, cfg["nominal_speed"], self.rng)
+        medium = np.ones((3, cfg["medium_horizon_days"]))
+        weather = np.ones((3, 3), dtype=float)
+        obs = agent.get_obs(medium, vessels, weather=weather)
+        expected = 3 * cfg["medium_horizon_days"] + 2 * 4 + 1 + 3 * 3
+        self.assertEqual(obs.shape, (expected,))
+
     def test_get_obs_updates_cumulative_emissions(self) -> None:
         agent = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
         v1 = VesselState(vessel_id=0, location=0, destination=1, emissions=3.5)

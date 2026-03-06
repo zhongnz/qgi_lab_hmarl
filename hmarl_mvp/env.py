@@ -150,7 +150,8 @@ class MaritimeEnv:
         actions:
             Dict with keys ``"coordinator"`` (single dict or empty),
             ``"coordinators"`` (list of dicts), ``"vessels"`` (list of
-            dicts with ``"target_speed"`` and ``"request_arrival_slot"``),
+            dicts with ``"target_speed"``, ``"request_arrival_slot"``,
+            and optional ``"requested_arrival_time"``),
             ``"ports"`` (list of dicts with ``"service_rate"`` and
             ``"accept_requests"``).
 
@@ -172,6 +173,7 @@ class MaritimeEnv:
         # Per-step bookkeeping: cadence flags, coordinator assignments, counters.
         due = self.cadence.due(self.t)
         assignments = self._build_assignments()
+        dt_hours = float(self.cfg.get("dt_hours", 1.0))
         step_delay_by_vessel: dict[int, float] = {
             vessel.vessel_id: 0.0 for vessel in self.vessels
         }
@@ -255,15 +257,15 @@ class MaritimeEnv:
                         config=self.cfg,
                         current_step=self.t,
                         departure_window_hours=dep_window,
-                        dt_hours=float(self.cfg.get("dt_hours", 1.0)),
+                        dt_hours=dt_hours,
                     )
                 elif not response["accepted"] and not vessel.at_sea:
-                    vessel.delay_hours += 1.0
-                    step_delay_by_vessel[vessel_id] += 1.0
+                    vessel.delay_hours += dt_hours
+                    step_delay_by_vessel[vessel_id] += dt_hours
                 self.bus.clear_awaiting(vessel_id)
             elif self.bus.is_awaiting(vessel_id) and not vessel.at_sea:
-                vessel.delay_hours += 1.0
-                step_delay_by_vessel[vessel_id] += 1.0
+                vessel.delay_hours += dt_hours
+                step_delay_by_vessel[vessel_id] += dt_hours
             normalized_vessel_actions.append(normalized)
 
         # ── Phase 3: physics tick ────────────────────────────────────────────
@@ -277,7 +279,7 @@ class MaritimeEnv:
             vessels=self.vessels,
             distance_nm=self.distance_nm,
             config=self.cfg,
-            dt_hours=1.0,
+            dt_hours=dt_hours,
             weather=self._weather if self._weather_enabled else None,
             current_step=self.t,
         )
@@ -330,7 +332,7 @@ class MaritimeEnv:
         step_ports(
             self.ports,
             service_rates,
-            dt_hours=1.0,
+            dt_hours=dt_hours,
             service_time_hours=self.cfg["service_time_hours"],
         )
 
@@ -440,6 +442,7 @@ class MaritimeEnv:
                 port_agent.state,
                 incoming,
                 short[i],
+                weather_features=self._port_weather_features(i),
             )
             for i, port_agent in enumerate(self.port_agents)
         ]
@@ -474,11 +477,41 @@ class MaritimeEnv:
         self.medium_forecast = self.medium_forecaster.predict(self.ports, self.rng)
         self.short_forecast = self.short_forecaster.predict(self.ports, self.rng)
 
+    def _port_weather_features(self, port_id: int) -> np.ndarray | None:
+        """Return compact inbound-weather features for a port, or None if disabled.
+
+        Feature vector (length 3):
+        1) mean inbound sea state
+        2) max inbound sea state
+        3) fraction of inbound routes at/above rough threshold
+        """
+        if not (self._weather_enabled and bool(self.cfg.get("port_weather_features", True))):
+            return None
+        if self._weather is None:
+            return np.zeros(3, dtype=float)
+        n = self._weather.shape[0]
+        if not (0 <= port_id < n):
+            return np.zeros(3, dtype=float)
+
+        inbound = np.asarray(self._weather[:, port_id], dtype=float)
+        if inbound.size > 1:
+            inbound = np.delete(inbound, port_id)  # exclude self-route diagonal
+        if inbound.size == 0:
+            return np.zeros(3, dtype=float)
+
+        sea_max = float(self.cfg.get("sea_state_max", 3.0))
+        rough_threshold = 0.7 * sea_max
+        mean_inbound = float(np.mean(inbound))
+        max_inbound = float(np.max(inbound))
+        rough_fraction = float(np.mean(inbound >= rough_threshold))
+        return np.array([mean_inbound, max_inbound, rough_fraction], dtype=float)
+
     def _get_observations(self) -> dict[str, Any]:
         """Build observation dicts for all agent types from current state.
 
         Coordinator observations are **zero-padded** to the maximum
-        coordinator dimension (``num_ports * medium_d + num_vessels * 4 + 1``)
+        coordinator dimension
+        (``num_ports * medium_d + num_vessels * 4 + 1 [+ num_ports*num_ports if weather]``)
         so that parameter-shared networks receive fixed-size inputs even when
         vessel partitions vary.
         """
@@ -493,7 +526,12 @@ class MaritimeEnv:
 
         # Fixed coordinator observation dimension
         medium_d = int(self.cfg["medium_horizon_days"])
-        max_coord_dim = int(self.cfg["num_ports"]) * medium_d + self.num_vessels * 4 + 1
+        weather_dim = (
+            int(self.cfg["num_ports"]) * int(self.cfg["num_ports"])
+            if bool(self.cfg.get("weather_enabled", False))
+            else 0
+        )
+        max_coord_dim = int(self.cfg["num_ports"]) * medium_d + self.num_vessels * 4 + 1 + weather_dim
 
         coordinator_obs = []
         for coordinator_id, coordinator in enumerate(self.coordinators):
@@ -502,7 +540,11 @@ class MaritimeEnv:
             local_vessels = [vessels_by_id[i] for i in local_ids if i in vessels_by_id]
             if not local_vessels:
                 local_vessels = self.vessels
-            raw_obs = coordinator.get_obs(medium, local_vessels)
+            raw_obs = coordinator.get_obs(
+                medium,
+                local_vessels,
+                weather=self._weather if self._weather_enabled else None,
+            )
             # Pad to fixed dimension
             if len(raw_obs) < max_coord_dim:
                 raw_obs = np.concatenate(
@@ -548,9 +590,11 @@ class MaritimeEnv:
 
         port_obs = []
         for i, port_agent in enumerate(self.port_agents):
+            weather_features = self._port_weather_features(i)
             p_obs = port_agent.get_obs(
                 short[i],
                 incoming_requests=len(self.bus.get_pending_requests(i)),
+                weather_features=weather_features,
             )
             port_obs.append(p_obs)
 
@@ -769,4 +813,3 @@ class MaritimeEnv:
             else:
                 normalized.append(dict(self.port_agents[port_id].last_action))
         return normalized
-

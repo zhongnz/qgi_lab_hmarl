@@ -43,12 +43,46 @@ from hmarl_mvp.plotting import plot_mappo_comparison, plot_training_curves
 from hmarl_mvp.report import generate_training_report
 
 
+def _parse_departure_window_options(raw: str) -> tuple[int, ...]:
+    """Parse a comma-separated departure-window list (hours)."""
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("departure-window-options must be non-empty")
+    values: list[int] = []
+    for p in parts:
+        try:
+            value = int(p)
+        except ValueError as exc:  # pragma: no cover - argparse formats this
+            raise argparse.ArgumentTypeError(
+                f"invalid departure window {p!r}: expected integer hours"
+            ) from exc
+        if value < 0:
+            raise argparse.ArgumentTypeError(
+                "departure-window-options must contain non-negative hours"
+            )
+        values.append(value)
+    return tuple(sorted(set(values)))
+
+
 def _weather_env_cfg(args: argparse.Namespace) -> dict[str, Any]:
-    """Build environment overrides from CLI weather flags."""
+    """Build environment overrides from CLI weather and routing flags."""
     env_cfg: dict[str, Any] = {}
-    if getattr(args, "weather", False):
+
+    weather_tuned = any(
+        getattr(args, name, None) is not None
+        for name in ("weather_autocorrelation", "weather_penalty_factor", "port_weather_features")
+    )
+    if getattr(args, "weather", False) or weather_tuned:
         env_cfg["weather_enabled"] = True
         env_cfg["sea_state_max"] = args.sea_state_max
+    if getattr(args, "weather_autocorrelation", None) is not None:
+        env_cfg["weather_autocorrelation"] = float(args.weather_autocorrelation)
+    if getattr(args, "weather_penalty_factor", None) is not None:
+        env_cfg["weather_penalty_factor"] = float(args.weather_penalty_factor)
+    if getattr(args, "port_weather_features", None) is not None:
+        env_cfg["port_weather_features"] = bool(args.port_weather_features)
+    if getattr(args, "departure_window_options", None) is not None:
+        env_cfg["coordinator_departure_window_options"] = tuple(args.departure_window_options)
     return env_cfg
 
 
@@ -67,6 +101,31 @@ def parse_args() -> argparse.Namespace:
     weather_parent.add_argument(
         "--sea-state-max", type=float, default=3.0,
         help="Maximum sea-state value when --weather is enabled (default: 3.0)",
+    )
+    weather_parent.add_argument(
+        "--weather-autocorrelation",
+        type=float,
+        default=None,
+        help="AR(1) weather autocorrelation in [0, 1]; implies weather_enabled",
+    )
+    weather_parent.add_argument(
+        "--weather-penalty-factor",
+        type=float,
+        default=None,
+        help="Weather penalty factor for fuel/speed and shaping; implies weather_enabled",
+    )
+    weather_parent.add_argument(
+        "--port-weather-features",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable/disable compact weather features in port observations",
+    )
+    weather_parent.add_argument(
+        "--departure-window-options",
+        type=_parse_departure_window_options,
+        default=None,
+        metavar="H1,H2,...",
+        help="Coordinator departure-window bins in hours (e.g. 0,6,12,24)",
     )
 
     # ---- train ----
@@ -130,7 +189,7 @@ def cmd_train(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    env_cfg: dict[str, Any] = {}
+    env_cfg: dict[str, Any] = _weather_env_cfg(args)
     if args.vessels is not None:
         env_cfg["num_vessels"] = args.vessels
     if args.ports is not None:
@@ -138,9 +197,6 @@ def cmd_train(args: argparse.Namespace) -> None:
     env_cfg.setdefault("num_vessels", 8)
     env_cfg.setdefault("num_ports", 5)
     env_cfg["rollout_steps"] = args.rollout_length + 5
-    if args.weather:
-        env_cfg["weather_enabled"] = True
-        env_cfg["sea_state_max"] = args.sea_state_max
 
     mappo_cfg = MAPPOConfig(
         rollout_length=args.rollout_length,
@@ -160,8 +216,15 @@ def cmd_train(args: argparse.Namespace) -> None:
     print(f"Starting MAPPO training: {args.iterations} iterations")
     print(f"  env: {env_cfg['num_vessels']} vessels, {env_cfg['num_ports']} ports")
     print(f"  lr={args.lr}, ent={args.entropy_coeff}, rollout={args.rollout_length}")
-    if args.weather:
-        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
+    if env_cfg.get("weather_enabled"):
+        print(
+            "  weather: enabled "
+            f"(sea_state_max={env_cfg.get('sea_state_max')}, "
+            f"autocorr={env_cfg.get('weather_autocorrelation', 0.0)}, "
+            f"port_weather={env_cfg.get('port_weather_features', True)})"
+        )
+    if "coordinator_departure_window_options" in env_cfg:
+        print(f"  departure windows: {env_cfg['coordinator_departure_window_options']}")
     print(f"  output: {out_dir}")
     t0 = time.time()
 
@@ -319,10 +382,7 @@ def cmd_multiseed(args: argparse.Namespace) -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    env_cfg: dict[str, Any] = {}
-    if getattr(args, "weather", False):
-        env_cfg["weather_enabled"] = True
-        env_cfg["sea_state_max"] = args.sea_state_max
+    env_cfg: dict[str, Any] = _weather_env_cfg(args)
 
     mappo_cfg = MAPPOConfig(
         rollout_length=args.rollout_length,
@@ -333,7 +393,14 @@ def cmd_multiseed(args: argparse.Namespace) -> None:
     print(f"Multi-seed MAPPO training: {args.iterations} iters × {len(seeds)} seeds")
     print(f"  seeds: {seeds}")
     if env_cfg.get("weather_enabled"):
-        print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
+        print(
+            "  weather: enabled "
+            f"(sea_state_max={env_cfg.get('sea_state_max')}, "
+            f"autocorr={env_cfg.get('weather_autocorrelation', 0.0)}, "
+            f"port_weather={env_cfg.get('port_weather_features', True)})"
+        )
+    if "coordinator_departure_window_options" in env_cfg:
+        print(f"  departure windows: {env_cfg['coordinator_departure_window_options']}")
     t0 = time.time()
 
     result = train_multi_seed(

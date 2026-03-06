@@ -155,13 +155,51 @@ The coordinator tracks:
 
 | Variable | Field | Meaning |
 |----------|-------|---------|
-| $B_e$    | `emission_budget` | Fleet-wide CO₂ budget for the current horizon |
-| $E_{\text{total}}$ | `cumulative_emissions` | $\sum_k E_k$ at last coordinator step |
+| $d_C$    | `last_dest_port` | Most recent primary destination chosen by the coordinator |
+| $W_C$    | `departure_window_hours` | Most recent departure-window directive (hours) |
+| $B_e$    | `emission_budget` | Most recent fleet-wide CO₂ budget directive |
+| $E_{\text{total}}$ | `cumulative_emissions` | $\sum_k E_k$ at the latest coordinator observation |
 | $\Delta_{\text{coord}}$ | `coord_decision_interval_steps` | Steps between coordinator actions (default 12) |
+
+Let $\mathbb{1}_{\text{due}}(t)$ denote whether the coordinator is scheduled to
+act at step $t$, and let the chosen action on those steps be
+
+$$a_C^{(t)} = \left(d_C^{\star (t)}, W_C^{\star (t)}, B_e^{\star (t)}\right)$$
+
+where $d_C^{\star (t)}$ is the primary destination, $W_C^{\star (t)}$ is the
+departure window, and $B_e^{\star (t)}$ is the emission-budget directive.
+
+The coordinator's internal state is piecewise constant between decision times:
+
+$$d_C^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, d_C^{\star (t)} + \left(1-\mathbb{1}_{\text{due}}(t)\right) d_C^{(t)}$$
+
+$$W_C^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, W_C^{\star (t)} + \left(1-\mathbb{1}_{\text{due}}(t)\right) W_C^{(t)}$$
+
+$$B_e^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, B_e^{\star (t)} + \left(1-\mathbb{1}_{\text{due}}(t)\right) B_e^{(t)}$$
+
+The observed fleet-emissions summary is refreshed from vessel state:
+
+$$E_{\text{total}}^{(t+1)} = \sum_k E_k^{(t+1)}$$
+
+This update happens whenever coordinator observations are rebuilt, so
+`cumulative_emissions` is a derived fleet aggregate rather than an independent
+latent state variable.
 
 The coordinator issues directives $(\text{dest port}_k, W_k, B_e)$ for each
 assigned vessel $k$ every $\Delta_{\text{coord}}$ steps. Directives are
 delivered after `message_latency_steps` steps.
+
+### Heuristic coordinator directive rule
+
+For the current heuristic `forecast` / `oracle` coordinator, the emission
+budget is set directly from current fleet emissions:
+
+$$B_e^{\star (t)} = \max\!\left(50.0 - 0.1\,E_{\text{total}}^{(t)},\; 10.0\right)$$
+
+and the departure window is currently fixed at
+$W_C^{\star (t)} = 0$ hours in heuristic experiments. Learned MAPPO
+coordinators instead choose $(d_C^{\star}, W_C^{\star}, B_e^{\star})$ through
+their policy network.
 
 Setting `message_latency_steps = 1` (the minimum) effectively makes delivery
 synchronous within one simulation step. This value can be set to 0 only if the

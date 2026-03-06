@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+import hmarl_mvp.experiment_config as experiment_config_mod
 from hmarl_mvp.experiment_config import (
     ExperimentConfig,
     load_experiment_config,
@@ -62,7 +65,17 @@ class TestExperimentConfig:
             "env": {"num_ports": 3},
             "unknown_key": "ignored",
         }
-        cfg = ExperimentConfig.from_dict(data)
+        with pytest.raises(KeyError, match="Unknown experiment config keys"):
+            ExperimentConfig.from_dict(data)
+
+    def test_from_dict_non_strict_ignores_unknown(self) -> None:
+        data = {
+            "name": "roundtrip",
+            "num_iterations": 25,
+            "env": {"num_ports": 3},
+            "unknown_key": "ignored",
+        }
+        cfg = ExperimentConfig.from_dict(data, strict=False)
         assert cfg.name == "roundtrip"
         assert cfg.num_iterations == 25
         assert cfg.env == {"num_ports": 3}
@@ -135,6 +148,67 @@ class TestSaveLoad:
         with pytest.raises(ValueError, match="Expected a dict"):
             load_experiment_config(path)
 
+    def test_load_unknown_top_level_key_raises(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.json"
+        path.write_text(json.dumps({"name": "x", "unknown_key": 1}))
+        with pytest.raises(KeyError, match="Unknown experiment config keys"):
+            load_experiment_config(path)
+
+    def test_load_unknown_top_level_key_non_strict(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.json"
+        path.write_text(json.dumps({"name": "x", "unknown_key": 1}))
+        loaded = load_experiment_config(path, strict=False)
+        assert loaded.name == "x"
+
+    def test_save_yaml_falls_back_to_json_without_pyyaml(
+        self, monkeypatch: Any, tmp_path: Path
+    ) -> None:
+        orig_import = builtins.__import__
+
+        def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "yaml":
+                raise ImportError("pyyaml unavailable")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        path = tmp_path / "cfg.yaml"
+        save_experiment_config(ExperimentConfig(name="fallback"), path)
+        fallback_path = tmp_path / "cfg.json"
+        assert fallback_path.exists()
+
+    def test_load_yaml_without_pyyaml_raises(
+        self, monkeypatch: Any, tmp_path: Path
+    ) -> None:
+        orig_import = builtins.__import__
+
+        def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "yaml":
+                raise ImportError("pyyaml unavailable")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        path = tmp_path / "cfg.yaml"
+        path.write_text("name: demo\n")
+        with pytest.raises(ImportError, match="pyyaml is required"):
+            load_experiment_config(path)
+
+    def test_load_unknown_suffix_json_fallback_without_yaml(
+        self, monkeypatch: Any, tmp_path: Path
+    ) -> None:
+        orig_import = builtins.__import__
+
+        def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "yaml":
+                raise ImportError("pyyaml unavailable")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        path = tmp_path / "cfg.txt"
+        path.write_text(json.dumps({"name": "txt_config", "num_iterations": 3}))
+        loaded = load_experiment_config(path)
+        assert loaded.name == "txt_config"
+        assert loaded.num_iterations == 3
+
 
 # ------------------------------------------------------------------
 # run_from_config (integration)
@@ -206,3 +280,80 @@ class TestRunFromConfig:
         data = json.loads(summary_path.read_text())
         assert data["name"] == "summary_check"
         assert "config" in data
+
+    def test_tensorboard_path_and_curriculum_branch(self, monkeypatch: Any, tmp_path: Path) -> None:
+        class DummyWriter:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def add_scalar(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        writer = DummyWriter()
+        monkeypatch.setattr(
+            experiment_config_mod,
+            "_try_create_tb_writer",
+            lambda _log_dir: writer,
+        )
+        cfg = ExperimentConfig(
+            name="tb_curriculum",
+            num_iterations=1,
+            tensorboard=True,
+            mappo={"hidden_dims": [32, 32]},
+            env={"num_ports": 2, "num_vessels": 3, "rollout_steps": 12},
+            curriculum_stages=[
+                {"fraction": 0.0, "config_overrides": {"weather_enabled": False}},
+                {"fraction": 0.5, "config_overrides": {"weather_enabled": True}},
+            ],
+            output_dir=str(tmp_path / "out"),
+        )
+        run_from_config(cfg)
+        assert writer.closed is True
+
+
+class TestTensorboardHelpers:
+    def test_try_create_tb_writer_import_error(self, monkeypatch: Any) -> None:
+        orig_import = builtins.__import__
+
+        def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name.startswith("torch.utils.tensorboard"):
+                raise ImportError("tensorboard unavailable")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert experiment_config_mod._try_create_tb_writer("runs/tb_test") is None
+
+    def test_write_tb_scalars_logs_supported_keys(self) -> None:
+        class DummyWriter:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, float, int]] = []
+                self.flushed = False
+
+            def add_scalar(self, name: str, value: float, step: int) -> None:
+                self.calls.append((name, float(value), step))
+
+            def flush(self) -> None:
+                self.flushed = True
+
+        writer = DummyWriter()
+        experiment_config_mod._write_tb_scalars(
+            writer=writer,
+            step=7,
+            entry={
+                "mean_reward": 1.2,
+                "vessel_value_loss": 0.5,
+                "coordinator_approx_kl": 0.01,
+                "non_numeric": "x",
+            },
+        )
+        logged_names = {name for name, _value, _step in writer.calls}
+        assert "train/mean_reward" in logged_names
+        assert "train/vessel_value_loss" in logged_names
+        assert "train/coordinator_approx_kl" in logged_names
+        assert writer.flushed is True

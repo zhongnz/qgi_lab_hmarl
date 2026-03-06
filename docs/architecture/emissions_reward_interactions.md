@@ -5,15 +5,23 @@ This note clarifies how emissions couple agent rewards.
 ## Reward definitions in current MVP
 
 1. Vessel reward:
-   `R_V = -(alpha * fuel + beta * delay + gamma * emissions)`
+   `R_V^(t) = -(alpha * ΔF_k^(t) + beta * Δh_k^(t) + gamma * ΔE_k^(t))`
    (default weights: alpha=1.0, beta=1.5, gamma=0.7)
 2. Port reward:
-   `R_P = -(queue * dt_hours + dock_idle_weight * idle_docks)`
+   `R_P^(t) = -(Q_j^(t) * dt_hours + dock_idle_weight * idle_docks_j^(t))`
    Queue penalty is time-weighted (queue-length × time-step) to measure
    waiting-time accumulation per proposal §4.2.
 3. Coordinator reward:
-   `R_C = -(voyage_cost + lambda * total_emissions)`
+   `R_C^(t) = -(ΔF_total^(t) + avg_queue^(t) + lambda * ΔE_total^(t))`
    (default lambda=2.0, amplifies CO2 signal at the strategic level)
+
+`ΔE_k^(t)` and `ΔE_total^(t)` are the **incremental** CO₂ emissions generated
+during the current environment step, not the cumulative state variables
+`VesselState.emissions` / `FleetCoordinatorState.cumulative_emissions`.
+Those cumulative quantities are still tracked in state and observations, but the
+reward uses per-step deltas so that earlier emissions are not re-penalised on
+every subsequent step. This matches the proposal's additive per-step objective
+decomposition.
 
 Code references:
 
@@ -41,8 +49,8 @@ Code references:
    **Done** — `compute_coordinator_metrics()` tracks `emission_budget_compliance`.
 2. Add coordination term that rewards vessel-port agreement while penalizing high-emission recovery actions.
 3. **Note on local vs. global emission penalisation**: `R_V` penalises each
-   vessel's own cumulative emissions; `R_C` penalises the fleet-total emissions
-   (the sum of all vessels).
+   vessel's own step-level emissions; `R_C` penalises the fleet-total
+   step-level emissions (the sum of all vessels for that step).
    These signals **intentionally overlap** — a vessel that burns excess fuel
    is penalised locally (via `R_V`) *and* contributes to the global penalty
    seen by the coordinator (via `R_C`). This creates aligned incentives across

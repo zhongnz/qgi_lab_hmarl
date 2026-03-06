@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import numpy as np
@@ -151,6 +152,7 @@ def run_experiment(
                 port_state=port_agent.state,
                 incoming_requests=len(pending_port_requests.get(i, [])),
                 short_forecast_row=forecast_for_ports[i],
+                weather_features=env._port_weather_features(i),
             )
             for i, port_agent in enumerate(env.port_agents)
         ]
@@ -371,14 +373,29 @@ def run_mappo_comparison(
 
     train_log: list[dict[str, float]] = []
     for iteration in range(1, train_iterations + 1):
+        t_roll = time.perf_counter()
         rollout_info = trainer.collect_rollout()
+        rollout_time = time.perf_counter() - t_roll
+        t_upd = time.perf_counter()
         update_info = trainer.update()
+        update_time = time.perf_counter() - t_upd
         row: dict[str, float] = {
             "iteration": float(iteration),
             "mean_reward": rollout_info["mean_reward"],
+            "total_reward": rollout_info["total_reward"],
+            "vessel_mean_reward": rollout_info.get("vessel_mean_reward", 0.0),
+            "port_mean_reward": rollout_info.get("port_mean_reward", 0.0),
+            "coordinator_mean_reward": rollout_info.get("coordinator_mean_reward", 0.0),
+            "rollout_time": rollout_time,
+            "update_time": update_time,
         }
         for agent_type, result in update_info.items():
             row[f"{agent_type}_value_loss"] = result.value_loss
+            row[f"{agent_type}_entropy"] = result.entropy
+            row[f"{agent_type}_approx_kl"] = result.approx_kl
+        if update_info:
+            first_result = next(iter(update_info.values()))
+            row["entropy_coeff"] = first_result.entropy_coeff
         train_log.append(row)
 
     # --- Evaluate MAPPO ---
@@ -411,7 +428,13 @@ def run_mappo_comparison(
                 v_obs_n = trainer._eval_normalize_obs(v_obs, "vessel")
                 v_t = torch.as_tensor(v_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
                 a, _, _ = vessel_ac.get_action_and_value(v_t, gs_tensor, deterministic=True)
-                vessel_actions.append(_nn_to_vessel_action(a.squeeze(0), trainer.cfg))
+                vessel_actions.append(
+                    _nn_to_vessel_action(
+                        a.squeeze(0),
+                        trainer.cfg,
+                        current_step=trainer.env.t,
+                    )
+                )
 
             port_actions = []
             for i, p_obs in enumerate(obs["ports"]):
@@ -428,7 +451,10 @@ def run_mappo_comparison(
             for i, c_obs in enumerate(obs["coordinators"]):
                 c_obs_n = trainer._eval_normalize_obs(c_obs, "coordinator")
                 c_t = torch.as_tensor(c_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
-                a, _, _ = coord_ac.get_action_and_value(c_t, gs_tensor, deterministic=True)
+                c_mask = trainer._coordinator_mask_tensor()
+                a, _, _ = coord_ac.get_action_and_value(
+                    c_t, gs_tensor, deterministic=True, action_mask=c_mask
+                )
                 coord_actions.append(
                     _nn_to_coordinator_action(a.squeeze(0), i, trainer.env, assignments)
                 )

@@ -3,7 +3,7 @@
 
 Runs heuristic baselines, MAPPO training, evaluation, and ablations on
 a small-scale setup (5 ports, 8 vessels, weather enabled) that completes
-in ~5–8 minutes on a 12-core CPU.  Produces 8 publication-quality plots
+in ~5–8 minutes on a 12-core CPU.  Produces 9 publication-quality plots
 covering every visualisation in the plotting module.
 
 Usage::
@@ -13,9 +13,14 @@ Usage::
 Outputs (all saved to ``--output-dir``):
 
     CSVs:
-      policy_comparison.csv     – 4 heuristic baselines × 30 steps
-      mappo_comparison.csv      – MAPPO vs baselines × 30 steps
+      policy_summary.csv        – aggregated heuristic baseline summary
+      policy_*.csv              – per-policy baseline traces
+      horizon_*.csv             – forecast-horizon sweep traces
+      noise_*.csv               – forecast-noise sweep traces
+      sharing_*.csv             – forecast-sharing sweep traces
+      mappo_*.csv               – MAPPO and baseline comparison traces
       train_log.csv             – per-iteration training metrics
+      dashboard_log.csv         – dashboard metrics (same MAPPO training run)
       ablation_results.csv      – 3-variant ablation summary
 
     PNGs:
@@ -27,6 +32,7 @@ Outputs (all saved to ``--output-dir``):
       06_mappo_comparison.png   – MAPPO vs heuristic baselines
       07_training_dashboard.png – 2×2 reward/loss/KL/entropy
       08_timing_breakdown.png   – rollout vs update time
+      09_ablation_bar.png       – ablation comparison
 """
 
 from __future__ import annotations
@@ -36,7 +42,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 # Ensure package imports work when running this file directly.
@@ -46,7 +51,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from hmarl_mvp.config import get_default_config
 from hmarl_mvp.experiment import (
-    run_experiment,
     run_horizon_sweep,
     run_mappo_ablation,
     run_mappo_comparison,
@@ -159,8 +163,10 @@ def main() -> None:
         },
     )
 
-    # Save comparison CSVs
+    # Save comparison CSVs (exclude metadata keys like "_train_log")
     for name, df in mappo_results.items():
+        if str(name).startswith("_"):
+            continue
         df.to_csv(out / f"mappo_{name}.csv", index=False)
 
     train_log_df = mappo_results.get("_train_log", pd.DataFrame())
@@ -171,46 +177,16 @@ def main() -> None:
     plot_mappo_comparison(mappo_results, out_path=str(out / "06_mappo_comparison.png"))
     print(f"  → saved 05–06 MAPPO plots  ({time.time()-t0:.1f}s elapsed)")
 
-    # ── 4. Training dashboard (requires per-iteration diagnostics) ───────
-    _banner("4/6  Training dashboard (re-training with full logging)")
-    from hmarl_mvp.mappo import MAPPOConfig, MAPPOTrainer
-
-    mappo_cfg = MAPPOConfig(
-        rollout_length=32,
-        lr=3e-4,
-        hidden_dims=[64, 64],
-        entropy_coeff=0.01,
-        normalize_rewards=True,
-        normalize_observations=True,
-        device="cpu",
-    )
-    trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=seed)
-    dashboard_history: list[dict[str, float]] = []
-    for it in range(1, 31):
-        t_roll = time.time()
-        rollout_info = trainer.collect_rollout()
-        rollout_time = time.time() - t_roll
-
-        t_upd = time.time()
-        update_info = trainer.update()
-        update_time = time.time() - t_upd
-
-        entry: dict[str, float] = {
-            "iteration": float(it),
-            "mean_reward": rollout_info["mean_reward"],
-            "rollout_time": rollout_time,
-            "update_time": update_time,
-        }
-        for agent_type, result in update_info.items():
-            entry[f"{agent_type}_value_loss"] = result.value_loss
-            entry[f"{agent_type}_entropy"] = result.entropy
-            entry[f"{agent_type}_approx_kl"] = result.approx_kl
-        dashboard_history.append(entry)
-
-    pd.DataFrame(dashboard_history).to_csv(out / "dashboard_log.csv", index=False)
-    plot_training_dashboard(dashboard_history, out_path=str(out / "07_training_dashboard.png"))
-    plot_timing_breakdown(dashboard_history, out_path=str(out / "08_timing_breakdown.png"))
-    print(f"  → saved 07–08 dashboard + timing  ({time.time()-t0:.1f}s elapsed)")
+    # ── 4. Training dashboard (reuse same training run as step 3) ────────
+    _banner("4/6  Training dashboard")
+    if not train_log_df.empty:
+        dashboard_history = train_log_df.to_dict("records")
+        pd.DataFrame(dashboard_history).to_csv(out / "dashboard_log.csv", index=False)
+        plot_training_dashboard(dashboard_history, out_path=str(out / "07_training_dashboard.png"))
+        plot_timing_breakdown(dashboard_history, out_path=str(out / "08_timing_breakdown.png"))
+        print(f"  → saved 07–08 dashboard + timing  ({time.time()-t0:.1f}s elapsed)")
+    else:
+        print("  → skipped 07–08 (empty training log)")
 
     # ── 5. Ablation study ────────────────────────────────────────────────
     _banner("5/6  Ablation study (3 variants × 20 iterations)")
@@ -235,14 +211,15 @@ def main() -> None:
     elapsed = time.time() - t0
     print(f"  Total time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
     print(f"  All outputs saved to: {out.resolve()}")
-    print(f"\n  Plots produced:")
+    print("\n  Plots produced:")
     for png in sorted(out.glob("*.png")):
         size_kb = png.stat().st_size / 1024
         print(f"    {png.name:40s}  ({size_kb:.0f} KB)")
-    print(f"\n  CSVs produced:")
-    for csv in sorted(out.glob("*.csv")):
-        rows = sum(1 for _ in open(csv)) - 1
-        print(f"    {csv.name:40s}  ({rows} rows)")
+    print("\n  CSVs produced:")
+    for csv_file in sorted(out.glob("*.csv")):
+        with csv_file.open() as handle:
+            rows = sum(1 for _ in handle) - 1
+        print(f"    {csv_file.name:40s}  ({rows} rows)")
 
 
 if __name__ == "__main__":

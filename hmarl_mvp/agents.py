@@ -112,8 +112,18 @@ class PortAgent:
         self,
         short_forecast_row: np.ndarray,
         incoming_requests: int = 0,
+        weather_features: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Build local port observation vector."""
+        """Build local port observation vector.
+
+        ``weather_features`` is an optional compact weather summary
+        for inbound routes to this port.
+        """
+        weather_vec = (
+            np.asarray(weather_features, dtype=float).ravel()
+            if weather_features is not None
+            else np.array([], dtype=float)
+        )
         return np.concatenate(
             [
                 np.array(
@@ -122,6 +132,7 @@ class PortAgent:
                 ),
                 short_forecast_row.astype(float),
                 np.array([float(incoming_requests)], dtype=float),
+                weather_vec,
             ]
         )
 
@@ -157,19 +168,38 @@ class FleetCoordinatorAgent:
         self,
         medium_forecast: np.ndarray,
         vessels: list[VesselState],
+        weather: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Build coordinator observation vector."""
+        """Build coordinator observation vector.
+
+        When ``weather_enabled=True`` in config, appends a flattened
+        ``(num_ports x num_ports)`` weather matrix. If weather is unavailable,
+        appends a zero vector to keep observation dimensions fixed.
+        """
         vessel_summaries = np.array(
             [[v.location, v.speed, v.fuel, v.emissions] for v in vessels],
             dtype=float,
         )
         total_emissions = float(sum(v.emissions for v in vessels))
         self.state.cumulative_emissions = total_emissions
+        weather_features = np.array([], dtype=float)
+        if bool(self.cfg.get("weather_enabled", False)):
+            num_ports = int(self.cfg.get("num_ports", 0))
+            expected = num_ports * num_ports
+            if weather is not None:
+                weather_arr = np.asarray(weather, dtype=float)
+                if weather_arr.shape == (num_ports, num_ports):
+                    weather_features = weather_arr.flatten()
+                else:
+                    weather_features = np.zeros(expected, dtype=float)
+            else:
+                weather_features = np.zeros(expected, dtype=float)
         return np.concatenate(
             [
                 medium_forecast.flatten().astype(float),
                 vessel_summaries.flatten() if vessel_summaries.size else np.array([]),
                 np.array([total_emissions], dtype=float),
+                weather_features,
             ]
         )
 
