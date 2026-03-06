@@ -12,7 +12,7 @@ Design decisions
   ports share one, and the coordinator(s) share one.
 * Action translation:
   - Vessel (continuous, dim=2): NN output → speed + requested arrival time.
-  - Port (discrete, dim=docks+1): NN output index → ``service_rate``.
+  - Port (discrete, dim=(docks+1)^2): NN output index → ``(service_rate, accept_requests)``.
   - Coordinator (discrete): NN output index → ``(dest_port, departure_window)``.
 """
 
@@ -232,16 +232,39 @@ def _coordinator_departure_window_options(config: dict[str, Any]) -> list[int]:
     return opts if opts else [0]
 
 
+def _port_action_levels(config: dict[str, Any]) -> int:
+    """Return the number of discrete levels per port control dimension."""
+    return int(config["docks_per_port"]) + 1
+
+
+def _num_port_actions(config: dict[str, Any]) -> int:
+    """Return the size of the joint discrete port action space."""
+    levels = _port_action_levels(config)
+    return levels * levels
+
+
+def _decode_port_action(action_idx: int, config: dict[str, Any]) -> tuple[int, int]:
+    """Map a discrete port action index to ``(service_rate, accept_requests)``."""
+    levels = _port_action_levels(config)
+    bounded = max(0, min(int(action_idx), levels * levels - 1))
+    accept_requests, service_rate = divmod(bounded, levels)
+    return service_rate, accept_requests
+
+
 def _nn_to_port_action(
     raw: torch.Tensor,
     port_idx: int,
     env: MaritimeEnv,
 ) -> dict[str, Any]:
-    """Convert a discrete NN output to a port action dict."""
-    service_rate = int(raw.detach().cpu().item())
+    """Convert a joint discrete NN output to a port action dict."""
+    service_rate, accept_requests = _decode_port_action(
+        int(raw.detach().cpu().item()), env.cfg
+    )
     port = env.ports[port_idx]
-    available = max(port.docks - port.occupied, 0)
-    return {"service_rate": service_rate, "accept_requests": available}
+    return {
+        "service_rate": min(service_rate, int(port.docks)),
+        "accept_requests": accept_requests,
+    }
 
 
 def _nn_to_coordinator_action(
@@ -553,17 +576,24 @@ class MAPPOTrainer:
     # ------------------------------------------------------------------
 
     def _build_port_mask(self, port_idx: int) -> np.ndarray:
-        """Build a boolean action mask for a port's service-rate action.
+        """Build a boolean mask for the joint discrete port action space.
 
-        Valid service rates are ``[0 .. available_docks]`` where
-        ``available_docks = docks - occupied``.  Higher indices are masked
-        out to prevent the agent from selecting impossible rates.
+        Port actions encode ``(service_rate, accept_requests)``.
+        ``service_rate`` spans ``[0 .. docks]``. ``accept_requests`` is masked
+        to ``[0 .. min(current_backlog, available_docks)]`` so the policy
+        learns an actual admission decision instead of a hard-coded one.
         """
         port = self.env.ports[port_idx]
         available = max(port.docks - port.occupied, 0)
-        act_dim = int(self.cfg["docks_per_port"]) + 1
-        mask = np.zeros(act_dim, dtype=np.float32)
-        mask[: available + 1] = 1.0
+        backlog = len(self.env.bus.get_pending_requests(port_idx))
+        max_accept = min(int(backlog), int(available))
+        levels = _port_action_levels(self.cfg)
+        mask = np.zeros(_num_port_actions(self.cfg), dtype=np.float32)
+        for accept_requests in range(max_accept + 1):
+            start = accept_requests * levels
+            mask[start : start + levels] = 1.0
+        if mask.sum() == 0:
+            mask[:levels] = 1.0
         return mask
 
     def _port_mask_tensor(self, port_idx: int) -> torch.Tensor:
@@ -656,7 +686,7 @@ class MAPPOTrainer:
             gamma=g,
             lam=lam,
             global_state_dim=self.global_dim,
-            mask_dim=int(self.cfg["docks_per_port"]) + 1,
+            mask_dim=_num_port_actions(self.cfg),
         )
         self.coordinator_buf = MultiAgentRolloutBuffer(
             num_agents=self.env.num_coordinators,

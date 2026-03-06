@@ -217,28 +217,41 @@ class TestMAPPOPortMasking:
     """MAPPO trainer uses port action masks during rollout and eval."""
 
     def test_build_port_mask_shape(self) -> None:
-        """Port mask has correct shape = docks_per_port + 1."""
+        """Port mask has correct shape = joint (service, accept) action space."""
         cfg = MAPPOConfig(rollout_length=8)
         trainer = MAPPOTrainer(mappo_config=cfg, seed=42)
         trainer.env.reset()
         mask = trainer._build_port_mask(0)
-        expected_dim = int(trainer.cfg["docks_per_port"]) + 1
+        expected_dim = (int(trainer.cfg["docks_per_port"]) + 1) ** 2
         assert mask.shape == (expected_dim,)
 
     def test_build_port_mask_valid_range(self) -> None:
-        """Valid mask entries cover [0..available_docks]."""
+        """Without backlog, only the accept=0 action band is valid."""
         cfg = MAPPOConfig(rollout_length=8)
         trainer = MAPPOTrainer(mappo_config=cfg, seed=42)
-        # Reset to get fresh state
         trainer.env.reset()
+        levels = int(trainer.cfg["docks_per_port"]) + 1
         for i in range(trainer.env.num_ports):
             mask = trainer._build_port_mask(i)
-            port = trainer.env.ports[i]
-            available = max(port.docks - port.occupied, 0)
-            # Entries [0..available] should be 1, rest 0
-            assert mask[: available + 1].sum() == available + 1
-            if available + 1 < len(mask):
-                assert mask[available + 1 :].sum() == 0.0
+            assert mask[:levels].sum() == levels
+            assert mask[levels:].sum() == 0.0
+
+    def test_build_port_mask_tracks_pending_requests(self) -> None:
+        """Admission layers open up as backlog grows, capped by free berths."""
+        cfg = MAPPOConfig(rollout_length=8)
+        trainer = MAPPOTrainer(mappo_config=cfg, seed=42)
+        trainer.env.reset()
+        levels = int(trainer.cfg["docks_per_port"]) + 1
+        port = trainer.env.ports[0]
+        port.occupied = 1  # leave exactly two free berths with default docks=3
+        for vessel_id in range(4):
+            trainer.env.bus.enqueue_arrival_request(0, vessel_id, 0, 0.0)
+        trainer.env.bus.deliver_due(0)
+        mask = trainer._build_port_mask(0)
+        expected_valid = (min(4, port.docks - port.occupied) + 1) * levels
+        assert mask.sum() == expected_valid
+        assert mask[: expected_valid].sum() == expected_valid
+        assert mask[expected_valid:].sum() == 0.0
 
     def test_port_mask_tensor_device(self) -> None:
         """Port mask tensor is on the correct device."""

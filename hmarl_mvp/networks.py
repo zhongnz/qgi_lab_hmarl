@@ -298,12 +298,14 @@ def build_actor_critics(
 
     Action spaces (based on current policy interface):
     - Vessel: continuous ``[target_speed, requested_arrival_time]`` (2-D)
-    - Port: discrete ``service_rate`` (docks + 1 choices)
+    - Port: discrete joint ``(service_rate, accept_requests)``
+      with ``(docks + 1)^2`` choices
     - Coordinator: discrete ``dest_port × departure_window`` bins.
     """
     hidden_dims = hidden_dims or [64, 64]
     dep_windows = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
     num_windows = len(dep_windows) if isinstance(dep_windows, (list, tuple)) else 1
+    port_action_dim = (int(config["docks_per_port"]) + 1) ** 2
     coordinator_actions = int(config["num_ports"]) * max(int(num_windows), 1)
     return {
         "vessel": ActorCritic(
@@ -316,7 +318,7 @@ def build_actor_critics(
         "port": ActorCritic(
             obs_dim=port_obs_dim,
             global_state_dim=global_state_dim,
-            act_dim=config["docks_per_port"] + 1,
+            act_dim=port_action_dim,
             discrete=True,
             hidden_dims=hidden_dims,
         ),
@@ -350,6 +352,7 @@ def build_per_agent_actor_critics(
     hidden_dims = hidden_dims or [64, 64]
     dep_windows = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
     num_windows = len(dep_windows) if isinstance(dep_windows, (list, tuple)) else 1
+    port_action_dim = (int(config["docks_per_port"]) + 1) ** 2
     coordinator_actions = int(config["num_ports"]) * max(int(num_windows), 1)
     nets: dict[str, ActorCritic] = {}
 
@@ -366,7 +369,7 @@ def build_per_agent_actor_critics(
         nets[f"port_{i}"] = ActorCritic(
             obs_dim=port_obs_dim,
             global_state_dim=global_state_dim,
-            act_dim=config["docks_per_port"] + 1,
+            act_dim=port_action_dim,
             discrete=True,
             hidden_dims=hidden_dims,
         )

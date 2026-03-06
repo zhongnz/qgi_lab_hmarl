@@ -82,9 +82,9 @@ class TestActionTranslation:
         cfg = get_default_config(num_ports=3, num_vessels=4)
         env = MaritimeEnv(config=cfg)
         env.reset()
-        action = _nn_to_port_action(torch.tensor(2), 0, env)
+        action = _nn_to_port_action(torch.tensor(6), 0, env)
         assert action["service_rate"] == 2
-        assert "accept_requests" in action
+        assert action["accept_requests"] == 1
 
     def test_coordinator_action_discrete(self) -> None:
         cfg = get_default_config(num_ports=3, num_vessels=4)

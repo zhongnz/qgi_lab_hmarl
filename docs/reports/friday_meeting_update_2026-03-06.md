@@ -22,7 +22,7 @@ The most important technical clarifications for Friday are:
 4. The forecasters used in the current Friday experiments are **heuristic forecasters**, not learned predictors.
 5. A longer full-scale MAPPO run has been completed, and the training plot now includes **per-agent reward curves**.
 
-The latest full-scale run used:
+The latest full-scale run, after fixing the learned port action space so that the port agent controls both `service_rate` and `accept_requests`, used:
 
 - 8 vessels
 - 5 ports
@@ -33,27 +33,36 @@ The latest full-scale run used:
 
 Main quantitative outcomes from that run:
 
-- best training mean reward: `-19.46` at iteration `38`
-- final training mean reward: `-46.74`
+- best training mean reward: `-22.81` at iteration `30`
+- final training mean reward: `-48.59`
 - final per-agent rewards:
-  - vessel: `-2.75`
-  - port: `-1.42`
-  - coordinator: `-43.99`
+  - vessel: `-2.91`
+  - port: `-1.41`
+  - coordinator: `-45.68`
 - early-average vs late-average training reward:
-  - first 8 iterations: `-56.05`
-  - last 8 iterations: `-45.26`
-  - improvement: `+10.79`
-- 5-episode evaluation mean total reward: `-3439.16`
-- 5-episode evaluation mean emissions: `1358.77` tons CO2
-- 5-episode evaluation mean total operating cost: `$1.031M`
-- 5-episode evaluation mean delay: `16.18` hours per vessel
+  - first 8 iterations: `-43.45`
+  - last 8 iterations: `-41.83`
+  - improvement: `+1.62`
+- 5-episode evaluation mean total reward: `-2636.34`
+- 5-episode evaluation mean emissions: `1027.56` tons CO2
+- 5-episode evaluation mean total operating cost: `$1.212M`
+- 5-episode evaluation mean delay: `23.05` hours per vessel
+
+Relative to the original Friday run before the port-action fix:
+
+- evaluation total reward improved by `+802.82`
+- fuel used decreased by `106.36` tons
+- emissions decreased by `331.20` tons CO2
+- mean port reward improved slightly from `-1.4333` to `-1.4200`
+- average delay increased by `6.88` hours
+- operating cost increased by about `$181k`
 
 Main artifact files:
 
-- [training_curves.png](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06/training_curves.png)
-- [report.md](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06/report.md)
-- [train_history.csv](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06/train_history.csv)
-- [eval_result.json](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06/eval_result.json)
+- [training_curves.png](../../runs/friday_meeting_2026-03-06_portfix/training_curves.png)
+- [report.md](../../runs/friday_meeting_2026-03-06_portfix/report.md)
+- [train_history.csv](../../runs/friday_meeting_2026-03-06_portfix/train_history.csv)
+- [eval_result.json](../../runs/friday_meeting_2026-03-06_portfix/eval_result.json)
 
 ## 2. System overview
 
@@ -639,9 +648,13 @@ Interpretation:
 
 ## 9. Friday experiment setup
 
-The main full-scale run for Friday is stored in:
+The latest full-scale run for Friday, with the port-action fix, is stored in:
 
-- [runs/friday_meeting_2026-03-06](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06)
+- [runs/friday_meeting_2026-03-06_portfix](../../runs/friday_meeting_2026-03-06_portfix)
+
+The original pre-fix reference run is preserved in:
+
+- [runs/friday_meeting_2026-03-06](../../runs/friday_meeting_2026-03-06)
 
 Configuration:
 
@@ -660,47 +673,66 @@ Configuration:
 
 Wall-clock training summary:
 
-- total training time: about `5.9` minutes
-- time per iteration: about `4.44` seconds
+- total training time: about `5.8` minutes
+- time per iteration: about `4.37` seconds
 
 ## 10. Main results from the full-scale run
 
-From [report.md](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06/report.md):
+From [report.md](../../runs/friday_meeting_2026-03-06_portfix/report.md):
 
 ### Training reward summary
 
 - iterations: `80`
-- final mean reward: `-46.742864`
-- best mean reward: `-19.455224`
-- worst mean reward: `-68.874162`
-- reward standard deviation: `12.363379`
-- first-10-percent average reward: `-56.046598`
-- last-10-percent average reward: `-45.255020`
-- late minus early improvement: `+10.791578`
+- final mean reward: `-48.586040`
+- best mean reward: `-22.807349`
+- worst mean reward: `-65.154776`
+- reward standard deviation: `8.938388`
+- first-10-percent average reward: `-43.448915`
+- last-10-percent average reward: `-41.828500`
+- late minus early improvement: `+1.620416`
 
 ### Final per-agent training rewards
 
-- vessel mean reward: `-2.749038`
-- port mean reward: `-1.418750`
-- coordinator mean reward: `-43.993825`
+- vessel mean reward: `-2.905885`
+- port mean reward: `-1.406250`
+- coordinator mean reward: `-45.680155`
 
 ### Evaluation summary across 5 episodes
 
-- mean vessel reward: `-2.8223`
-- mean port reward: `-1.4333`
-- mean coordinator reward: `-45.5872`
-- mean total reward: `-3439.1551`
-- mean total fuel used: `436.3409`
-- mean total emissions: `1358.7655` tons CO2
-- mean average delay: `16.1750` hours
-- mean total operating cost: `$1,031,093.42`
-- mean cost reliability: `0.8711`
+- mean vessel reward: `-2.3696`
+- mean port reward: `-1.4200`
+- mean coordinator reward: `-34.4182`
+- mean total reward: `-2636.3393`
+- mean total fuel used: `329.9820`
+- mean total emissions: `1027.5639` tons CO2
+- mean average delay: `23.0500` hours
+- mean total operating cost: `$1,212,469.94`
+- mean cost reliability: `0.8484`
+
+## 10.1 Comparison against the original pre-fix Friday run
+
+Compared with the original run in `runs/friday_meeting_2026-03-06`:
+
+- total evaluation reward improved from `-3439.16` to `-2636.34`
+- fuel used improved from `436.34` to `329.98`
+- emissions improved from `1358.77` to `1027.56`
+- mean port reward improved slightly from `-1.4333` to `-1.4200`
+- average wait per vessel improved from `2.79` to `2.36`
+- average delay worsened from `16.18` hours to `23.05` hours
+- total operating cost worsened from `$1.031M` to `$1.212M`
+
+Interpretation:
+
+- the port-action fix changed policy behavior materially
+- the new policy is more fuel- and emissions-efficient
+- the tradeoff is higher delay and higher total operating cost under this seed / run
+- the fix was structurally correct, but it does not by itself guarantee a monotonic improvement in every downstream KPI
 
 ## 11. Interpretation of the updated training curves
 
 Figure:
 
-- [training_curves.png](/home/ptz/dev/hmarl/qgi_lab_hmarl/qgi_lab_hmarl/runs/friday_meeting_2026-03-06/training_curves.png)
+- [training_curves.png](../../runs/friday_meeting_2026-03-06_portfix/training_curves.png)
 
 The updated figure contains:
 
@@ -713,15 +745,16 @@ Interpretation:
 1. The run is still noisy.
    - This is expected because the environment is weather-enabled, multi-agent, and has heterogeneous reward scales.
 2. Training does show improvement on average.
-   - Early average reward: `-56.05`
-   - Late average reward: `-45.26`
+   - Early average reward: `-43.45`
+   - Late average reward: `-41.83`
 3. The best reward occurs well before the end.
-   - Best iteration: `38`
-   - Best reward: `-19.46`
+   - Best iteration: `30`
+   - Best reward: `-22.81`
    - This suggests the training trajectory is not monotonically improving and remains sensitive to exploration and environment variability.
 4. Port reward is relatively stable.
-   - The port term stays near `-1.4`.
-   - Most reward volatility comes from vessel and especially coordinator components.
+   - Even after fixing the port action space, the port term still stays close to `-1.4`.
+   - The port reward range is narrower than before: approximately `[-1.466, -1.406]` with standard deviation about `0.012`.
+   - This implies that the flatness of the port curve is now driven more by low-variance environment conditions than by the old hard-coded `accept_requests` shortcut.
 5. Coordinator reward dominates magnitude.
    - This is expected because the coordinator objective includes fleet fuel, average queue, and fleet emissions.
 6. Critic losses do not indicate catastrophic divergence.
@@ -729,7 +762,7 @@ Interpretation:
 
 What this means for Friday:
 
-- it is reasonable to claim that longer training is now in place and that agent-specific learning curves are available
+- it is reasonable to claim that longer training is now in place, that agent-specific learning curves are available, and that the port actor now learns both of its intended levers
 - it is not yet reasonable to claim clean convergence or final policy optimality
 
 ## 12. Interpretation of the existing demo figures
