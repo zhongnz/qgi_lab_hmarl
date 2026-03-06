@@ -58,7 +58,7 @@ On arrival: `at_sea = False`, `position_nm = 0`, `location = j`, and `ports[j].q
 
 $$\Delta F_k = c \cdot v_k^3 \cdot dt \cdot \mu(s_{ij})$$
 
-$$F_k^{(t+1)} = \max\!\left(F_k^{(t)} - \Delta F_k,\; 0\right)$$
+$$F_k^{(t+1)} = \max(F_k^{(t)} - \Delta F_k,\; 0)$$
 
 The cubic term ($v^3$) is the standard Admiralty formula: fuel scales with the
 cube of speed, giving a strong incentive for learned policies to slow down in
@@ -82,7 +82,7 @@ Code: `env.MaritimeEnv.step` — `vessel.delay_hours += 1.0`
 
 When the fleet coordinator issues a directive with `departure_window_hours = W`:
 
-$$t_{\text{depart}} = t_{\text{accept}} + \left\lfloor W / dt \right\rfloor \text{ steps}$$
+$$t_{\text{depart}} = t_{\text{accept}} + \lfloor W / dt \rfloor \text{ steps}$$
 
 Until $t \geq t_{\text{depart}}$ the vessel is in `pending_departure = True` and
 `at_sea = False`. Code: `dynamics.dispatch_vessel`, `dynamics.step_vessels`
@@ -106,7 +106,7 @@ Each port $j$ has state $(Q_j, D_j, O_j, \tau_j, W_j, N_j)$:
 
 Each occupied berth decrements by $dt$ per tick:
 
-$$\tau_{j,b}^{(t+1)} = \max\!\left(\tau_{j,b}^{(t)} - dt,\; 0\right)$$
+$$\tau_{j,b}^{(t+1)} = \max(\tau_{j,b}^{(t)} - dt,\; 0)$$
 
 Berths whose countdown reaches zero are freed: $O_j$ decreases accordingly.
 
@@ -115,7 +115,7 @@ Berths whose countdown reaches zero are freed: $O_j$ decreases accordingly.
 At each port tick, let $\text{served}$ denote the number admitted this step
 (bounded by queue size, service rate action, and available berths):
 
-$$Q_j^{(t+1)} = \max\!\left(Q_j^{(t)} - \text{served}_t + \text{arrivals}_t,\; 0\right)$$
+$$Q_j^{(t+1)} = \max(Q_j^{(t)} - \text{served}_t + \text{arrivals}_t,\; 0)$$
 
 where $\text{arrivals}_t$ is the number of vessels that completed their leg to
 port $j$ during this tick.
@@ -137,9 +137,9 @@ sea-state matrix where $S^{(t)}_{ij}$ is the sea state on route $i \to j$.
 
 $$\mathbf{S}^{(t+1)} = \alpha \cdot \mathbf{S}^{(t)} + (1 - \alpha) \cdot \boldsymbol{\varepsilon}^{(t)}$$
 
-where $\boldsymbol{\varepsilon}^{(t)} \sim U\!\left(0, s_{\max}\right)$ (symmetric,
-zero diagonal) and $\alpha = \texttt{weather\_autocorrelation}$ (default 0.0
-→ i.i.d. each step; typical use: 0.7).
+where $\boldsymbol{\varepsilon}^{(t)} \sim U(0, s_{\max})$ (symmetric,
+zero diagonal). The coefficient $\alpha$ is the config value
+`weather_autocorrelation` (default 0.0 → i.i.d. each step; typical use: 0.7).
 
 All entries are clipped to $[0, s_{\max}]$ and the matrix is re-symmetrised.
 When weather is disabled (`weather_enabled = False`) the multiplier $\mu(s) = 1$
@@ -164,18 +164,18 @@ The coordinator tracks:
 Let $\mathbb{1}_{\text{due}}(t)$ denote whether the coordinator is scheduled to
 act at step $t$, and let the chosen action on those steps be
 
-$$a_C^{(t)} = \left(d_C^{\star (t)}, W_C^{\star (t)}, B_e^{\star (t)}\right)$$
+$$a_C^{(t)} = (d_C^{\star (t)}, W_C^{\star (t)}, B_e^{\star (t)})$$
 
 where $d_C^{\star (t)}$ is the primary destination, $W_C^{\star (t)}$ is the
 departure window, and $B_e^{\star (t)}$ is the emission-budget directive.
 
 The coordinator's internal state is piecewise constant between decision times:
 
-$$d_C^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, d_C^{\star (t)} + \left(1-\mathbb{1}_{\text{due}}(t)\right) d_C^{(t)}$$
+$$d_C^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, d_C^{\star (t)} + (1-\mathbb{1}_{\text{due}}(t)) d_C^{(t)}$$
 
-$$W_C^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, W_C^{\star (t)} + \left(1-\mathbb{1}_{\text{due}}(t)\right) W_C^{(t)}$$
+$$W_C^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, W_C^{\star (t)} + (1-\mathbb{1}_{\text{due}}(t)) W_C^{(t)}$$
 
-$$B_e^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, B_e^{\star (t)} + \left(1-\mathbb{1}_{\text{due}}(t)\right) B_e^{(t)}$$
+$$B_e^{(t+1)} = \mathbb{1}_{\text{due}}(t)\, B_e^{\star (t)} + (1-\mathbb{1}_{\text{due}}(t)) B_e^{(t)}$$
 
 The observed fleet-emissions summary is refreshed from vessel state:
 
@@ -194,7 +194,7 @@ delivered after `message_latency_steps` steps.
 For the current heuristic `forecast` / `oracle` coordinator, the emission
 budget is set directly from current fleet emissions:
 
-$$B_e^{\star (t)} = \max\!\left(50.0 - 0.1\,E_{\text{total}}^{(t)},\; 10.0\right)$$
+$$B_e^{\star (t)} = \max(50.0 - 0.1\,E_{\text{total}}^{(t)},\; 10.0)$$
 
 and the departure window is currently fixed at
 $W_C^{\star (t)} = 0$ hours in heuristic experiments. Learned MAPPO
