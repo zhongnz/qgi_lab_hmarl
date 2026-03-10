@@ -42,6 +42,7 @@ def _flatten_vessel_state(vessels: list[Any], rewards: list[Any] | None = None) 
         flat[f"{prefix}_emissions"] = float(vessel.emissions)
         flat[f"{prefix}_delay_hours"] = float(vessel.delay_hours)
         flat[f"{prefix}_at_sea"] = float(bool(vessel.at_sea))
+        flat[f"{prefix}_stalled"] = float(bool(getattr(vessel, "stalled", False)))
         flat[f"{prefix}_pending_departure"] = float(bool(vessel.pending_departure))
         flat[f"{prefix}_depart_at_step"] = float(vessel.depart_at_step)
         vid = int(vessel.vessel_id)
@@ -50,10 +51,21 @@ def _flatten_vessel_state(vessels: list[Any], rewards: list[Any] | None = None) 
     return flat
 
 
-def _flatten_port_state(ports: list[Any], rewards: list[Any] | None = None) -> dict[str, float]:
+def _flatten_port_state(
+    ports: list[Any],
+    rewards: list[Any] | None = None,
+    pending_requests: list[float] | None = None,
+    booked_arrivals: list[float] | None = None,
+    imminent_arrivals: list[float] | None = None,
+    reservation_pressure: list[float] | None = None,
+) -> dict[str, float]:
     """Flatten per-port state into numeric columns for diagnostics."""
     flat: dict[str, float] = {}
     reward_list = list(rewards) if rewards is not None else []
+    pending_list = list(pending_requests) if pending_requests is not None else []
+    booked_list = list(booked_arrivals) if booked_arrivals is not None else []
+    imminent_list = list(imminent_arrivals) if imminent_arrivals is not None else []
+    pressure_list = list(reservation_pressure) if reservation_pressure is not None else []
     for port in ports:
         prefix = f"port_{int(port.port_id)}"
         flat[f"{prefix}_queue"] = float(port.queue)
@@ -65,6 +77,14 @@ def _flatten_port_state(ports: list[Any], rewards: list[Any] | None = None) -> d
         flat[f"{prefix}_cumulative_wait_hours"] = float(port.cumulative_wait_hours)
         flat[f"{prefix}_vessels_served"] = float(port.vessels_served)
         pid = int(port.port_id)
+        if 0 <= pid < len(pending_list):
+            flat[f"{prefix}_pending_requests"] = float(pending_list[pid])
+        if 0 <= pid < len(booked_list):
+            flat[f"{prefix}_booked_arrivals"] = float(booked_list[pid])
+        if 0 <= pid < len(imminent_list):
+            flat[f"{prefix}_imminent_arrivals"] = float(imminent_list[pid])
+        if 0 <= pid < len(pressure_list):
+            flat[f"{prefix}_reservation_pressure"] = float(pressure_list[pid])
         if 0 <= pid < len(reward_list):
             flat[f"{prefix}_reward"] = float(reward_list[pid])
     return flat
@@ -107,12 +127,19 @@ def _build_step_trace_row(
     step_requests = float(info.get("requests_submitted", 0.0))
     step_accepted = float(info.get("requests_accepted", 0.0))
     step_rejected = float(info.get("requests_rejected", 0.0))
+    pending_by_port = [float(x) for x in (info.get("pending_requests_by_port") or [])]
+    booked_by_port = [float(x) for x in (info.get("booked_arrivals_by_port") or [])]
+    imminent_by_port = [float(x) for x in (info.get("imminent_arrivals_by_port") or [])]
+    pressure_by_port = [float(x) for x in (info.get("reservation_pressure_by_port") or [])]
     row: dict[str, Any] = {
         "t": t,
         "policy": policy,
         "num_coordinators": num_coordinators,
         "coordinator_updates": int(bool((info.get("cadence_due") or {}).get("coordinator", False))),
         "pending_arrival_requests": float(info.get("pending_arrival_requests", 0.0)),
+        "total_booked_arrivals": float(sum(booked_by_port)),
+        "total_imminent_arrivals": float(sum(imminent_by_port)),
+        "total_reservation_pressure": float(sum(pressure_by_port)),
         "weather_enabled": int(bool(info.get("weather_enabled", False))),
         "mean_sea_state": float(info.get("mean_sea_state", 0.0)),
         "max_sea_state": float(info.get("max_sea_state", 0.0)),
@@ -132,6 +159,8 @@ def _build_step_trace_row(
         "step_fuel_used": float(info.get("step_fuel_used", 0.0)),
         "step_co2_emitted": float(info.get("step_co2_emitted", 0.0)),
         "step_delay_hours": float(info.get("step_delay_hours", 0.0)),
+        "step_stall_hours": float(info.get("step_stall_hours", 0.0)),
+        "step_vessels_served": float(info.get("step_vessels_served", 0.0)),
         **vessel_metrics,
         **port_metrics,
         **economic_metrics,
@@ -140,7 +169,14 @@ def _build_step_trace_row(
         "avg_port_reward": float(np.mean(rewards["ports"])) if rewards["ports"] else 0.0,
         "coordinator_reward": float(rewards["coordinator"]),
         **_flatten_vessel_state(vessels, rewards=rewards.get("vessels")),
-        **_flatten_port_state(ports, rewards=rewards.get("ports")),
+        **_flatten_port_state(
+            ports,
+            rewards=rewards.get("ports"),
+            pending_requests=pending_by_port,
+            booked_arrivals=booked_by_port,
+            imminent_arrivals=imminent_by_port,
+            reservation_pressure=pressure_by_port,
+        ),
         **_flatten_coordinator_rewards(rewards.get("coordinators")),
     }
     if extra:

@@ -88,6 +88,14 @@ class MessageBusTests(unittest.TestCase):
         self.assertEqual(self.bus.num_ports, 5)
         self.assertEqual(len(self.bus.get_pending_requests(4)), 0)
 
+    def test_count_slot_responses_by_port(self) -> None:
+        self.bus.enqueue_slot_response(2, 0, True, 1)
+        self.bus.enqueue_slot_response(3, 1, False, 1)
+        self.bus.enqueue_slot_response(4, 2, True, 2)
+        self.assertEqual(self.bus.count_slot_responses_by_port(), {0: 0, 1: 2, 2: 1})
+        self.assertEqual(self.bus.count_slot_responses_by_port(accepted=True), {0: 0, 1: 1, 2: 1})
+        self.assertEqual(self.bus.count_slot_responses_by_port(accepted=False), {0: 0, 1: 1, 2: 0})
+
 
 if __name__ == "__main__":
     unittest.main()

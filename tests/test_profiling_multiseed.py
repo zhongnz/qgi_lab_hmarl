@@ -288,6 +288,7 @@ class TestCLIMultiseed:
         assert result.returncode == 0
         assert "--num-seeds" in result.stdout
         assert "--early-stopping" in result.stdout
+        assert "--device" in result.stdout
 
     def test_train_early_stopping_help(self) -> None:
         result = subprocess.run(
@@ -306,6 +307,7 @@ class TestCLIMultiseed:
         assert args.num_seeds == 3
         assert args.early_stopping == 0
         assert args.iterations == 50
+        assert args.device == "cpu"
 
     def test_multiseed_parse_custom(self) -> None:
         from scripts.run_mappo import parse_args
@@ -316,9 +318,50 @@ class TestCLIMultiseed:
             "--iterations", "20",
             "--early-stopping", "10",
             "--weather",
+            "--device", "cuda",
         ]):
             args = parse_args()
         assert args.num_seeds == 5
         assert args.iterations == 20
         assert args.early_stopping == 10
         assert args.weather is True
+        assert args.device == "cuda"
+
+    def test_multiseed_passes_device_into_mappo_config(self, tmp_path: Path) -> None:
+        from scripts.run_mappo import cmd_multiseed, parse_args
+
+        captured: dict[str, Any] = {}
+
+        def fake_train_multi_seed(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            captured["mappo_config"] = kwargs.get("mappo_config")
+            return {
+                "seeds": [42],
+                "summaries": [{"best_mean_reward": 1.0}],
+                "aggregate_summary": {
+                    "mean_best_mean_reward": 1.0,
+                    "std_best_mean_reward": 0.0,
+                    "mean_final_mean_reward": 0.5,
+                    "std_final_mean_reward": 0.0,
+                },
+                "histories": [],
+            }
+
+        with patch("hmarl_mvp.mappo.train_multi_seed", side_effect=fake_train_multi_seed):
+            with patch(
+                "sys.argv",
+                [
+                    "prog",
+                    "multiseed",
+                    "--iterations",
+                    "1",
+                    "--device",
+                    "cuda",
+                    "--no-plots",
+                    "--output-dir",
+                    str(tmp_path),
+                ],
+            ):
+                args = parse_args()
+            cmd_multiseed(args)
+
+        assert captured["mappo_config"].device == "cuda"

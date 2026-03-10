@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from hmarl_mvp.config import HMARLConfig, get_default_config, validate_config
+from hmarl_mvp.config import HMARLConfig, get_default_config, resolve_distance_matrix, validate_config
 
 
 class ConfigSchemaTests(unittest.TestCase):
@@ -40,6 +40,12 @@ class ConfigSchemaTests(unittest.TestCase):
         cfg = validate_config({"rollout_steps": 5, "num_coordinators": 1})
         self.assertEqual(cfg["rollout_steps"], 5)
         self.assertEqual(cfg["num_coordinators"], 1)
+
+    def test_default_distances_are_reachable_within_episode(self) -> None:
+        cfg = get_default_config()
+        distance_nm = resolve_distance_matrix(cfg["num_ports"])
+        travel_hours = distance_nm[distance_nm > 0] / cfg["nominal_speed"]
+        self.assertLessEqual(float(travel_hours.max()), float(cfg["rollout_steps"]))
 
 
 if __name__ == "__main__":

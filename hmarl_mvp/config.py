@@ -34,8 +34,18 @@ class HMARLConfig:
     fuel_weight: float = 1.0
     delay_weight: float = 1.5
     emission_weight: float = 0.7
+    transit_time_weight: float = 12.0
+    arrival_reward: float = 15.0
     emission_lambda: float = 2.0
     dock_idle_weight: float = 0.5
+    port_accept_reward: float = 1.5
+    port_reject_penalty: float = 1.0
+    port_service_reward: float = 2.0
+    coordinator_delay_weight: float = 3.0
+    coordinator_accept_reward: float = 3.0
+    coordinator_reject_penalty: float = 2.0
+    coordinator_service_reward: float = 4.0
+    coordinator_idle_dock_weight: float = 1.0
     # Physics
     fuel_rate_coeff: float = 0.002
     emission_factor: float = 3.114
@@ -92,8 +102,18 @@ class HMARLConfig:
             "fuel_weight": "float>=0",
             "delay_weight": "float>=0",
             "emission_weight": "float>=0",
+            "transit_time_weight": "float>=0",
+            "arrival_reward": "float>=0",
             "emission_lambda": "float>=0",
             "dock_idle_weight": "float>=0",
+            "port_accept_reward": "float>=0",
+            "port_reject_penalty": "float>=0",
+            "port_service_reward": "float>=0",
+            "coordinator_delay_weight": "float>=0",
+            "coordinator_accept_reward": "float>=0",
+            "coordinator_reject_penalty": "float>=0",
+            "coordinator_service_reward": "float>=0",
+            "coordinator_idle_dock_weight": "float>=0",
             # Economic parameters
             "fuel_price_per_ton": "float>=0",
             "delay_penalty_per_hour": "float>=0",
@@ -158,13 +178,16 @@ class HMARLConfig:
         return asdict(self)
 
 # Distance matrix (nautical miles) between 5 ports.
+#
+# Values are scaled for the simulator's hourly time step and default
+# episode lengths so multiple voyages can complete within one rollout.
 DISTANCE_NM = np.array(
     [
-        [0, 8400, 2200, 3400, 7800],
-        [8400, 0, 9800, 6100, 5400],
-        [2200, 9800, 0, 5500, 5900],
-        [3400, 6100, 5500, 0, 8200],
-        [7800, 5400, 5900, 8200, 0],
+        [0, 84, 22, 34, 78],
+        [84, 0, 98, 61, 54],
+        [22, 98, 0, 55, 59],
+        [34, 61, 55, 0, 82],
+        [78, 54, 59, 82, 0],
     ],
     dtype=float,
 )
@@ -207,8 +230,8 @@ def generate_distance_matrix(num_ports: int) -> np.ndarray:
     idx = np.arange(num_ports)
     ring_distance = np.abs(np.subtract.outer(idx, idx)).astype(float)
     ring_distance = np.minimum(ring_distance, num_ports - ring_distance)
-    variation = (np.add.outer(idx, idx) % 4).astype(float) * 200.0
-    matrix = 1200.0 + 900.0 * ring_distance + variation
+    variation = (np.add.outer(idx, idx) % 4).astype(float) * 4.0
+    matrix = 24.0 + 18.0 * ring_distance + variation
     np.fill_diagonal(matrix, 0.0)
     return matrix
 

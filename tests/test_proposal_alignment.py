@@ -87,6 +87,37 @@ class TestVesselDockAvailabilityObs(unittest.TestCase):
             self.assertEqual(len(v_obs), expected_dim)
 
 
+class TestFutureLoadObservations(unittest.TestCase):
+    """Port observations include booked and imminent arrivals."""
+
+    def test_env_port_obs_tracks_booked_arrivals(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=2, rollout_steps=5)
+        distance_nm = np.array(
+            [
+                [0.0, 60.0, 120.0],
+                [60.0, 0.0, 60.0],
+                [120.0, 60.0, 0.0],
+            ],
+            dtype=float,
+        )
+        env = MaritimeEnv(config=cfg, seed=42, distance_nm=distance_nm)
+        env.reset()
+        port = env.ports[1]
+        port.queue = 3
+        env.vessels[0].destination = 1
+        env.vessels[0].at_sea = True
+        env.vessels[0].pending_departure = False
+        env.vessels[1].destination = 1
+        env.vessels[1].at_sea = False
+        env.vessels[1].pending_departure = True
+        env.bus.enqueue_slot_response(5, 99, True, 1)
+
+        obs = env._get_observations()
+        port_obs = obs["ports"][1]
+        self.assertAlmostEqual(port_obs[3], 3.0)  # 2 vessels + 1 accepted slot response
+        self.assertAlmostEqual(port_obs[4], 2.0)  # at-sea + pending departures within horizon
+
+
 # -----------------------------------------------------------------------
 # Port reward uses waiting time (proposal §4.2)
 # -----------------------------------------------------------------------

@@ -395,10 +395,14 @@ def obs_dim_from_env(
     - Vessel: 5 (local: loc, speed, fuel, emissions, dock_avail)
               + short_horizon_hours (forecast) + 3 (directive)
               + 1 if weather_enabled (sea_state)
-    - Port: 3 (local) + short_horizon_hours (forecast) + 1 (incoming)
+    - Port: 5 (local: queue, docks, occupied, booked_arrivals,
+              imminent_arrivals) + short_horizon_hours (forecast)
+              + 1 (incoming)
             + 3 if weather_enabled and port_weather_features
-    - Coordinator: num_ports * medium_horizon_days + num_vessels * 4 + 1
-                   + num_ports * num_ports if weather_enabled (flattened weather matrix)
+    - Coordinator: num_ports * medium_horizon_days + num_ports * 5
+                   + num_vessels * 4 + 1
+                   + num_ports * num_ports if weather_enabled
+                   (flattened weather matrix)
     """
     short_h = config["short_horizon_hours"]
     num_ports = config["num_ports"]
@@ -408,10 +412,10 @@ def obs_dim_from_env(
     vessel_dim = 5 + short_h + 3  # 5 local (loc, speed, fuel, emissions, dock_avail)
     if config.get("weather_enabled", False):
         vessel_dim += 1  # sea_state on current route
-    port_dim = 3 + short_h + 1
+    port_dim = 5 + short_h + 1
     if config.get("weather_enabled", False) and config.get("port_weather_features", True):
         port_dim += 3  # inbound weather summary (mean, max, rough_fraction)
-    coordinator_dim = num_ports * medium_d + num_vessels * 4 + 1
+    coordinator_dim = num_ports * medium_d + num_ports * 5 + num_vessels * 4 + 1
     if config.get("weather_enabled", False):
         coordinator_dim += num_ports * num_ports
 

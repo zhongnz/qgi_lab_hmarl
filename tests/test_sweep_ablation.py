@@ -295,11 +295,11 @@ class PortPolicyTests(unittest.TestCase):
         self.cfg = get_default_config()
         self.forecast_row = np.ones(12)
 
-    def test_independent_accepts_up_to_available(self) -> None:
+    def test_independent_accepts_all_incoming_requests(self) -> None:
         port = PortState(port_id=0, queue=3, docks=4, occupied=2)
         policy = PortPolicy(self.cfg, mode="independent")
         action = policy.propose_action(port, incoming_requests=5, short_forecast_row=self.forecast_row)
-        self.assertLessEqual(action["accept_requests"], port.docks - port.occupied)
+        self.assertEqual(action["accept_requests"], 5)
 
     def test_independent_service_rate_one(self) -> None:
         port = PortState(port_id=0, queue=3, docks=4, occupied=2)
@@ -336,6 +336,17 @@ class PortPolicyTests(unittest.TestCase):
             policy = PortPolicy(self.cfg, mode=mode)
             action = policy.propose_action(port, incoming_requests=5, short_forecast_row=self.forecast_row)
             self.assertGreaterEqual(action["accept_requests"], 0, f"mode={mode}")
+
+    def test_full_port_can_still_grant_reservations(self) -> None:
+        port = PortState(port_id=0, queue=10, docks=3, occupied=3)
+        for mode in ["independent", "reactive", "forecast"]:
+            policy = PortPolicy(self.cfg, mode=mode)
+            action = policy.propose_action(
+                port,
+                incoming_requests=2,
+                short_forecast_row=self.forecast_row,
+            )
+            self.assertGreaterEqual(action["accept_requests"], 1, f"mode={mode}")
 
 
 # -----------------------------------------------------------------------

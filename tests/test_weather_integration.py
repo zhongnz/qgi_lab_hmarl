@@ -169,6 +169,7 @@ class TestCLIWeatherFlag:
         assert "--weather-autocorrelation" in result.stdout
         assert "--port-weather-features" in result.stdout
         assert "--departure-window-options" in result.stdout
+        assert "--device" in result.stdout
 
     def test_ablate_help_includes_weather(self) -> None:
         result = subprocess.run(
@@ -202,6 +203,7 @@ class TestCLIWeatherFlag:
         with patch("sys.argv", ["prog", "train", "--iterations", "1"]):
             args = parse_args()
         assert args.weather is False
+        assert args.device == "cpu"
 
     def test_parse_extended_weather_and_window_flags(self) -> None:
         from scripts.run_mappo import parse_args
@@ -218,6 +220,8 @@ class TestCLIWeatherFlag:
                 "--no-port-weather-features",
                 "--departure-window-options",
                 "0,4,8",
+                "--device",
+                "cuda",
             ],
         ):
             args = parse_args()
@@ -225,6 +229,7 @@ class TestCLIWeatherFlag:
         assert args.weather_penalty_factor == pytest.approx(0.2)
         assert args.port_weather_features is False
         assert tuple(args.departure_window_options) == (0, 4, 8)
+        assert args.device == "cuda"
 
 
 class TestCLIWeatherWiring:
@@ -237,6 +242,7 @@ class TestCLIWeatherWiring:
 
         def fake_compare(*args: Any, **kwargs: Any) -> dict[str, pd.DataFrame]:
             captured["config"] = kwargs.get("config")
+            captured["mappo_kwargs"] = kwargs.get("mappo_kwargs")
             step_df = pd.DataFrame({"t": [0], "avg_queue": [1.0]})
             train_df = pd.DataFrame({"iteration": [1], "mean_reward": [0.0]})
             return {"mappo": step_df, "independent": step_df.copy(), "_train_log": train_df}
@@ -257,6 +263,8 @@ class TestCLIWeatherWiring:
                     "--no-port-weather-features",
                     "--departure-window-options",
                     "0,8,16",
+                    "--device",
+                    "cuda",
                     "--no-plots",
                     "--output-dir",
                     str(tmp_path),
@@ -271,6 +279,7 @@ class TestCLIWeatherWiring:
         assert captured["config"]["weather_penalty_factor"] == pytest.approx(0.2)
         assert captured["config"]["port_weather_features"] is False
         assert tuple(captured["config"]["coordinator_departure_window_options"]) == (0, 8, 16)
+        assert captured["mappo_kwargs"]["device"] == "cuda"
 
     def test_sweep_passes_weather_config(self, tmp_path: Any) -> None:
         from scripts.run_mappo import cmd_sweep, parse_args
@@ -279,6 +288,7 @@ class TestCLIWeatherWiring:
 
         def fake_sweep(*args: Any, **kwargs: Any) -> pd.DataFrame:
             captured["config"] = kwargs.get("config")
+            captured["base_mappo_kwargs"] = kwargs.get("base_mappo_kwargs")
             return pd.DataFrame(
                 {"lr": [3e-4], "entropy_coeff": [0.01], "total_reward": [1.0]}
             )
@@ -292,6 +302,8 @@ class TestCLIWeatherWiring:
                     "--weather",
                     "--sea-state-max",
                     "3.5",
+                    "--device",
+                    "cuda",
                     "--output-dir",
                     str(tmp_path),
                 ],
@@ -301,6 +313,7 @@ class TestCLIWeatherWiring:
 
         assert captured["config"]["weather_enabled"] is True
         assert captured["config"]["sea_state_max"] == 3.5
+        assert captured["base_mappo_kwargs"]["device"] == "cuda"
 
     def test_ablate_passes_weather_config(self, tmp_path: Any) -> None:
         from scripts.run_mappo import cmd_ablate, parse_args
@@ -309,6 +322,7 @@ class TestCLIWeatherWiring:
 
         def fake_ablate(*args: Any, **kwargs: Any) -> pd.DataFrame:
             captured["config"] = kwargs.get("config")
+            captured["base_mappo_kwargs"] = kwargs.get("base_mappo_kwargs")
             return pd.DataFrame(
                 {
                     "ablation": ["baseline"],
@@ -327,6 +341,8 @@ class TestCLIWeatherWiring:
                     "--weather",
                     "--sea-state-max",
                     "6.0",
+                    "--device",
+                    "cuda",
                     "--output-dir",
                     str(tmp_path),
                 ],
@@ -336,6 +352,7 @@ class TestCLIWeatherWiring:
 
         assert captured["config"]["weather_enabled"] is True
         assert captured["config"]["sea_state_max"] == 6.0
+        assert captured["base_mappo_kwargs"]["device"] == "cuda"
 
     def test_train_writes_eval_trace_artifacts(self, tmp_path: Any) -> None:
         from scripts.run_mappo import cmd_train, parse_args
@@ -350,6 +367,7 @@ class TestCLIWeatherWiring:
         class FakeTrainer:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.cfg = kwargs.get("env_config", {"rollout_steps": 6})
+                self.mappo_cfg = kwargs.get("mappo_config")
 
             def train(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
                 _ = args, kwargs
@@ -397,6 +415,8 @@ class TestCLIWeatherWiring:
                             "1",
                             "--rollout-length",
                             "4",
+                            "--device",
+                            "cuda",
                             "--output-dir",
                             str(tmp_path),
                         ],
@@ -412,6 +432,70 @@ class TestCLIWeatherWiring:
         assert (tmp_path / "diagnostics_trace_vessels.png").exists()
         assert (tmp_path / "diagnostics_trace_ports.png").exists()
         assert (tmp_path / "diagnostics_trace_coordinators.png").exists()
+
+    def test_train_passes_device_into_mappo_config(self, tmp_path: Any) -> None:
+        from scripts.run_mappo import cmd_train, parse_args
+
+        captured: dict[str, Any] = {}
+
+        class FakeLogger:
+            def log(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeTrainer:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                captured["mappo_config"] = kwargs.get("mappo_config")
+                captured["env_config"] = kwargs.get("env_config")
+
+            def train(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                _ = args, kwargs
+                return [
+                    {
+                        "iteration": 0,
+                        "mean_reward": -1.0,
+                        "joint_mean_reward": -2.0,
+                        "total_reward": -3.0,
+                    }
+                ]
+
+            def save_models(self, _prefix: str) -> None:
+                return None
+
+            def evaluate_episodes(self, num_episodes: int = 5) -> dict[str, Any]:
+                _ = num_episodes
+                return {
+                    "mean": {"total_reward": -3.0},
+                    "std": {"total_reward": 0.0},
+                    "min": {"total_reward": -3.0},
+                    "max": {"total_reward": -3.0},
+                    "episodes": [{"total_reward": -3.0}],
+                }
+
+        trace_df = pd.DataFrame({"t": [0], "avg_queue": [1.0]})
+
+        with patch("scripts.run_mappo.MAPPOTrainer", FakeTrainer):
+            with patch("scripts.run_mappo.TrainingLogger", return_value=FakeLogger()):
+                with patch("scripts.run_mappo.run_trained_mappo_trace", return_value=trace_df):
+                    with patch(
+                        "sys.argv",
+                        [
+                            "prog",
+                            "train",
+                            "--iterations",
+                            "1",
+                            "--device",
+                            "cuda",
+                            "--output-dir",
+                            str(tmp_path),
+                        ],
+                    ):
+                        args = parse_args()
+                    cmd_train(args)
+
+        assert captured["mappo_config"].device == "cuda"
 
 
 # ── Gym wrapper weather info tests ───────────────────────────────────────
@@ -466,15 +550,15 @@ class TestMAPPOWeatherSpeedCap:
     """_nn_to_vessel_action should respect speed_cap from weather."""
 
     def test_speed_cap_none_no_effect(self) -> None:
-        """Without speed_cap, full speed range is available."""
+        """Without speed_cap, zero latent control maps to nominal speed."""
         import torch
 
         from hmarl_mvp.mappo import _nn_to_vessel_action
 
-        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0}
-        raw = torch.tensor([18.0])
+        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0, "nominal_speed": 12.0}
+        raw = torch.tensor([0.0])
         action = _nn_to_vessel_action(raw, cfg, speed_cap=None)
-        assert action["target_speed"] == 18.0
+        assert action["target_speed"] == pytest.approx(12.0)
 
     def test_speed_cap_limits_max(self) -> None:
         """Speed cap should limit the maximum speed."""
@@ -482,21 +566,22 @@ class TestMAPPOWeatherSpeedCap:
 
         from hmarl_mvp.mappo import _nn_to_vessel_action
 
-        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0}
+        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0, "nominal_speed": 12.0}
         raw = torch.tensor([18.0])
         action = _nn_to_vessel_action(raw, cfg, speed_cap=14.0)
         assert action["target_speed"] == 14.0
 
     def test_speed_cap_allows_below(self) -> None:
-        """Speed below cap should pass through unchanged."""
+        """Moderate negative latent values should stay below the cap."""
         import torch
 
         from hmarl_mvp.mappo import _nn_to_vessel_action
 
-        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0}
-        raw = torch.tensor([12.0])
+        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0, "nominal_speed": 12.0}
+        raw = torch.tensor([-0.5])
         action = _nn_to_vessel_action(raw, cfg, speed_cap=14.0)
-        assert action["target_speed"] == 12.0
+        assert action["target_speed"] < 12.0
+        assert action["target_speed"] >= 8.0
 
     def test_speed_min_floor_maintained(self) -> None:
         """Speed_min should still be the floor even with a cap."""
@@ -504,9 +589,9 @@ class TestMAPPOWeatherSpeedCap:
 
         from hmarl_mvp.mappo import _nn_to_vessel_action
 
-        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0}
+        cfg: dict[str, Any] = {"speed_min": 8.0, "speed_max": 20.0, "nominal_speed": 12.0}
         raw = torch.tensor([5.0])
-        action = _nn_to_vessel_action(raw, cfg, speed_cap=14.0)
+        action = _nn_to_vessel_action(raw, cfg, speed_cap=8.0)
         assert action["target_speed"] == 8.0
 
     def test_vessel_weather_speed_cap_no_weather(self) -> None:

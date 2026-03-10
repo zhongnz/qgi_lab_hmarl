@@ -132,6 +132,12 @@ def parse_args() -> argparse.Namespace:
         metavar="H1,H2,...",
         help="Coordinator departure-window bins in hours (e.g. 0,6,12,24)",
     )
+    weather_parent.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Torch device for MAPPO runs (e.g. cpu or cuda)",
+    )
 
     # ---- train ----
     train_p = sub.add_parser("train", parents=[weather_parent],
@@ -208,6 +214,7 @@ def cmd_train(args: argparse.Namespace) -> None:
         lr=args.lr,
         entropy_coeff=args.entropy_coeff,
         total_iterations=args.iterations,
+        device=args.device,
     )
 
     ckpt_dir = args.checkpoint_dir or str(out_dir / "checkpoints")
@@ -221,6 +228,7 @@ def cmd_train(args: argparse.Namespace) -> None:
     print(f"Starting MAPPO training: {args.iterations} iterations")
     print(f"  env: {env_cfg['num_vessels']} vessels, {env_cfg['num_ports']} ports")
     print(f"  lr={args.lr}, ent={args.entropy_coeff}, rollout={args.rollout_length}")
+    print(f"  device: {args.device}")
     if env_cfg.get("weather_enabled"):
         print(
             "  weather: enabled "
@@ -305,6 +313,7 @@ def cmd_compare(args: argparse.Namespace) -> None:
 
     env_cfg = _weather_env_cfg(args)
     print(f"Running MAPPO comparison: {args.iterations} iterations")
+    print(f"  device: {args.device}")
     if env_cfg.get("weather_enabled"):
         print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     t0 = time.time()
@@ -314,6 +323,7 @@ def cmd_compare(args: argparse.Namespace) -> None:
         rollout_length=args.rollout_length,
         seed=args.seed,
         config=env_cfg or None,
+        mappo_kwargs={"device": args.device},
     )
     elapsed = time.time() - t0
 
@@ -344,6 +354,7 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     }
 
     print(f"Running MAPPO sweep: {args.iterations} iters, {len(param_grid)} params")
+    print(f"  device: {args.device}")
     if env_cfg.get("weather_enabled"):
         print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     t0 = time.time()
@@ -354,6 +365,7 @@ def cmd_sweep(args: argparse.Namespace) -> None:
         rollout_length=args.rollout_length,
         seed=args.seed,
         config=env_cfg or None,
+        base_mappo_kwargs={"device": args.device},
     )
     elapsed = time.time() - t0
 
@@ -384,6 +396,7 @@ def cmd_ablate(args: argparse.Namespace) -> None:
     }
 
     print(f"Running MAPPO ablation: {args.iterations} iters, {len(ablations)} variants")
+    print(f"  device: {args.device}")
     if env_cfg.get("weather_enabled"):
         print(f"  weather: enabled (sea_state_max={args.sea_state_max})")
     t0 = time.time()
@@ -394,6 +407,7 @@ def cmd_ablate(args: argparse.Namespace) -> None:
         rollout_length=args.rollout_length,
         seed=args.seed,
         config=env_cfg or None,
+        base_mappo_kwargs={"device": args.device},
     )
     elapsed = time.time() - t0
 
@@ -416,11 +430,13 @@ def cmd_multiseed(args: argparse.Namespace) -> None:
     mappo_cfg = MAPPOConfig(
         rollout_length=args.rollout_length,
         lr=args.lr,
+        device=args.device,
     )
 
     seeds = [42 + i * 7 for i in range(args.num_seeds)]
     print(f"Multi-seed MAPPO training: {args.iterations} iters × {len(seeds)} seeds")
     print(f"  seeds: {seeds}")
+    print(f"  device: {args.device}")
     if env_cfg.get("weather_enabled"):
         print(
             "  weather: enabled "

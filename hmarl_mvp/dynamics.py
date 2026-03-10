@@ -119,6 +119,11 @@ def step_vessels(
 
     Vessels with ``pending_departure=True`` are activated (``at_sea=True``) once
     ``current_step >= vessel.depart_at_step`` (departure-window enforcement).
+
+    Fuel exhaustion is modeled explicitly. A vessel can only travel for the
+    number of hours its remaining fuel supports during the current step. If it
+    runs out mid-leg, it remains ``at_sea=True`` but is marked ``stalled=True``
+    and accrues stranded time for the remainder of the tick.
     """
     penalty = float(config.get("weather_penalty_factor", 0.15))
     step_stats: dict[int, dict[str, float | bool]] = {}
@@ -127,15 +132,23 @@ def step_vessels(
         if vessel.pending_departure and current_step >= vessel.depart_at_step:
             vessel.at_sea = True
             vessel.pending_departure = False
+            vessel.stalled = False
 
         fuel_used = 0.0
         co2 = 0.0
         arrived = False
+        stalled = False
+        travel_hours = 0.0
+        stall_hours = 0.0
         if not vessel.at_sea:
+            vessel.stalled = False
             step_stats[vessel.vessel_id] = {
                 "fuel_used": fuel_used,
                 "co2_emitted": co2,
                 "arrived": arrived,
+                "travel_hours": travel_hours,
+                "stall_hours": stall_hours,
+                "stalled": stalled,
             }
             continue
 
@@ -149,25 +162,66 @@ def step_vessels(
 
         # Weather reduces effective speed (less distance per tick)
         speed_frac = weather_speed_factor(sea_state, penalty)
-        effective_advance = vessel.speed * dt_hours * speed_frac
-        vessel.position_nm += effective_advance
-
-        fuel_used, co2 = compute_fuel_and_emissions(
-            vessel.speed, config, dt_hours, sea_state=sea_state,
-        )
-        vessel.fuel = max(vessel.fuel - fuel_used, 0.0)
-        vessel.emissions += co2
-
         leg_distance = distance_nm[vessel.location, vessel.destination]
-        if vessel.position_nm >= leg_distance:
+        remaining_distance = max(float(leg_distance) - float(vessel.position_nm), 0.0)
+        effective_speed = float(vessel.speed) * float(speed_frac)
+
+        if remaining_distance <= 0.0:
             vessel.position_nm = 0.0
             vessel.location = vessel.destination
             vessel.at_sea = False
+            vessel.stalled = False
             arrived = True
+        elif effective_speed > 0.0:
+            hours_to_arrive = remaining_distance / effective_speed
+            planned_hours = min(float(dt_hours), float(hours_to_arrive))
+            required_fuel, required_co2 = compute_fuel_and_emissions(
+                vessel.speed, config, planned_hours, sea_state=sea_state,
+            )
+            available_fuel = max(float(vessel.fuel), 0.0)
+
+            if available_fuel + 1e-9 >= required_fuel:
+                travel_hours = planned_hours
+                fuel_used = float(required_fuel)
+                co2 = float(required_co2)
+                vessel.position_nm += effective_speed * travel_hours
+                vessel.fuel = max(available_fuel - fuel_used, 0.0)
+                vessel.emissions += co2
+                vessel.stalled = False
+                if hours_to_arrive <= float(dt_hours) + 1e-9:
+                    vessel.position_nm = 0.0
+                    vessel.location = vessel.destination
+                    vessel.at_sea = False
+                    arrived = True
+            else:
+                hourly_fuel, hourly_co2 = compute_fuel_and_emissions(
+                    vessel.speed, config, 1.0, sea_state=sea_state,
+                )
+                available_travel_hours = 0.0
+                if hourly_fuel > 0.0 and available_fuel > 0.0:
+                    available_travel_hours = min(available_fuel / hourly_fuel, planned_hours)
+                if available_travel_hours > 0.0:
+                    travel_hours = float(available_travel_hours)
+                    fuel_used, co2 = compute_fuel_and_emissions(
+                        vessel.speed, config, travel_hours, sea_state=sea_state,
+                    )
+                    fuel_used = min(float(fuel_used), available_fuel)
+                    co2 = float(hourly_co2 * travel_hours)
+                    vessel.position_nm += effective_speed * travel_hours
+                    vessel.emissions += co2
+                vessel.fuel = 0.0
+                vessel.stalled = True
+                stalled = True
+                stall_hours = max(float(dt_hours) - travel_hours, 0.0)
+
+        stalled = bool(vessel.stalled)
         step_stats[vessel.vessel_id] = {
             "fuel_used": float(fuel_used),
             "co2_emitted": float(co2),
             "arrived": arrived,
+            "travel_hours": float(travel_hours),
+            "stall_hours": float(stall_hours),
+            "stalled": stalled,
         }
     return step_stats
 
@@ -247,6 +301,7 @@ def dispatch_vessel(
     vessel.destination = int(destination)
     vessel.speed = float(np.clip(speed, config["speed_min"], config["speed_max"]))
     vessel.position_nm = 0.0
+    vessel.stalled = False
     vessel.trip_start_step = int(current_step)
     window_steps = int(departure_window_hours / dt_hours) if dt_hours > 0 else 0
     if window_steps > 0:
@@ -256,4 +311,3 @@ def dispatch_vessel(
     else:
         vessel.at_sea = True
         vessel.pending_departure = False
-

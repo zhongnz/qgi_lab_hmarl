@@ -55,8 +55,8 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         vessels = initialize_vessels(3, 5, self.cfg["nominal_speed"], self.rng)
         medium = np.ones((5, self.cfg["medium_horizon_days"]))
         obs = agent.get_obs(medium, vessels)
-        # medium_forecast flattened + vessel_summaries flattened + 1 (emissions)
-        expected = 5 * self.cfg["medium_horizon_days"] + 3 * 4 + 1
+        # medium_forecast flattened + port load summary + vessel_summaries + 1 (emissions)
+        expected = 5 * self.cfg["medium_horizon_days"] + 5 * 5 + 3 * 4 + 1
         self.assertEqual(obs.shape, (expected,))
 
     def test_get_obs_includes_weather_matrix_when_enabled(self) -> None:
@@ -66,8 +66,17 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         medium = np.ones((3, cfg["medium_horizon_days"]))
         weather = np.ones((3, 3), dtype=float)
         obs = agent.get_obs(medium, vessels, weather=weather)
-        expected = 3 * cfg["medium_horizon_days"] + 2 * 4 + 1 + 3 * 3
+        expected = 3 * cfg["medium_horizon_days"] + 3 * 5 + 2 * 4 + 1 + 3 * 3
         self.assertEqual(obs.shape, (expected,))
+
+    def test_get_obs_includes_port_load_summary(self) -> None:
+        agent = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
+        vessels = initialize_vessels(3, 5, self.cfg["nominal_speed"], self.rng)
+        medium = np.ones((5, self.cfg["medium_horizon_days"]))
+        port_load = np.arange(25, dtype=float)
+        obs = agent.get_obs(medium, vessels, port_load_summary=port_load)
+        start = medium.size
+        np.testing.assert_allclose(obs[start : start + port_load.size], port_load)
 
     def test_get_obs_updates_cumulative_emissions(self) -> None:
         agent = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
@@ -109,17 +118,24 @@ class PortAgentTests(unittest.TestCase):
         agent = PortAgent(state, self.cfg)
         forecast_row = np.ones(self.cfg["short_horizon_hours"])
         obs = agent.get_obs(forecast_row, incoming_requests=3)
-        expected = 3 + self.cfg["short_horizon_hours"] + 1
+        expected = 5 + self.cfg["short_horizon_hours"] + 1
         self.assertEqual(obs.shape, (expected,))
 
     def test_obs_values_are_correct(self) -> None:
         state = PortState(port_id=0, queue=7, docks=4, occupied=2)
         agent = PortAgent(state, self.cfg)
         forecast_row = np.array([0.1, 0.2, 0.3, 0.4])
-        obs = agent.get_obs(forecast_row, incoming_requests=5)
+        obs = agent.get_obs(
+            forecast_row,
+            incoming_requests=5,
+            booked_arrivals=2,
+            imminent_arrivals=1,
+        )
         self.assertAlmostEqual(obs[0], 7.0)   # queue
         self.assertAlmostEqual(obs[1], 4.0)   # docks
         self.assertAlmostEqual(obs[2], 2.0)   # occupied
+        self.assertAlmostEqual(obs[3], 2.0)   # booked_arrivals
+        self.assertAlmostEqual(obs[4], 1.0)   # imminent_arrivals
         self.assertAlmostEqual(obs[-1], 5.0)  # incoming_requests
 
     def test_apply_action_clips_negatives(self) -> None:

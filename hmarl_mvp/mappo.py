@@ -42,7 +42,8 @@ def global_state_dim_from_config(config: dict[str, Any]) -> int:
     Each coordinator's observation is **zero-padded** to the maximum
     coordinator dimension so the global state has a deterministic size::
 
-        N_c * (num_ports * medium_d + num_vessels * 4 + 1 [+ num_ports^2 if weather])
+        N_c * (num_ports * medium_d + num_ports * 5
+               + num_vessels * 4 + 1 [+ num_ports^2 if weather])
         + num_vessels * vessel_dim + num_ports * port_dim
         + num_ports + 1
     """
@@ -174,7 +175,7 @@ def _nn_to_vessel_action(
     """Convert continuous NN output to a vessel action dict.
 
     Action layout:
-    - ``raw[0]``: speed control
+    - ``raw[0]``: latent speed control
     - ``raw[1]``: requested arrival-time offset (optional)
 
     Parameters
@@ -192,11 +193,21 @@ def _nn_to_vessel_action(
     speed_raw = float(raw_arr[0]) if raw_arr.size >= 1 else float(config["nominal_speed"])
     arrival_raw = float(raw_arr[1]) if raw_arr.size >= 2 else 0.0
 
-    speed = speed_raw
+    # Interpret the actor output as an unconstrained latent control signal,
+    # not a literal speed in knots. Mapping directly to knots makes the
+    # zero-centred Gaussian policy collapse to ``speed_min`` via clipping.
     max_speed = float(config["speed_max"])
     if speed_cap is not None:
         max_speed = min(max_speed, speed_cap)
-    speed = max(config["speed_min"], min(max_speed, speed))
+    min_speed = float(config["speed_min"])
+    max_speed = max(max_speed, min_speed)
+    nominal_speed = float(config.get("nominal_speed", 0.5 * (min_speed + max_speed)))
+    nominal_speed = max(min_speed, min(max_speed, nominal_speed))
+    speed_delta = float(np.tanh(speed_raw))
+    if speed_delta >= 0.0:
+        speed = nominal_speed + speed_delta * (max_speed - nominal_speed)
+    else:
+        speed = nominal_speed + speed_delta * (nominal_speed - min_speed)
 
     horizon = (
         int(arrival_horizon_steps)
@@ -580,14 +591,13 @@ class MAPPOTrainer:
 
         Port actions encode ``(service_rate, accept_requests)``.
         ``service_rate`` spans ``[0 .. docks]``. ``accept_requests`` is masked
-        to ``[0 .. min(current_backlog, available_docks)]`` so the policy
-        learns an actual admission decision instead of a hard-coded one.
+        to ``[0 .. min(current_backlog, docks)]`` so the policy can grant
+        advance reservations rather than being hard-capped by current
+        occupancy, while still respecting the finite discrete action space.
         """
-        port = self.env.ports[port_idx]
-        available = max(port.docks - port.occupied, 0)
         backlog = len(self.env.bus.get_pending_requests(port_idx))
-        max_accept = min(int(backlog), int(available))
         levels = _port_action_levels(self.cfg)
+        max_accept = min(int(backlog), levels - 1)
         mask = np.zeros(_num_port_actions(self.cfg), dtype=np.float32)
         for accept_requests in range(max_accept + 1):
             start = accept_requests * levels

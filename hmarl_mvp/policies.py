@@ -174,13 +174,12 @@ class PortPolicy:
             conservative during rough conditions.
         """
         if self.mode == "independent":
-            available_slots = max(port_state.docks - port_state.occupied, 0)
-            return {"service_rate": 1, "accept_requests": int(min(incoming_requests, available_slots))}
+            return {"service_rate": 1, "accept_requests": int(max(incoming_requests, 0))}
         if self.mode == "reactive":
             service_rate = min(port_state.docks, max(port_state.queue, 1))
             return {
                 "service_rate": int(service_rate),
-                "accept_requests": int(max(port_state.docks - port_state.occupied, 0)),
+                "accept_requests": int(max(incoming_requests, 0)),
             }
         pressure = float(short_forecast_row.mean())
         if pressure > 4.0:
@@ -191,12 +190,11 @@ class PortPolicy:
             base_service_rate = min(port_state.docks, port_state.occupied + 1)
 
         service_rate = int(base_service_rate)
-        available_slots = max(port_state.docks - port_state.occupied, 0)
-        accept_cap = int(available_slots)
+        accept_cap = int(max(incoming_requests, 0))
 
         # Rough inbound weather can increase ETA uncertainty. In forecast mode,
-        # keep one berth in reserve (when possible) while still prioritizing
-        # clearing queued vessels.
+        # keep one reservation slot in reserve (when possible) while still
+        # prioritizing clearing queued vessels.
         if weather_features is not None:
             weather_vec = np.asarray(weather_features, dtype=float).ravel()
             if weather_vec.size >= 3:
@@ -206,7 +204,7 @@ class PortPolicy:
                 norm_mean = np.clip(mean_inbound / max(sea_max, 1e-6), 0.0, 1.0)
                 rough_score = 0.5 * norm_mean + 0.5 * rough_fraction
                 if rough_score >= 0.6:
-                    if port_state.docks > 1:
+                    if accept_cap > 0:
                         accept_cap = max(accept_cap - 1, 0)
                     service_rate = min(
                         port_state.docks,

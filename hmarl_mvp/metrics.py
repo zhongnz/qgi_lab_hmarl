@@ -28,6 +28,7 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
     avg_delay = float(np.mean([v.delay_hours for v in vessels])) if vessels else 0.0
     on_time_count = sum(1 for v in vessels if v.delay_hours < 2.0)
     on_time_rate = on_time_count / len(vessels) if vessels else 0.0
+    stalled_vessels = float(sum(bool(getattr(v, "stalled", False)) for v in vessels))
     return {
         "avg_speed": avg_speed,
         "avg_fuel_remaining": avg_fuel,
@@ -35,6 +36,8 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
         "total_emissions_co2": total_emissions,
         "avg_delay_hours": avg_delay,
         "on_time_rate": on_time_rate,
+        "stalled_vessels": stalled_vessels,
+        "stalled_rate": (stalled_vessels / len(vessels)) if vessels else 0.0,
     }
 
 
@@ -172,4 +175,3 @@ def compute_coordination_metrics(
         "policy_agreement_rate": float(agreement),
         "communication_overhead": float(messages_exchanged),
     }
-

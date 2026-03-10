@@ -112,6 +112,8 @@ class PortAgent:
         self,
         short_forecast_row: np.ndarray,
         incoming_requests: int = 0,
+        booked_arrivals: float = 0.0,
+        imminent_arrivals: float = 0.0,
         weather_features: np.ndarray | None = None,
     ) -> np.ndarray:
         """Build local port observation vector.
@@ -127,7 +129,13 @@ class PortAgent:
         return np.concatenate(
             [
                 np.array(
-                    [self.state.queue, self.state.docks, self.state.occupied],
+                    [
+                        self.state.queue,
+                        self.state.docks,
+                        self.state.occupied,
+                        float(booked_arrivals),
+                        float(imminent_arrivals),
+                    ],
                     dtype=float,
                 ),
                 short_forecast_row.astype(float),
@@ -168,6 +176,7 @@ class FleetCoordinatorAgent:
         self,
         medium_forecast: np.ndarray,
         vessels: list[VesselState],
+        port_load_summary: np.ndarray | None = None,
         weather: np.ndarray | None = None,
     ) -> np.ndarray:
         """Build coordinator observation vector.
@@ -180,11 +189,22 @@ class FleetCoordinatorAgent:
             [[v.location, v.speed, v.fuel, v.emissions] for v in vessels],
             dtype=float,
         )
+        num_ports = int(self.cfg.get("num_ports", 0))
+        expected_port_summary = num_ports * 5
+        if port_load_summary is None:
+            port_load_features = np.zeros(expected_port_summary, dtype=float)
+        else:
+            port_load_features = np.asarray(port_load_summary, dtype=float).ravel()
+            if port_load_features.size < expected_port_summary:
+                port_load_features = np.concatenate(
+                    [port_load_features, np.zeros(expected_port_summary - port_load_features.size)]
+                )
+            else:
+                port_load_features = port_load_features[:expected_port_summary]
         total_emissions = float(sum(v.emissions for v in vessels))
         self.state.cumulative_emissions = total_emissions
         weather_features = np.array([], dtype=float)
         if bool(self.cfg.get("weather_enabled", False)):
-            num_ports = int(self.cfg.get("num_ports", 0))
             expected = num_ports * num_ports
             if weather is not None:
                 weather_arr = np.asarray(weather, dtype=float)
@@ -197,6 +217,7 @@ class FleetCoordinatorAgent:
         return np.concatenate(
             [
                 medium_forecast.flatten().astype(float),
+                port_load_features,
                 vessel_summaries.flatten() if vessel_summaries.size else np.array([]),
                 np.array([total_emissions], dtype=float),
                 weather_features,

@@ -144,6 +144,23 @@ class MessageBus:
         """Total pending arrival requests across all ports."""
         return sum(len(q) for q in self._pending_port_requests.values())
 
+    def count_slot_responses_by_port(self, accepted: bool | None = None) -> dict[int, int]:
+        """Return queued slot-response counts grouped by destination port.
+
+        Parameters
+        ----------
+        accepted:
+            When set to ``True`` or ``False``, only count responses with that
+            acceptance outcome. ``None`` counts all queued responses.
+        """
+        counts = {port_id: 0 for port_id in range(self.num_ports)}
+        for _deliver_step, _vessel_id, was_accepted, port_id in self._slot_response_queue:
+            if not (0 <= port_id < self.num_ports):
+                continue
+            if accepted is None or bool(was_accepted) is accepted:
+                counts[port_id] += 1
+        return counts
+
     # -- Delivery ------------------------------------------------------------
 
     def deliver_due(self, current_step: int) -> dict[int, dict[str, Any]]:

@@ -57,14 +57,17 @@ class TestGlobalStateDim:
 class TestActionTranslation:
     """Test NN output → env action dict conversion."""
 
-    def test_vessel_action_clamps(self) -> None:
+    def test_vessel_action_spans_speed_range(self) -> None:
         cfg = get_default_config()
-        # High value should be clamped to speed_max
+        # High latent value should saturate to speed_max
         action = _nn_to_vessel_action(torch.tensor([100.0]), cfg)
         assert action["target_speed"] == cfg["speed_max"]
-        # Low value should be clamped to speed_min
+        # Low latent value should saturate to speed_min
         action = _nn_to_vessel_action(torch.tensor([-100.0]), cfg)
         assert action["target_speed"] == cfg["speed_min"]
+        # Zero latent value should map to nominal speed.
+        action = _nn_to_vessel_action(torch.tensor([0.0]), cfg)
+        assert action["target_speed"] == pytest.approx(cfg["nominal_speed"])
         assert action["request_arrival_slot"] is True
         assert action["requested_arrival_time"] == 0.0
 

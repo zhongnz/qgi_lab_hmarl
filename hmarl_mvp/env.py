@@ -14,6 +14,7 @@ from .dynamics import (
     step_ports,
     step_vessels,
     update_weather_ar1,
+    weather_speed_factor,
 )
 from .forecasts import MediumTermForecaster, ShortTermForecaster
 from .message_bus import MessageBus
@@ -285,6 +286,12 @@ class MaritimeEnv:
         )
 
         for vessel in self.vessels:
+            stall_hours = float(
+                vessel_step_stats.get(vessel.vessel_id, {}).get("stall_hours", 0.0)
+            )
+            if stall_hours > 0.0:
+                vessel.delay_hours += stall_hours
+                step_delay_by_vessel[vessel.vessel_id] += stall_hours
             if (
                 pre_step_at_sea.get(vessel.vessel_id, False)
                 and not vessel.at_sea
@@ -297,20 +304,22 @@ class MaritimeEnv:
         # enqueue slot responses.  step_ports() then drains completed berths,
         # admits queued vessels, and accumulates per-port wait-time statistics.
         port_inputs = self._normalize_port_actions(actions)
+        step_accepted_by_port = [0.0 for _ in self.ports]
+        step_rejected_by_port = [0.0 for _ in self.ports]
         if due["port"]:
             normalized_port_actions: list[dict[str, Any]] = []
             for port_id, (port_agent, action) in enumerate(zip(self.port_agents, port_inputs)):
                 normalized = port_agent.apply_action(action)
                 normalized_port_actions.append(normalized)
                 backlog = self.bus.get_pending_requests_sorted(port_id)
-                available_slots = max(port_agent.state.docks - port_agent.state.occupied, 0)
                 accept_limit = min(
                     len(backlog),
                     max(int(normalized.get("accept_requests", 0)), 0),
-                    available_slots,
                 )
                 accepted = backlog[:accept_limit]
                 rejected = backlog[accept_limit:]
+                step_accepted_by_port[port_id] = float(len(accepted))
+                step_rejected_by_port[port_id] = float(len(rejected))
                 step_requests_accepted += len(accepted)
                 step_requests_rejected += len(rejected)
                 self.bus.clear_pending_requests(port_id)
@@ -329,12 +338,18 @@ class MaritimeEnv:
                 else [port_agent.last_action for port_agent in self.port_agents]
             )
         ]
+        pre_step_port_served = [float(port.vessels_served) for port in self.ports]
         step_ports(
             self.ports,
             service_rates,
             dt_hours=dt_hours,
             service_time_hours=self.cfg["service_time_hours"],
         )
+        step_served_by_port = [
+            float(port.vessels_served) - pre
+            for port, pre in zip(self.ports, pre_step_port_served)
+        ]
+        step_vessels_served = float(sum(step_served_by_port))
 
         # ── Phase 5: reward computation ──────────────────────────────────────
         # Rewards are computed from the state produced by phases 1–4, using
@@ -343,6 +358,12 @@ class MaritimeEnv:
         rewards = self._compute_rewards(
             vessel_step_stats=vessel_step_stats,
             step_delay_by_vessel=step_delay_by_vessel,
+            step_served_by_port=step_served_by_port,
+            step_vessels_served=step_vessels_served,
+            step_accepted_by_port=step_accepted_by_port,
+            step_rejected_by_port=step_rejected_by_port,
+            step_requests_accepted=float(step_requests_accepted),
+            step_requests_rejected=float(step_requests_rejected),
         )
 
         # ── Advance clock and environment stochastic state ───────────────────
@@ -354,12 +375,17 @@ class MaritimeEnv:
         self._refresh_weather()
         self._refresh_forecasts()
         obs = self._get_observations()
+        pending_requests, booked_arrivals, imminent_arrivals, reservation_pressure = self._port_load_snapshot()
         info = {
             "port_metrics": compute_port_metrics(self.ports),
             "cadence_due": due,
             "coordinator_assignments": assignments,
             "message_queues": self.bus.queue_sizes,
             "pending_arrival_requests": float(self.bus.total_pending_requests),
+            "pending_requests_by_port": pending_requests.tolist(),
+            "booked_arrivals_by_port": booked_arrivals.tolist(),
+            "imminent_arrivals_by_port": imminent_arrivals.tolist(),
+            "reservation_pressure_by_port": reservation_pressure.tolist(),
             "requests_submitted": float(step_requests_submitted),
             "requests_accepted": float(step_requests_accepted),
             "requests_rejected": float(step_requests_rejected),
@@ -376,6 +402,11 @@ class MaritimeEnv:
                 )
             ),
             "step_delay_hours": float(sum(step_delay_by_vessel.values())),
+            "step_stall_hours": float(
+                sum(float(stats.get("stall_hours", 0.0)) for stats in vessel_step_stats.values())
+            ),
+            "step_vessels_served": step_vessels_served,
+            "stalled_vessels": float(sum(bool(v.stalled) for v in self.vessels)),
             "weather_enabled": self._weather_enabled,
         }
         if self._weather_enabled and self._weather is not None:
@@ -506,14 +537,81 @@ class MaritimeEnv:
         rough_fraction = float(np.mean(inbound >= rough_threshold))
         return np.array([mean_inbound, max_inbound, rough_fraction], dtype=float)
 
+    def _estimate_arrival_hours(self, vessel: VesselState, destination: int) -> float:
+        """Estimate hours until a vessel can reach *destination*.
+
+        Returns ``np.inf`` when the vessel is stalled, stationary, or the
+        destination is invalid. For ``pending_departure`` vessels, the wait
+        until ``depart_at_step`` is included.
+        """
+        if not (0 <= destination < self.num_ports):
+            return float(np.inf)
+        if bool(vessel.stalled) or float(vessel.speed) <= 0.0 or float(vessel.fuel) <= 0.0:
+            return float(np.inf)
+
+        dt_hours = float(self.cfg.get("dt_hours", 1.0))
+        wait_hours = 0.0
+        position_nm = float(vessel.position_nm)
+        if vessel.pending_departure:
+            wait_hours = max(int(vessel.depart_at_step) - int(self.t), 0) * dt_hours
+            position_nm = 0.0
+        elif not vessel.at_sea:
+            return float(np.inf)
+
+        sea_state = 0.0
+        if self._weather_enabled and self._weather is not None:
+            src = int(vessel.location)
+            if 0 <= src < self._weather.shape[0] and 0 <= destination < self._weather.shape[1]:
+                sea_state = float(self._weather[src, destination])
+        effective_speed = float(vessel.speed) * weather_speed_factor(
+            sea_state,
+            float(self.cfg.get("weather_penalty_factor", 0.15)),
+        )
+        if effective_speed <= 0.0:
+            return float(np.inf)
+        leg_distance = float(self.distance_nm[int(vessel.location), destination])
+        remaining_distance = max(leg_distance - position_nm, 0.0)
+        return wait_hours + (remaining_distance / effective_speed if remaining_distance > 0.0 else 0.0)
+
+    def _port_load_snapshot(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return per-port pending, booked, imminent, and total reservation pressure.
+
+        ``booked_arrivals`` counts vessels already committed to a port via
+        ``at_sea`` / ``pending_departure`` state, plus accepted slot responses
+        still queued in the message bus and not yet delivered to vessels.
+        """
+        pending_requests = np.array(
+            [len(self.bus.get_pending_requests(port_id)) for port_id in range(self.num_ports)],
+            dtype=float,
+        )
+        booked_arrivals = np.zeros(self.num_ports, dtype=float)
+        imminent_arrivals = np.zeros(self.num_ports, dtype=float)
+        imminent_horizon = float(self.cfg.get("short_horizon_hours", 0))
+        for vessel in self.vessels:
+            if not (vessel.at_sea or vessel.pending_departure):
+                continue
+            dest = int(vessel.destination)
+            if 0 <= dest < self.num_ports:
+                booked_arrivals[dest] += 1.0
+                eta_hours = self._estimate_arrival_hours(vessel, dest)
+                if eta_hours <= imminent_horizon + 1e-9:
+                    imminent_arrivals[dest] += 1.0
+        for port_id, count in self.bus.count_slot_responses_by_port(accepted=True).items():
+            if 0 <= port_id < self.num_ports:
+                booked_arrivals[port_id] += float(count)
+
+        queue_load = np.array([float(port.queue) for port in self.ports], dtype=float)
+        reservation_pressure = queue_load + pending_requests + booked_arrivals
+        return pending_requests, booked_arrivals, imminent_arrivals, reservation_pressure
+
     def _get_observations(self) -> dict[str, Any]:
         """Build observation dicts for all agent types from current state.
 
         Coordinator observations are **zero-padded** to the maximum
         coordinator dimension
-        (``num_ports * medium_d + num_vessels * 4 + 1 [+ num_ports*num_ports if weather]``)
-        so that parameter-shared networks receive fixed-size inputs even when
-        vessel partitions vary.
+        (``num_ports * medium_d + num_ports * 5 + num_vessels * 4 + 1``
+        ``[+ num_ports*num_ports if weather]``) so that parameter-shared
+        networks receive fixed-size inputs even when vessel partitions vary.
         """
         if self.medium_forecast is None or self.short_forecast is None:
             self._refresh_forecasts()
@@ -531,7 +629,23 @@ class MaritimeEnv:
             if bool(self.cfg.get("weather_enabled", False))
             else 0
         )
-        max_coord_dim = int(self.cfg["num_ports"]) * medium_d + self.num_vessels * 4 + 1 + weather_dim
+        pending_requests, booked_arrivals, imminent_arrivals, reservation_pressure = self._port_load_snapshot()
+        port_load_summary = np.column_stack(
+            [
+                np.array([float(port.queue) for port in self.ports], dtype=float),
+                np.array([float(port.occupied) for port in self.ports], dtype=float),
+                np.array([float(port.docks) for port in self.ports], dtype=float),
+                booked_arrivals,
+                imminent_arrivals,
+            ]
+        ).flatten()
+        max_coord_dim = (
+            int(self.cfg["num_ports"]) * medium_d
+            + int(self.cfg["num_ports"]) * 5
+            + self.num_vessels * 4
+            + 1
+            + weather_dim
+        )
 
         coordinator_obs = []
         for coordinator_id, coordinator in enumerate(self.coordinators):
@@ -543,6 +657,7 @@ class MaritimeEnv:
             raw_obs = coordinator.get_obs(
                 medium,
                 local_vessels,
+                port_load_summary=port_load_summary,
                 weather=self._weather if self._weather_enabled else None,
             )
             # Pad to fixed dimension
@@ -593,7 +708,9 @@ class MaritimeEnv:
             weather_features = self._port_weather_features(i)
             p_obs = port_agent.get_obs(
                 short[i],
-                incoming_requests=len(self.bus.get_pending_requests(i)),
+                incoming_requests=int(pending_requests[i]),
+                booked_arrivals=float(booked_arrivals[i]),
+                imminent_arrivals=float(imminent_arrivals[i]),
                 weather_features=weather_features,
             )
             port_obs.append(p_obs)
@@ -609,6 +726,12 @@ class MaritimeEnv:
         self,
         vessel_step_stats: dict[int, dict[str, float | bool]] | None = None,
         step_delay_by_vessel: dict[int, float] | None = None,
+        step_served_by_port: list[float] | None = None,
+        step_vessels_served: float = 0.0,
+        step_accepted_by_port: list[float] | None = None,
+        step_rejected_by_port: list[float] | None = None,
+        step_requests_accepted: float = 0.0,
+        step_requests_rejected: float = 0.0,
     ) -> dict[str, Any]:
         """Compute per-agent rewards from step-level physics deltas.
 
@@ -631,6 +754,10 @@ class MaritimeEnv:
         """
         vessel_step_stats = vessel_step_stats or {}
         step_delay_by_vessel = step_delay_by_vessel or {}
+        step_served_by_port = step_served_by_port or [0.0 for _ in self.ports]
+        step_accepted_by_port = step_accepted_by_port or [0.0 for _ in self.ports]
+        step_rejected_by_port = step_rejected_by_port or [0.0 for _ in self.ports]
+        dt_hours = float(self.cfg.get("dt_hours", 1.0))
         vessel_rewards = [
             compute_vessel_reward_step(
                 vessel=v,
@@ -638,6 +765,10 @@ class MaritimeEnv:
                 fuel_used=float(vessel_step_stats.get(v.vessel_id, {}).get("fuel_used", 0.0)),
                 co2_emitted=float(vessel_step_stats.get(v.vessel_id, {}).get("co2_emitted", 0.0)),
                 delay_hours=float(step_delay_by_vessel.get(v.vessel_id, 0.0)),
+                transit_hours=float(
+                    vessel_step_stats.get(v.vessel_id, {}).get("travel_hours", 0.0)
+                ),
+                arrived=bool(vessel_step_stats.get(v.vessel_id, {}).get("arrived", False)),
             )
             for v in self.vessels
         ]
@@ -645,14 +776,23 @@ class MaritimeEnv:
         # Only at-sea vessels receive shaping — docked vessels make no routing decisions.
         if self._weather_enabled and self._weather is not None:
             for i, v in enumerate(self.vessels):
-                if not v.at_sea:
+                if not v.at_sea or bool(v.stalled):
                     continue
                 speed = float(v.speed)
                 src, dst = v.location, v.destination
                 n = self._weather.shape[0]
                 sea = float(self._weather[src, dst]) if 0 <= src < n and 0 <= dst < n else 0.0
                 vessel_rewards[i] += weather_vessel_shaping(speed, sea, self.cfg)
-        port_rewards = [compute_port_reward(p, self.cfg) for p in self.ports]
+        port_rewards = [
+            compute_port_reward(
+                p,
+                self.cfg,
+                served_vessels=step_served_by_port[idx],
+                accepted_requests=step_accepted_by_port[idx],
+                rejected_requests=step_rejected_by_port[idx],
+            )
+            for idx, p in enumerate(self.ports)
+        ]
         step_fuel_used = float(
             sum(float(stats.get("fuel_used", 0.0)) for stats in vessel_step_stats.values())
         )
@@ -665,6 +805,10 @@ class MaritimeEnv:
                 config=self.cfg,
                 fuel_used=step_fuel_used,
                 co2_emitted=step_co2_emitted,
+                delay_hours=float(sum(step_delay_by_vessel.values())),
+                served_vessels=float(step_vessels_served),
+                accepted_requests=float(step_requests_accepted),
+                rejected_requests=float(step_requests_rejected),
             )
             for _ in self.coordinators
         ]

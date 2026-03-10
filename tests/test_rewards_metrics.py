@@ -59,12 +59,18 @@ class VesselRewardTests(unittest.TestCase):
 
     def test_combined_costs_are_additive(self) -> None:
         reward = compute_vessel_reward_step(
-            self.vessel, self.cfg, fuel_used=1.0, co2_emitted=2.0, delay_hours=3.0
+            self.vessel,
+            self.cfg,
+            fuel_used=1.0,
+            co2_emitted=2.0,
+            delay_hours=3.0,
+            transit_hours=1.0,
         )
         expected = -(
             self.cfg["fuel_weight"] * 1.0
             + self.cfg["emission_weight"] * 2.0
             + self.cfg["delay_weight"] * 3.0
+            + self.cfg["transit_time_weight"] * 1.0
         )
         self.assertAlmostEqual(reward, expected)
 
@@ -73,6 +79,31 @@ class VesselRewardTests(unittest.TestCase):
             self.vessel, self.cfg, fuel_used=-1.0, co2_emitted=-1.0, delay_hours=-1.0
         )
         self.assertEqual(reward, 0.0)
+
+    def test_transit_time_penalty_applies_only_when_provided(self) -> None:
+        reward = compute_vessel_reward_step(
+            self.vessel,
+            self.cfg,
+            fuel_used=0.0,
+            co2_emitted=0.0,
+            delay_hours=0.0,
+            transit_hours=1.5,
+        )
+        expected = -(self.cfg["transit_time_weight"] * 1.5)
+        self.assertAlmostEqual(reward, expected)
+
+    def test_arrival_bonus_offsets_vessel_cost(self) -> None:
+        reward = compute_vessel_reward_step(
+            self.vessel,
+            self.cfg,
+            fuel_used=1.0,
+            co2_emitted=0.0,
+            delay_hours=0.0,
+            transit_hours=0.0,
+            arrived=True,
+        )
+        expected = self.cfg["arrival_reward"] - self.cfg["fuel_weight"] * 1.0
+        self.assertAlmostEqual(reward, expected)
 
 
 class PortRewardTests(unittest.TestCase):
@@ -95,6 +126,24 @@ class PortRewardTests(unittest.TestCase):
         reward = compute_port_reward(port, self.cfg)
         self.assertAlmostEqual(reward, -5.0)
 
+    def test_serving_vessels_gives_port_bonus(self) -> None:
+        port = PortState(port_id=0, queue=0, docks=3, occupied=1)
+        reward = compute_port_reward(port, self.cfg, served_vessels=2.0)
+        expected = self.cfg["port_service_reward"] * 2.0 - self.cfg["dock_idle_weight"] * 2.0
+        self.assertAlmostEqual(reward, expected)
+
+    def test_accepting_requests_gives_port_bonus(self) -> None:
+        port = PortState(port_id=0, queue=0, docks=3, occupied=1)
+        reward = compute_port_reward(port, self.cfg, accepted_requests=2.0)
+        expected = self.cfg["port_accept_reward"] * 2.0 - self.cfg["dock_idle_weight"] * 2.0
+        self.assertAlmostEqual(reward, expected)
+
+    def test_rejecting_requests_penalizes_port(self) -> None:
+        port = PortState(port_id=0, queue=0, docks=3, occupied=1)
+        reward = compute_port_reward(port, self.cfg, rejected_requests=2.0)
+        expected = -(self.cfg["dock_idle_weight"] * 2.0 + self.cfg["port_reject_penalty"] * 2.0)
+        self.assertAlmostEqual(reward, expected)
+
 
 class CoordinatorRewardTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -109,14 +158,101 @@ class CoordinatorRewardTests(unittest.TestCase):
             self.ports, self.cfg, fuel_used=0.0, co2_emitted=0.0
         )
         avg_queue = 3.0  # (2+4)/2
-        self.assertAlmostEqual(reward, -avg_queue)
+        avg_idle_docks = 1.5
+        expected = -(avg_queue + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks)
+        self.assertAlmostEqual(reward, expected)
 
     def test_emission_lambda_amplifies_co2(self) -> None:
         reward = compute_coordinator_reward_step(
             self.ports, self.cfg, fuel_used=0.0, co2_emitted=10.0
         )
         avg_queue = 3.0
-        expected = -(avg_queue + self.cfg["emission_lambda"] * 10.0)
+        avg_idle_docks = 1.5
+        expected = -(
+            avg_queue
+            + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
+            + self.cfg["emission_lambda"] * 10.0
+        )
+        self.assertAlmostEqual(reward, expected)
+
+    def test_delay_penalty_applies_to_coordinator(self) -> None:
+        reward = compute_coordinator_reward_step(
+            self.ports,
+            self.cfg,
+            fuel_used=0.0,
+            co2_emitted=0.0,
+            delay_hours=2.0,
+        )
+        avg_queue = 3.0
+        avg_idle_docks = 1.5
+        expected = -(
+            avg_queue
+            + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
+            + self.cfg["coordinator_delay_weight"] * 2.0
+        )
+        self.assertAlmostEqual(reward, expected)
+
+    def test_service_bonus_offsets_coordinator_cost(self) -> None:
+        reward = compute_coordinator_reward_step(
+            self.ports,
+            self.cfg,
+            fuel_used=1.0,
+            co2_emitted=0.0,
+            delay_hours=0.0,
+            served_vessels=3.0,
+        )
+        avg_queue = 3.0
+        expected = (
+            self.cfg["coordinator_service_reward"] * 3.0
+            - (1.0 + avg_queue + self.cfg["coordinator_idle_dock_weight"] * 1.5)
+        )
+        self.assertAlmostEqual(reward, expected)
+
+    def test_accept_bonus_offsets_coordinator_cost(self) -> None:
+        reward = compute_coordinator_reward_step(
+            self.ports,
+            self.cfg,
+            fuel_used=0.0,
+            co2_emitted=0.0,
+            accepted_requests=2.0,
+        )
+        avg_queue = 3.0
+        avg_idle_docks = 1.5
+        expected = (
+            self.cfg["coordinator_accept_reward"] * 2.0
+            - (avg_queue + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks)
+        )
+        self.assertAlmostEqual(reward, expected)
+
+    def test_reject_penalty_applies_to_coordinator(self) -> None:
+        reward = compute_coordinator_reward_step(
+            self.ports,
+            self.cfg,
+            fuel_used=0.0,
+            co2_emitted=0.0,
+            rejected_requests=2.0,
+        )
+        avg_queue = 3.0
+        avg_idle_docks = 1.5
+        expected = -(
+            avg_queue
+            + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
+            + self.cfg["coordinator_reject_penalty"] * 2.0
+        )
+        self.assertAlmostEqual(reward, expected)
+
+    def test_idle_dock_penalty_applies_to_coordinator(self) -> None:
+        reward = compute_coordinator_reward_step(
+            self.ports,
+            self.cfg,
+            fuel_used=0.0,
+            co2_emitted=0.0,
+            delay_hours=0.0,
+            served_vessels=0.0,
+        )
+        avg_queue = 3.0
+        avg_idle_docks = 1.5
+        expected = -(avg_queue + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks)
         self.assertAlmostEqual(reward, expected)
 
     def test_empty_ports_list(self) -> None:
@@ -166,6 +302,15 @@ class VesselMetricTests(unittest.TestCase):
         self.assertAlmostEqual(m["total_emissions_co2"], 20.0)
         self.assertAlmostEqual(m["avg_delay_hours"], 2.0)
         self.assertAlmostEqual(m["on_time_rate"], 0.5)  # vessel 0 < 2h
+
+    def test_stalled_vessels_are_counted(self) -> None:
+        vessels = [
+            VesselState(vessel_id=0, location=0, destination=1, stalled=True),
+            VesselState(vessel_id=1, location=1, destination=0, stalled=False),
+        ]
+        m = compute_vessel_metrics(vessels)
+        self.assertAlmostEqual(m["stalled_vessels"], 1.0)
+        self.assertAlmostEqual(m["stalled_rate"], 0.5)
 
 
 class PortMetricTests(unittest.TestCase):
@@ -227,9 +372,10 @@ class DispatchSelfLoopTests(unittest.TestCase):
 
     def test_dispatch_to_different_port_works(self) -> None:
         cfg = get_default_config()
-        vessel = VesselState(vessel_id=0, location=0, destination=0, at_sea=False)
+        vessel = VesselState(vessel_id=0, location=0, destination=0, at_sea=False, stalled=True)
         dispatch_vessel(vessel, destination=1, speed=cfg["nominal_speed"], config=cfg)
         self.assertTrue(vessel.at_sea)
+        self.assertFalse(vessel.stalled)
         self.assertEqual(vessel.destination, 1)
 
 

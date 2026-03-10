@@ -237,18 +237,18 @@ class TestMAPPOPortMasking:
             assert mask[levels:].sum() == 0.0
 
     def test_build_port_mask_tracks_pending_requests(self) -> None:
-        """Admission layers open up as backlog grows, capped by free berths."""
+        """Admission layers open up as backlog grows, independent of free berths."""
         cfg = MAPPOConfig(rollout_length=8)
         trainer = MAPPOTrainer(mappo_config=cfg, seed=42)
         trainer.env.reset()
         levels = int(trainer.cfg["docks_per_port"]) + 1
         port = trainer.env.ports[0]
-        port.occupied = 1  # leave exactly two free berths with default docks=3
+        port.occupied = port.docks  # fully occupied ports can still grant reservations
         for vessel_id in range(4):
             trainer.env.bus.enqueue_arrival_request(0, vessel_id, 0, 0.0)
         trainer.env.bus.deliver_due(0)
         mask = trainer._build_port_mask(0)
-        expected_valid = (min(4, port.docks - port.occupied) + 1) * levels
+        expected_valid = (min(4, levels - 1) + 1) * levels
         assert mask.sum() == expected_valid
         assert mask[: expected_valid].sum() == expected_valid
         assert mask[expected_valid:].sum() == 0.0

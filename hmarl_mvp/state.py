@@ -36,6 +36,7 @@ class VesselState:
     emissions: float = 0.0
     delay_hours: float = 0.0
     at_sea: bool = False
+    stalled: bool = False
     trip_start_step: int = 0
     # Departure-window enforcement: vessel waits at port until depart_at_step.
     pending_departure: bool = False
