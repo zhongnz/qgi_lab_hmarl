@@ -12,6 +12,7 @@
 - Professor Amine Aboussalah
 - Idriss Malek
 - El Mehdi Nezahi
+- Peter Zhong
 
 ## Agenda
 

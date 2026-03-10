@@ -337,6 +337,82 @@ class TestCLIWeatherWiring:
         assert captured["config"]["weather_enabled"] is True
         assert captured["config"]["sea_state_max"] == 6.0
 
+    def test_train_writes_eval_trace_artifacts(self, tmp_path: Any) -> None:
+        from scripts.run_mappo import cmd_train, parse_args
+
+        class FakeLogger:
+            def log(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeTrainer:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.cfg = kwargs.get("env_config", {"rollout_steps": 6})
+
+            def train(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                _ = args, kwargs
+                return [
+                    {
+                        "iteration": 0,
+                        "mean_reward": -1.0,
+                        "joint_mean_reward": -2.0,
+                        "total_reward": -3.0,
+                    }
+                ]
+
+            def save_models(self, _prefix: str) -> None:
+                return None
+
+            def evaluate_episodes(self, num_episodes: int = 5) -> dict[str, Any]:
+                _ = num_episodes
+                return {
+                    "mean": {"total_reward": -3.0},
+                    "std": {"total_reward": 0.0},
+                    "min": {"total_reward": -3.0},
+                    "max": {"total_reward": -3.0},
+                    "episodes": [{"total_reward": -3.0}],
+                }
+
+        trace_df = pd.DataFrame(
+            {
+                "t": [0, 1, 2],
+                "avg_queue": [1.0, 0.8, 0.6],
+                "step_fuel_used": [0.5, 0.7, 0.4],
+                "step_co2_emitted": [1.0, 1.4, 0.8],
+                "coordinator_reward": [-2.0, -1.8, -1.5],
+            }
+        )
+
+        with patch("scripts.run_mappo.MAPPOTrainer", FakeTrainer):
+            with patch("scripts.run_mappo.TrainingLogger", return_value=FakeLogger()):
+                with patch("scripts.run_mappo.run_trained_mappo_trace", return_value=trace_df):
+                    with patch(
+                        "sys.argv",
+                        [
+                            "prog",
+                            "train",
+                            "--iterations",
+                            "1",
+                            "--rollout-length",
+                            "4",
+                            "--output-dir",
+                            str(tmp_path),
+                        ],
+                    ):
+                        args = parse_args()
+                    cmd_train(args)
+
+        assert (tmp_path / "train_history.csv").exists()
+        assert (tmp_path / "eval_result.json").exists()
+        assert (tmp_path / "eval_trace.csv").exists()
+        assert (tmp_path / "training_curves.png").exists()
+        assert (tmp_path / "diagnostics_trace.png").exists()
+        assert (tmp_path / "diagnostics_trace_vessels.png").exists()
+        assert (tmp_path / "diagnostics_trace_ports.png").exists()
+        assert (tmp_path / "diagnostics_trace_coordinators.png").exists()
+
 
 # ── Gym wrapper weather info tests ───────────────────────────────────────
 

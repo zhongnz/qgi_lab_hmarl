@@ -307,7 +307,7 @@ def _write_tb_scalars(
 ) -> None:
     """Write scalar metrics from a training log entry to TensorBoard."""
     _SCALAR_KEYS = {
-        "mean_reward", "total_reward",
+        "mean_reward", "joint_mean_reward", "total_reward",
         "vessel_mean_reward", "port_mean_reward", "coordinator_mean_reward",
         "lr", "entropy_coeff",
         "rollout_time", "update_time", "iter_time",

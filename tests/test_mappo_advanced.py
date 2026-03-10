@@ -8,7 +8,7 @@ import pytest
 
 from hmarl_mvp.buffer import MultiAgentRolloutBuffer, RolloutBuffer
 from hmarl_mvp.config import get_default_config
-from hmarl_mvp.experiment import run_mappo_comparison
+from hmarl_mvp.experiment import run_mappo_comparison, run_trained_mappo_trace
 from hmarl_mvp.mappo import MAPPOConfig, MAPPOTrainer, RunningMeanStd
 from hmarl_mvp.plotting import plot_mappo_comparison, plot_training_curves
 
@@ -174,9 +174,38 @@ class TestMAPPOComparison:
         train_log = results["_train_log"]
         assert len(train_log) == 5
         assert "mean_reward" in train_log.columns
+        assert "joint_mean_reward" in train_log.columns
         assert "vessel_mean_reward" in train_log.columns
         assert "port_mean_reward" in train_log.columns
         assert "coordinator_mean_reward" in train_log.columns
+
+    def test_run_trained_mappo_trace_has_diagnostics_columns(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=4, rollout_steps=12)
+        mappo_cfg = MAPPOConfig(rollout_length=4, hidden_dims=[16, 16])
+        trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=42)
+        trace = run_trained_mappo_trace(trainer, num_steps=5)
+        assert isinstance(trace, pd.DataFrame)
+        assert len(trace) > 0
+        for col in (
+            "t",
+            "avg_queue",
+            "step_fuel_used",
+            "step_co2_emitted",
+            "step_delay_hours",
+            "avg_vessel_reward",
+            "coordinator_reward",
+            "directive_queue_size",
+            "arrival_request_queue_size",
+            "slot_response_queue_size",
+            "policy_agreement_rate",
+            "vessel_0_speed",
+            "vessel_0_fuel",
+            "vessel_0_reward",
+            "port_0_queue",
+            "port_0_occupied",
+            "port_0_reward",
+        ):
+            assert col in trace.columns
 
 
 # ---------------------------------------------------------------------------

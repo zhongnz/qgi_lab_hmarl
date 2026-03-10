@@ -28,6 +28,126 @@ from .state import make_rng
 VALID_POLICIES = {"independent", "reactive", "forecast", "oracle", "learned_forecast"}
 
 
+def _flatten_vessel_state(vessels: list[Any], rewards: list[Any] | None = None) -> dict[str, float]:
+    """Flatten per-vessel state into numeric columns for diagnostics."""
+    flat: dict[str, float] = {}
+    reward_list = list(rewards) if rewards is not None else []
+    for vessel in vessels:
+        prefix = f"vessel_{int(vessel.vessel_id)}"
+        flat[f"{prefix}_location"] = float(vessel.location)
+        flat[f"{prefix}_destination"] = float(vessel.destination)
+        flat[f"{prefix}_position_nm"] = float(vessel.position_nm)
+        flat[f"{prefix}_speed"] = float(vessel.speed)
+        flat[f"{prefix}_fuel"] = float(vessel.fuel)
+        flat[f"{prefix}_emissions"] = float(vessel.emissions)
+        flat[f"{prefix}_delay_hours"] = float(vessel.delay_hours)
+        flat[f"{prefix}_at_sea"] = float(bool(vessel.at_sea))
+        flat[f"{prefix}_pending_departure"] = float(bool(vessel.pending_departure))
+        flat[f"{prefix}_depart_at_step"] = float(vessel.depart_at_step)
+        vid = int(vessel.vessel_id)
+        if 0 <= vid < len(reward_list):
+            flat[f"{prefix}_reward"] = float(reward_list[vid])
+    return flat
+
+
+def _flatten_port_state(ports: list[Any], rewards: list[Any] | None = None) -> dict[str, float]:
+    """Flatten per-port state into numeric columns for diagnostics."""
+    flat: dict[str, float] = {}
+    reward_list = list(rewards) if rewards is not None else []
+    for port in ports:
+        prefix = f"port_{int(port.port_id)}"
+        flat[f"{prefix}_queue"] = float(port.queue)
+        flat[f"{prefix}_docks"] = float(port.docks)
+        flat[f"{prefix}_occupied"] = float(port.occupied)
+        flat[f"{prefix}_available_docks"] = float(max(port.docks - port.occupied, 0))
+        flat[f"{prefix}_utilization"] = float(port.occupied / max(port.docks, 1))
+        flat[f"{prefix}_service_count"] = float(len(port.service_times))
+        flat[f"{prefix}_cumulative_wait_hours"] = float(port.cumulative_wait_hours)
+        flat[f"{prefix}_vessels_served"] = float(port.vessels_served)
+        pid = int(port.port_id)
+        if 0 <= pid < len(reward_list):
+            flat[f"{prefix}_reward"] = float(reward_list[pid])
+    return flat
+
+
+def _flatten_coordinator_rewards(rewards: list[Any] | None = None) -> dict[str, float]:
+    """Flatten per-coordinator rewards into numeric columns for diagnostics."""
+    flat: dict[str, float] = {}
+    reward_list = list(rewards) if rewards is not None else []
+    for idx, reward in enumerate(reward_list):
+        flat[f"coordinator_{idx}_reward"] = float(reward)
+    return flat
+
+
+def _build_step_trace_row(
+    *,
+    t: int,
+    policy: str,
+    rewards: dict[str, Any],
+    info: dict[str, Any],
+    vessels: list[Any],
+    ports: list[Any],
+    config: dict[str, Any],
+    num_coordinators: int,
+    cumulative_vessel_requests: float,
+    cumulative_port_accepted: float,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one per-step diagnostics row shared by heuristic and MAPPO traces."""
+    vessel_metrics = compute_vessel_metrics(vessels)
+    port_metrics = compute_port_metrics(ports)
+    economic_metrics = compute_economic_metrics(vessels, config)
+    step_economic = compute_economic_step_deltas(
+        step_fuel_used=float(info.get("step_fuel_used", 0.0)),
+        step_co2_emitted=float(info.get("step_co2_emitted", 0.0)),
+        step_delay_hours=float(info.get("step_delay_hours", 0.0)),
+        config=config,
+    )
+    queue_sizes = info.get("message_queues", {}) or {}
+    step_requests = float(info.get("requests_submitted", 0.0))
+    step_accepted = float(info.get("requests_accepted", 0.0))
+    step_rejected = float(info.get("requests_rejected", 0.0))
+    row: dict[str, Any] = {
+        "t": t,
+        "policy": policy,
+        "num_coordinators": num_coordinators,
+        "coordinator_updates": int(bool((info.get("cadence_due") or {}).get("coordinator", False))),
+        "pending_arrival_requests": float(info.get("pending_arrival_requests", 0.0)),
+        "weather_enabled": int(bool(info.get("weather_enabled", False))),
+        "mean_sea_state": float(info.get("mean_sea_state", 0.0)),
+        "max_sea_state": float(info.get("max_sea_state", 0.0)),
+        "directive_queue_size": float(queue_sizes.get("directives", 0.0)),
+        "arrival_request_queue_size": float(queue_sizes.get("arrival_requests", 0.0)),
+        "slot_response_queue_size": float(queue_sizes.get("slot_responses", 0.0)),
+        "step_vessel_requests": step_requests,
+        "step_port_accepted": step_accepted,
+        "step_port_rejected": step_rejected,
+        "total_vessel_requests": cumulative_vessel_requests,
+        "total_port_accepted": cumulative_port_accepted,
+        "policy_agreement_rate": (
+            cumulative_port_accepted / cumulative_vessel_requests
+            if cumulative_vessel_requests > 0
+            else 0.0
+        ),
+        "step_fuel_used": float(info.get("step_fuel_used", 0.0)),
+        "step_co2_emitted": float(info.get("step_co2_emitted", 0.0)),
+        "step_delay_hours": float(info.get("step_delay_hours", 0.0)),
+        **vessel_metrics,
+        **port_metrics,
+        **economic_metrics,
+        **step_economic,
+        "avg_vessel_reward": float(np.mean(rewards["vessels"])) if rewards["vessels"] else 0.0,
+        "avg_port_reward": float(np.mean(rewards["ports"])) if rewards["ports"] else 0.0,
+        "coordinator_reward": float(rewards["coordinator"]),
+        **_flatten_vessel_state(vessels, rewards=rewards.get("vessels")),
+        **_flatten_port_state(ports, rewards=rewards.get("ports")),
+        **_flatten_coordinator_rewards(rewards.get("coordinators")),
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
 def run_experiment(
     policy_type: str = "forecast",
     forecast_horizon: int = 12,
@@ -164,58 +284,140 @@ def run_experiment(
         }
         _, rewards, done, info = env.step(actions)
 
-        vessel_metrics = compute_vessel_metrics(env.vessels)
-        port_metrics = compute_port_metrics(env.ports)
-        economic_metrics = compute_economic_metrics(env.vessels, cfg)
-        step_economic = compute_economic_step_deltas(
-            step_fuel_used=float(info.get("step_fuel_used", 0.0)),
-            step_co2_emitted=float(info.get("step_co2_emitted", 0.0)),
-            step_delay_hours=float(info.get("step_delay_hours", 0.0)),
-            config=cfg,
-        )
         step_requests = float(info.get("requests_submitted", 0.0))
         step_accepted = float(info.get("requests_accepted", 0.0))
         cumulative_vessel_requests += step_requests
         cumulative_port_accepted += step_accepted
-        coordination_metrics = {
-            "step_vessel_requests": step_requests,
-            "step_port_accepted": step_accepted,
-            "total_vessel_requests": cumulative_vessel_requests,
-            "total_port_accepted": cumulative_port_accepted,
-            "policy_agreement_rate": (
-                cumulative_port_accepted / cumulative_vessel_requests
-                if cumulative_vessel_requests > 0
-                else 0.0
-            ),
-        }
 
         log.append(
-            {
-                "t": t,
-                "policy": policy_type,
-                "forecast_horizon": forecast_horizon,
-                "forecast_noise": forecast_noise,
-                "share_forecasts": int(bool(share_forecasts)),
-                "num_coordinators": num_coordinators,
-                "coordinator_updates": int(info["cadence_due"]["coordinator"]),
-                "pending_arrival_requests": float(info.get("pending_arrival_requests", 0.0)),
-                "weather_enabled": int(bool(info.get("weather_enabled", False))),
-                "mean_sea_state": float(info.get("mean_sea_state", 0.0)),
-                "max_sea_state": float(info.get("max_sea_state", 0.0)),
-                **vessel_metrics,
-                **port_metrics,
-                **coordination_metrics,
-                **economic_metrics,
-                **step_economic,
-                "avg_vessel_reward": float(np.mean(rewards["vessels"])) if rewards["vessels"] else 0.0,
-                "avg_port_reward": float(np.mean(rewards["ports"])) if rewards["ports"] else 0.0,
-                "coordinator_reward": float(rewards["coordinator"]),
-            }
+            _build_step_trace_row(
+                t=t,
+                policy=policy_type,
+                rewards=rewards,
+                info=info,
+                vessels=env.vessels,
+                ports=env.ports,
+                config=cfg,
+                num_coordinators=num_coordinators,
+                cumulative_vessel_requests=cumulative_vessel_requests,
+                cumulative_port_accepted=cumulative_port_accepted,
+                extra={
+                    "forecast_horizon": forecast_horizon,
+                    "forecast_noise": forecast_noise,
+                    "share_forecasts": int(bool(share_forecasts)),
+                },
+            )
         )
         if done:
             break
 
     return pd.DataFrame(log)
+
+
+def run_trained_mappo_trace(
+    trainer: Any,
+    num_steps: int | None = None,
+    deterministic: bool = True,
+    policy_label: str = "mappo",
+) -> pd.DataFrame:
+    """Run a trained MAPPO policy for one episode and return per-step diagnostics."""
+    import torch
+
+    from .mappo import _nn_to_coordinator_action, _nn_to_port_action, _nn_to_vessel_action
+
+    num_steps = int(trainer.cfg["rollout_steps"]) if num_steps is None else int(num_steps)
+    obs = trainer.env.reset()
+
+    for actor_critic in trainer.actor_critics.values():
+        actor_critic.eval()
+
+    device = trainer.device
+    rows: list[dict[str, Any]] = []
+    cumulative_vessel_requests = 0.0
+    cumulative_port_accepted = 0.0
+
+    for step_i in range(num_steps):
+        global_state = trainer.env.get_global_state()
+        gs_tensor = torch.as_tensor(
+            global_state, dtype=torch.float32, device=device
+        ).unsqueeze(0)
+
+        with torch.no_grad():
+            vessel_actions = []
+            for i, v_obs in enumerate(obs["vessels"]):
+                v_obs_n = trainer._eval_normalize_obs(v_obs, "vessel")
+                v_t = torch.as_tensor(
+                    v_obs_n, dtype=torch.float32, device=device
+                ).unsqueeze(0)
+                action_t, _, _ = trainer._get_ac("vessel", i).get_action_and_value(
+                    v_t, gs_tensor, deterministic=deterministic
+                )
+                speed_cap = trainer._vessel_weather_speed_cap(i)
+                vessel_actions.append(
+                    _nn_to_vessel_action(
+                        action_t.squeeze(0),
+                        trainer.cfg,
+                        speed_cap=speed_cap,
+                        current_step=trainer.env.t,
+                    )
+                )
+
+            port_actions = []
+            for i, p_obs in enumerate(obs["ports"]):
+                p_obs_n = trainer._eval_normalize_obs(p_obs, "port")
+                p_t = torch.as_tensor(
+                    p_obs_n, dtype=torch.float32, device=device
+                ).unsqueeze(0)
+                p_mask = trainer._port_mask_tensor(i)
+                action_t, _, _ = trainer._get_ac("port", i).get_action_and_value(
+                    p_t, gs_tensor, deterministic=deterministic, action_mask=p_mask
+                )
+                port_actions.append(_nn_to_port_action(action_t.squeeze(0), i, trainer.env))
+
+            assignments = trainer.env._build_assignments()
+            coord_actions = []
+            c_mask = trainer._coordinator_mask_tensor()
+            for i, c_obs in enumerate(obs["coordinators"]):
+                c_obs_n = trainer._eval_normalize_obs(c_obs, "coordinator")
+                c_t = torch.as_tensor(
+                    c_obs_n, dtype=torch.float32, device=device
+                ).unsqueeze(0)
+                action_t, _, _ = trainer._get_ac("coordinator", i).get_action_and_value(
+                    c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
+                )
+                coord_actions.append(
+                    _nn_to_coordinator_action(action_t.squeeze(0), i, trainer.env, assignments)
+                )
+
+        env_actions = {
+            "coordinator": coord_actions[0] if coord_actions else {},
+            "coordinators": coord_actions,
+            "vessels": vessel_actions,
+            "ports": port_actions,
+        }
+        obs, rewards, done, info = trainer.env.step(env_actions)
+        step_requests = float(info.get("requests_submitted", 0.0))
+        step_accepted = float(info.get("requests_accepted", 0.0))
+        cumulative_vessel_requests += step_requests
+        cumulative_port_accepted += step_accepted
+        rows.append(
+            _build_step_trace_row(
+                t=step_i,
+                policy=policy_label,
+                rewards=rewards,
+                info=info,
+                vessels=trainer.env.vessels,
+                ports=trainer.env.ports,
+                config=trainer.cfg,
+                num_coordinators=trainer.env.num_coordinators,
+                cumulative_vessel_requests=cumulative_vessel_requests,
+                cumulative_port_accepted=cumulative_port_accepted,
+            )
+        )
+        if done:
+            break
+
+    return pd.DataFrame(rows)
 
 
 def run_policy_sweep(
@@ -382,6 +584,7 @@ def run_mappo_comparison(
         row: dict[str, float] = {
             "iteration": float(iteration),
             "mean_reward": rollout_info["mean_reward"],
+            "joint_mean_reward": rollout_info.get("joint_mean_reward", 0.0),
             "total_reward": rollout_info["total_reward"],
             "vessel_mean_reward": rollout_info.get("vessel_mean_reward", 0.0),
             "port_mean_reward": rollout_info.get("port_mean_reward", 0.0),
@@ -399,97 +602,13 @@ def run_mappo_comparison(
         train_log.append(row)
 
     # --- Evaluate MAPPO ---
-    from .metrics import compute_economic_step_deltas as _ced
-
-    mappo_rows: list[dict[str, Any]] = []
-    obs = trainer.env.reset()
-
-    import torch
-
-    vessel_ac = trainer.actor_critics["vessel"]
-    port_ac = trainer.actor_critics["port"]
-    coord_ac = trainer.actor_critics["coordinator"]
-    vessel_ac.eval()
-    port_ac.eval()
-    coord_ac.eval()
-    device = trainer.device
-
-    from .mappo import _nn_to_coordinator_action, _nn_to_port_action, _nn_to_vessel_action
-
-    for step_i in range(eval_steps):
-        global_state = trainer.env.get_global_state()
-        gs_tensor = torch.as_tensor(
-            global_state, dtype=torch.float32, device=device
-        ).unsqueeze(0)
-
-        with torch.no_grad():
-            vessel_actions = []
-            for v_obs in obs["vessels"]:
-                v_obs_n = trainer._eval_normalize_obs(v_obs, "vessel")
-                v_t = torch.as_tensor(v_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
-                a, _, _ = vessel_ac.get_action_and_value(v_t, gs_tensor, deterministic=True)
-                vessel_actions.append(
-                    _nn_to_vessel_action(
-                        a.squeeze(0),
-                        trainer.cfg,
-                        current_step=trainer.env.t,
-                    )
-                )
-
-            port_actions = []
-            for i, p_obs in enumerate(obs["ports"]):
-                p_obs_n = trainer._eval_normalize_obs(p_obs, "port")
-                p_t = torch.as_tensor(p_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
-                p_mask = trainer._port_mask_tensor(i)
-                a, _, _ = port_ac.get_action_and_value(
-                    p_t, gs_tensor, deterministic=True, action_mask=p_mask
-                )
-                port_actions.append(_nn_to_port_action(a.squeeze(0), i, trainer.env))
-
-            assignments = trainer.env._build_assignments()
-            coord_actions = []
-            for i, c_obs in enumerate(obs["coordinators"]):
-                c_obs_n = trainer._eval_normalize_obs(c_obs, "coordinator")
-                c_t = torch.as_tensor(c_obs_n, dtype=torch.float32, device=device).unsqueeze(0)
-                c_mask = trainer._coordinator_mask_tensor()
-                a, _, _ = coord_ac.get_action_and_value(
-                    c_t, gs_tensor, deterministic=True, action_mask=c_mask
-                )
-                coord_actions.append(
-                    _nn_to_coordinator_action(a.squeeze(0), i, trainer.env, assignments)
-                )
-
-        env_actions = {
-            "coordinator": coord_actions[0] if coord_actions else {},
-            "coordinators": coord_actions,
-            "vessels": vessel_actions,
-            "ports": port_actions,
-        }
-        obs, rewards, done, info = trainer.env.step(env_actions)
-        vessel_metrics = compute_vessel_metrics(trainer.env.vessels)
-        port_metrics = compute_port_metrics(trainer.env.ports)
-        economic_metrics = compute_economic_metrics(trainer.env.vessels, trainer.cfg)
-        step_economic = _ced(
-            step_fuel_used=float(info.get("step_fuel_used", 0.0)),
-            step_co2_emitted=float(info.get("step_co2_emitted", 0.0)),
-            step_delay_hours=float(info.get("step_delay_hours", 0.0)),
-            config=trainer.cfg,
+    results: dict[str, pd.DataFrame] = {
+        "mappo": run_trained_mappo_trace(
+            trainer,
+            num_steps=eval_steps,
+            deterministic=True,
         )
-        mappo_rows.append({
-            "t": step_i,
-            "policy": "mappo",
-            **vessel_metrics,
-            **port_metrics,
-            **economic_metrics,
-            **step_economic,
-            "avg_vessel_reward": float(np.mean(rewards["vessels"])),
-            "avg_port_reward": float(np.mean(rewards["ports"])),
-            "coordinator_reward": float(rewards["coordinator"]),
-        })
-        if done:
-            break
-
-    results: dict[str, pd.DataFrame] = {"mappo": pd.DataFrame(mappo_rows)}
+    }
 
     # --- Run heuristic baselines ---
     for policy in baselines:

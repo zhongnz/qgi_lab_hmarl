@@ -36,10 +36,15 @@ from hmarl_mvp.experiment import (
     run_mappo_ablation,
     run_mappo_comparison,
     run_mappo_hyperparam_sweep,
+    run_trained_mappo_trace,
 )
 from hmarl_mvp.logger import TrainingLogger
 from hmarl_mvp.mappo import MAPPOConfig, MAPPOTrainer
-from hmarl_mvp.plotting import plot_mappo_comparison, plot_training_curves
+from hmarl_mvp.plotting import (
+    plot_mappo_comparison,
+    plot_time_series_diagnostics,
+    plot_training_curves,
+)
 from hmarl_mvp.report import generate_training_report
 
 
@@ -251,6 +256,10 @@ def cmd_train(args: argparse.Namespace) -> None:
     with open(out_dir / "eval_result.json", "w") as f:
         json.dump(eval_result, f, indent=2, default=str)
 
+    # Per-step diagnostics trace
+    eval_trace = run_trained_mappo_trace(trainer, num_steps=env_cfg["rollout_steps"])
+    eval_trace.to_csv(out_dir / "eval_trace.csv", index=False)
+
     # Generate report
     report = generate_training_report(
         history=history,
@@ -262,6 +271,26 @@ def cmd_train(args: argparse.Namespace) -> None:
 
     # Plot training curves
     plot_training_curves(df, out_path=str(out_dir / "training_curves.png"))
+    plot_time_series_diagnostics(
+        eval_trace,
+        out_path=str(out_dir / "diagnostics_trace.png"),
+        column_group="aggregate",
+    )
+    plot_time_series_diagnostics(
+        eval_trace,
+        out_path=str(out_dir / "diagnostics_trace_vessels.png"),
+        column_group="vessel",
+    )
+    plot_time_series_diagnostics(
+        eval_trace,
+        out_path=str(out_dir / "diagnostics_trace_ports.png"),
+        column_group="port",
+    )
+    plot_time_series_diagnostics(
+        eval_trace,
+        out_path=str(out_dir / "diagnostics_trace_coordinators.png"),
+        column_group="coordinator",
+    )
 
     print(f"\nTraining complete in {elapsed:.1f}s")
     print(f"  final reward: {history[-1]['mean_reward']:.4f}")

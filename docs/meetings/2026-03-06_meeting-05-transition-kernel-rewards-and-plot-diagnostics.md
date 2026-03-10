@@ -13,6 +13,7 @@
 - Abdessalam Ed-dib
 - Idriss Malek
 - El Mehdi Nezahi
+- Peter Zhong
 
 ## Agenda
 

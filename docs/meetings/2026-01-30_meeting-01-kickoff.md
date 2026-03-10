@@ -12,6 +12,7 @@
 - Professor Amine Mohamed Abousalah
 - Abdessalam Ed-dib
 - Idriss Malek
+- Peter Zhong
 
 ## Agenda
 

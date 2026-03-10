@@ -77,6 +77,12 @@ def generate_training_report(
         lines.append(f"- **Best mean reward**: {max(rewards):.6f}")
         lines.append(f"- **Worst mean reward**: {min(rewards):.6f}")
         lines.append(f"- **Reward std**: {float(np.std(rewards)):.6f}")
+        if "joint_mean_reward" in history[-1]:
+            joint_rewards = [e.get("joint_mean_reward", 0.0) for e in history]
+            lines.append(f"- **Final joint mean reward**: {joint_rewards[-1]:.6f}")
+        if "total_reward" in history[-1]:
+            total_rewards = [e.get("total_reward", 0.0) for e in history]
+            lines.append(f"- **Final total reward**: {total_rewards[-1]:.6f}")
         for agent in ("vessel", "port", "coordinator"):
             key = f"{agent}_mean_reward"
             if key in history[-1]:

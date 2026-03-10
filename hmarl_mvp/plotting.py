@@ -128,72 +128,235 @@ def plot_training_curves(
     train_log: Any,
     out_path: str | None = None,
 ) -> None:
-    """Plot MAPPO training reward curves and value losses.
+    """Plot MAPPO training reward and diagnostic curves.
 
     Parameters
     ----------
     train_log:
         DataFrame with columns ``iteration``, ``mean_reward``,
-        optional per-agent reward columns, and optional
-        ``*_value_loss`` columns.
+        optional ``joint_mean_reward``, per-agent reward columns,
+        and optional critic/policy diagnostics.
     """
     import pandas as pd
 
     df = pd.DataFrame(train_log) if not isinstance(train_log, pd.DataFrame) else train_log
+    if df.empty or "iteration" not in df.columns:
+        return
 
     reward_cols = [
         ("vessel_mean_reward", "Vessel", "#1b9e77"),
         ("port_mean_reward", "Port", "#d95f02"),
         ("coordinator_mean_reward", "Coordinator", "#7570b3"),
     ]
-    has_agent_rewards = any(col in df.columns for col, _, _ in reward_cols)
-    has_losses = any(c.endswith("_value_loss") for c in df.columns)
-    ncols = 1 + int(has_agent_rewards) + int(has_losses)
-    fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 4))
-    if ncols == 1:
-        axes = [axes]
+    color_by_agent = {
+        "vessel": "#1b9e77",
+        "port": "#d95f02",
+        "coordinator": "#7570b3",
+    }
+    iters = df["iteration"]
+    window = max(5, len(df) // 10) if len(df) >= 10 else None
+
+    def _smoothed(series: Any) -> Any:
+        if window is None:
+            return None
+        return series.rolling(window, min_periods=1).mean()
+
+    panel_builders: list[tuple[str, Any]] = []
+    per_type_cols = [col for col, _, _ in reward_cols if col in df.columns]
+    if "joint_mean_reward" in df.columns:
+        joint_reward = df["joint_mean_reward"]
+        joint_label = "Joint mean reward"
+    elif per_type_cols:
+        joint_reward = sum(df[col] for col in per_type_cols)
+        joint_label = "Joint mean reward (derived)"
+    else:
+        joint_reward = None
+        joint_label = "Joint mean reward"
+
+    if joint_reward is not None or "mean_reward" in df.columns:
+        def _plot_aggregate_reward(ax: Any) -> None:
+            if joint_reward is not None:
+                ax.plot(iters, joint_reward, color="steelblue", alpha=0.35, linewidth=1.0)
+                smoothed = _smoothed(joint_reward)
+                if smoothed is not None:
+                    ax.plot(
+                        iters,
+                        smoothed,
+                        color="darkblue",
+                        linewidth=2.0,
+                        label=f"{joint_label} MA({window})",
+                    )
+                else:
+                    ax.plot(
+                        iters,
+                        joint_reward,
+                        color="darkblue",
+                        linewidth=1.8,
+                        label=joint_label,
+                    )
+            if "mean_reward" in df.columns:
+                legacy = df["mean_reward"]
+                if joint_reward is None:
+                    ax.plot(iters, legacy, color="steelblue", alpha=0.35, linewidth=1.0)
+                    smoothed = _smoothed(legacy)
+                    if smoothed is not None:
+                        ax.plot(
+                            iters,
+                            smoothed,
+                            color="darkblue",
+                            linewidth=2.0,
+                            label=f"mean_reward MA({window})",
+                        )
+                    else:
+                        ax.plot(
+                            iters,
+                            legacy,
+                            color="darkblue",
+                            linewidth=1.8,
+                            label="mean_reward",
+                        )
+                else:
+                    ax.plot(
+                        iters,
+                        legacy,
+                        color="gray",
+                        linestyle="--",
+                        linewidth=1.2,
+                        label="Legacy mean_reward",
+                    )
+            ax.set_xlabel("Iteration")
+            ax.set_ylabel("Reward")
+            ax.set_title("Aggregate Reward")
+            ax.legend(fontsize=8)
+
+        panel_builders.append(("aggregate_reward", _plot_aggregate_reward))
+
+    for col, label, color in reward_cols:
+        if col not in df.columns:
+            continue
+
+        def _make_reward_panel(
+            metric_col: str = col,
+            panel_label: str = label,
+            panel_color: str = color,
+        ) -> Any:
+            def _plot_reward(ax: Any) -> None:
+                series = df[metric_col]
+                ax.plot(iters, series, color=panel_color, alpha=0.35, linewidth=1.0)
+                smoothed = _smoothed(series)
+                if smoothed is not None:
+                    ax.plot(iters, smoothed, color=panel_color, linewidth=2.0)
+                else:
+                    ax.plot(iters, series, color=panel_color, linewidth=1.8)
+                ax.set_xlabel("Iteration")
+                ax.set_ylabel("Reward")
+                ax.set_title(f"{panel_label} Reward")
+
+            return _plot_reward
+
+        panel_builders.append((f"{col}_panel", _make_reward_panel()))
+
+    has_value_loss = any(c.endswith("_value_loss") for c in df.columns)
+    has_explained_var = any(c.endswith("_explained_variance") for c in df.columns)
+    if has_value_loss or has_explained_var:
+        def _plot_critic_diagnostics(ax: Any) -> None:
+            lines = []
+            labels = []
+            ax2 = None
+            for col in sorted(c for c in df.columns if c.endswith("_value_loss")):
+                agent = col.replace("_value_loss", "")
+                color = color_by_agent.get(agent, None)
+                (line,) = ax.plot(
+                    iters,
+                    df[col],
+                    color=color,
+                    linewidth=1.5,
+                    label=f"{agent} value loss",
+                )
+                lines.append(line)
+                labels.append(f"{agent} value loss")
+            ax.set_xlabel("Iteration")
+            ax.set_ylabel("Value Loss")
+            if has_explained_var:
+                ax2 = ax.twinx()
+                for col in sorted(c for c in df.columns if c.endswith("_explained_variance")):
+                    agent = col.replace("_explained_variance", "")
+                    color = color_by_agent.get(agent, None)
+                    (line,) = ax2.plot(
+                        iters,
+                        df[col],
+                        color=color,
+                        linestyle="--",
+                        linewidth=1.3,
+                        label=f"{agent} EV",
+                    )
+                    lines.append(line)
+                    labels.append(f"{agent} EV")
+                ax2.set_ylabel("Explained Variance")
+                ax2.axhline(0.0, color="black", linestyle=":", linewidth=0.8, alpha=0.5)
+            ax.set_title("Critic Diagnostics")
+            if lines:
+                ax.legend(lines, labels, fontsize=8, loc="best")
+
+        panel_builders.append(("critic_diagnostics", _plot_critic_diagnostics))
+
+    has_entropy = any(c.endswith("_entropy") for c in df.columns)
+    has_kl = any(c.endswith("_approx_kl") for c in df.columns)
+    if has_entropy or has_kl:
+        def _plot_policy_diagnostics(ax: Any) -> None:
+            lines = []
+            labels = []
+            ax2 = None
+            for col in sorted(c for c in df.columns if c.endswith("_entropy")):
+                agent = col.replace("_entropy", "")
+                color = color_by_agent.get(agent, None)
+                (line,) = ax.plot(
+                    iters,
+                    df[col],
+                    color=color,
+                    linewidth=1.5,
+                    label=f"{agent} entropy",
+                )
+                lines.append(line)
+                labels.append(f"{agent} entropy")
+            ax.set_xlabel("Iteration")
+            ax.set_ylabel("Entropy")
+            if has_kl:
+                ax2 = ax.twinx()
+                for col in sorted(c for c in df.columns if c.endswith("_approx_kl")):
+                    agent = col.replace("_approx_kl", "")
+                    color = color_by_agent.get(agent, None)
+                    (line,) = ax2.plot(
+                        iters,
+                        df[col],
+                        color=color,
+                        linestyle="--",
+                        linewidth=1.3,
+                        label=f"{agent} KL",
+                    )
+                    lines.append(line)
+                    labels.append(f"{agent} KL")
+                ax2.axhline(0.02, color="red", linestyle=":", linewidth=0.9, alpha=0.6)
+                ax2.set_ylabel("Approx KL")
+            ax.set_title("Policy Diagnostics")
+            if lines:
+                ax.legend(lines, labels, fontsize=8, loc="best")
+
+        panel_builders.append(("policy_diagnostics", _plot_policy_diagnostics))
+
+    n_panels = max(len(panel_builders), 1)
+    ncols = 2 if n_panels > 1 else 1
+    nrows = (n_panels + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 3.8 * nrows), squeeze=False)
     fig.suptitle("MAPPO Training Progress", fontsize=13)
+    axes_flat = list(axes.flat)
 
-    # Reward curve
-    ax = axes[0]
-    ax.plot(df["iteration"], df["mean_reward"], color="steelblue", linewidth=1.5)
-    if len(df) >= 10:
-        window = max(5, len(df) // 10)
-        smoothed = df["mean_reward"].rolling(window, min_periods=1).mean()
-        ax.plot(df["iteration"], smoothed, color="darkblue", linewidth=2, label=f"MA({window})")
-        ax.legend(fontsize=8)
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Mean Reward")
-    ax.set_title("Training Reward")
+    for ax, (_, builder) in zip(axes_flat, panel_builders):
+        builder(ax)
+    for ax in axes_flat[len(panel_builders):]:
+        ax.set_visible(False)
 
-    panel_idx = 1
-
-    # Per-agent reward curves
-    if has_agent_rewards:
-        ax = axes[panel_idx]
-        for col, label, color in reward_cols:
-            if col not in df.columns:
-                continue
-            ax.plot(df["iteration"], df[col], label=label, linewidth=1.4, color=color)
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Reward")
-        ax.set_title("Per-Agent Reward")
-        ax.legend(fontsize=8)
-        panel_idx += 1
-
-    # Value losses
-    if has_losses:
-        ax = axes[panel_idx]
-        loss_cols = [c for c in df.columns if c.endswith("_value_loss")]
-        for col in loss_cols:
-            label = col.replace("_value_loss", "")
-            ax.plot(df["iteration"], df[col], label=label, linewidth=1.2)
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Value Loss")
-        ax.set_title("Critic Loss")
-        ax.legend(fontsize=8)
-
-    plt.tight_layout(rect=(0, 0, 1, 0.93))
+    plt.tight_layout(rect=(0, 0, 1, 0.95))
     _save_or_show(fig, out_path)
 
 
@@ -237,6 +400,131 @@ def plot_mappo_comparison(
         ax.legend(fontsize=8)
 
     plt.tight_layout(rect=(0, 0, 1, 0.96))
+    _save_or_show(fig, out_path)
+
+
+def plot_time_series_diagnostics(
+    step_log: Any,
+    out_path: str | None = None,
+    time_col: str = "t",
+    column_group: str = "all",
+    title: str | None = None,
+) -> None:
+    """Plot varying numeric columns from a per-step diagnostics trace.
+
+    Parameters
+    ----------
+    step_log:
+        Per-step diagnostics DataFrame or record list.
+    out_path:
+        If provided, save the figure to this path.
+    time_col:
+        X-axis column (default ``"t"``).
+    column_group:
+        Which variable family to plot: ``"all"``, ``"aggregate"``,
+        ``"vessel"``, ``"port"``, or ``"coordinator"``.
+    title:
+        Optional figure title override.
+    """
+    import math
+    import pandas as pd
+    import re
+
+    df = pd.DataFrame(step_log) if not isinstance(step_log, pd.DataFrame) else step_log
+    if df.empty or time_col not in df.columns:
+        return
+
+    valid_groups = {"all", "aggregate", "vessel", "port", "coordinator"}
+    if column_group not in valid_groups:
+        raise ValueError(
+            f"unknown column_group={column_group!r}; expected one of {sorted(valid_groups)}"
+        )
+
+    entity_patterns = {
+        "vessel": re.compile(r"^vessel_\d+_"),
+        "port": re.compile(r"^port_\d+_"),
+        "coordinator": re.compile(r"^coordinator_\d+_"),
+    }
+
+    def _matches_group(col: str) -> bool:
+        if column_group == "all":
+            return True
+        if column_group == "aggregate":
+            return not any(pattern.match(col) for pattern in entity_patterns.values())
+        return bool(entity_patterns[column_group].match(col))
+
+    x = df[time_col]
+    numeric_cols: list[tuple[str, Any]] = []
+    for col in df.columns:
+        if col == time_col:
+            continue
+        if not _matches_group(col):
+            continue
+        series = pd.to_numeric(df[col], errors="coerce")
+        if series.isna().all():
+            continue
+        if series.nunique(dropna=True) <= 1:
+            continue
+        numeric_cols.append((col, series))
+
+    def _sort_key(item: tuple[str, Any]) -> tuple[int, str]:
+        col = item[0]
+        if col.startswith("vessel_"):
+            return (1, col)
+        if col.startswith("port_"):
+            return (2, col)
+        if col.startswith("coordinator_"):
+            return (3, col)
+        return (0, col)
+
+    numeric_cols.sort(key=_sort_key)
+
+    figure_title = title or {
+        "all": "Per-Step Diagnostics",
+        "aggregate": "Per-Step Diagnostics - Aggregate",
+        "vessel": "Per-Step Diagnostics - Vessels",
+        "port": "Per-Step Diagnostics - Ports",
+        "coordinator": "Per-Step Diagnostics - Coordinators",
+    }[column_group]
+
+    if not numeric_cols:
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.text(0.5, 0.5, "No varying numeric diagnostics", ha="center", va="center")
+        ax.axis("off")
+        fig.suptitle(figure_title, fontsize=13)
+        _save_or_show(fig, out_path)
+        return
+
+    nvars = len(numeric_cols)
+    if nvars <= 4:
+        ncols = 2
+    elif nvars <= 15:
+        ncols = 3
+    elif nvars <= 40:
+        ncols = 4
+    else:
+        ncols = 5
+    nrows = int(math.ceil(nvars / ncols))
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(5.2 * ncols, 2.6 * nrows),
+        squeeze=False,
+    )
+    fig.suptitle(figure_title, fontsize=13)
+    axes_flat = list(axes.flat)
+
+    for ax, (col, series) in zip(axes_flat, numeric_cols):
+        ax.plot(x, series, linewidth=1.4, color="steelblue")
+        ax.set_title(col.replace("_", " ").title(), fontsize=9)
+        ax.set_xlabel(time_col)
+        ax.grid(True, alpha=0.2)
+
+    for ax in axes_flat[len(numeric_cols):]:
+        ax.set_visible(False)
+
+    plt.tight_layout(rect=(0, 0, 1, 0.97))
     _save_or_show(fig, out_path)
 
 

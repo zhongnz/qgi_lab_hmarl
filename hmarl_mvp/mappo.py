@@ -711,7 +711,7 @@ class MAPPOTrainer:
         self._reset_buffers()
         obs = self.env.reset()
         self._obs = obs
-        total_reward = 0.0
+        legacy_total_reward = 0.0
         total_vessel_reward_rollout = 0.0
         total_port_reward_rollout = 0.0
         total_coord_reward_rollout = 0.0
@@ -850,8 +850,12 @@ class MAPPOTrainer:
                 buf.set_done(-1, float(done))
                 total_coord_reward_rollout += raw_r
 
-            step_reward = float(np.mean(rewards["vessels"])) + float(rewards["coordinator"])
-            total_reward += step_reward
+            # Backward-compatible headline reward used by existing training
+            # summaries and checkpoint defaults.
+            legacy_step_reward = (
+                float(np.mean(rewards["vessels"])) + float(rewards["coordinator"])
+            )
+            legacy_total_reward += legacy_step_reward
 
             if done:
                 obs = self.env.reset()
@@ -879,7 +883,7 @@ class MAPPOTrainer:
                 coord_last.append(self._get_ac("coordinator", i).critic(gs_tensor).item())
             self.coordinator_buf.compute_returns(coord_last)
 
-        mean_reward = total_reward / self.mappo_cfg.rollout_length
+        mean_reward = legacy_total_reward / self.mappo_cfg.rollout_length
         self._episode_rewards.append(mean_reward)
 
         # Per-agent-type reward breakdown (accumulated across all rollout steps)
@@ -887,12 +891,24 @@ class MAPPOTrainer:
         num_ports = max(len(self.env.ports), 1)
         num_coords = max(len(self.env.coordinators), 1)
         rollout_len = self.mappo_cfg.rollout_length
+        vessel_mean_reward = total_vessel_reward_rollout / (num_vessels * rollout_len)
+        port_mean_reward = total_port_reward_rollout / (num_ports * rollout_len)
+        coordinator_mean_reward = total_coord_reward_rollout / (num_coords * rollout_len)
+        joint_mean_reward = (
+            vessel_mean_reward + port_mean_reward + coordinator_mean_reward
+        )
+        total_reward = (
+            total_vessel_reward_rollout
+            + total_port_reward_rollout
+            + total_coord_reward_rollout
+        )
         return {
             "mean_reward": mean_reward,
+            "joint_mean_reward": joint_mean_reward,
             "total_reward": total_reward,
-            "vessel_mean_reward": total_vessel_reward_rollout / (num_vessels * rollout_len),
-            "port_mean_reward": total_port_reward_rollout / (num_ports * rollout_len),
-            "coordinator_mean_reward": total_coord_reward_rollout / (num_coords * rollout_len),
+            "vessel_mean_reward": vessel_mean_reward,
+            "port_mean_reward": port_mean_reward,
+            "coordinator_mean_reward": coordinator_mean_reward,
         }
 
     # ------------------------------------------------------------------
@@ -1228,6 +1244,7 @@ class MAPPOTrainer:
             entry: dict[str, Any] = {
                 "iteration": it,
                 "mean_reward": rollout_info["mean_reward"],
+                "joint_mean_reward": rollout_info.get("joint_mean_reward", 0.0),
                 "total_reward": rollout_info["total_reward"],
                 "vessel_mean_reward": rollout_info.get("vessel_mean_reward", 0.0),
                 "port_mean_reward": rollout_info.get("port_mean_reward", 0.0),

@@ -9,7 +9,7 @@
 
 ## Attendees
 
-- Peter
+- Peter Zhong
 - Quantum Geometric Intelligence (QGI) lab members
 
 ## Agenda

@@ -46,7 +46,28 @@ class TestCollectRolloutRewards:
         """mean_reward and total_reward still present."""
         info = trainer.collect_rollout()
         assert "mean_reward" in info
+        assert "joint_mean_reward" in info
         assert "total_reward" in info
+
+    def test_joint_and_total_reward_are_consistent(self, trainer: MAPPOTrainer) -> None:
+        info = trainer.collect_rollout()
+        expected_joint = (
+            info["vessel_mean_reward"]
+            + info["port_mean_reward"]
+            + info["coordinator_mean_reward"]
+        )
+        assert info["joint_mean_reward"] == pytest.approx(expected_joint)
+
+        num_vessels = max(len(trainer.env.vessels), 1)
+        num_ports = max(len(trainer.env.ports), 1)
+        num_coords = max(len(trainer.env.coordinators), 1)
+        rollout_len = trainer.mappo_cfg.rollout_length
+        expected_total = rollout_len * (
+            num_vessels * info["vessel_mean_reward"]
+            + num_ports * info["port_mean_reward"]
+            + num_coords * info["coordinator_mean_reward"]
+        )
+        assert info["total_reward"] == pytest.approx(expected_total)
 
 
 # -----------------------------------------------------------------------
