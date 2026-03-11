@@ -407,6 +407,10 @@ class TestKLEarlyStopping(unittest.TestCase):
         for entry in history:
             self.assertIn("vessel_approx_kl", entry)
             self.assertIn("vessel_kl_early_stopped", entry)
+            self.assertIn("coordinator_top1_prob", entry)
+            self.assertIn("coordinator_entropy_gap_from_uniform", entry)
+            self.assertIn("vessel_log_std_0", entry)
+            self.assertIn("vessel_log_std_1", entry)
 
 
 # ===================================================================

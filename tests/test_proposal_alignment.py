@@ -62,27 +62,32 @@ class TestVesselDockAvailabilityObs(unittest.TestCase):
             directive={"dest_port": 1, "departure_window_hours": 12, "emission_budget": 50},
             dock_availability=0.67,
         )
-        # 5 local + 6 forecast + 3 directive = 14
-        self.assertEqual(len(obs), 5 + 6 + 3)
+        # 8 local + 6 forecast + 3 directive = 17
+        self.assertEqual(len(obs), 8 + 6 + 3)
 
     def test_dock_avail_value_in_obs(self) -> None:
         cfg = get_default_config(short_horizon_hours=4)
-        state = VesselState(vessel_id=0, location=0, destination=1, speed=10.0)
+        state = VesselState(
+            vessel_id=0, location=0, destination=1, position_nm=7.5, speed=10.0, stalled=True
+        )
         agent = VesselAgent(state, cfg)
         obs = agent.get_obs(
             short_forecast_row=np.zeros(4),
             dock_availability=0.75,
         )
-        # dock_availability is the 5th element (index 4) of the local block
-        self.assertAlmostEqual(obs[4], 0.75, places=5)
+        self.assertAlmostEqual(obs[1], 7.5, places=5)
+        self.assertAlmostEqual(obs[5], 1.0, places=5)
+        self.assertAlmostEqual(obs[6], 0.0, places=5)
+        # dock_availability is the last element (index 7) of the local block
+        self.assertAlmostEqual(obs[7], 0.75, places=5)
 
     def test_env_passes_dock_avail_to_vessel_obs(self) -> None:
         cfg = get_default_config(num_ports=3, num_vessels=2, rollout_steps=10)
         env = MaritimeEnv(config=cfg, seed=42)
         obs = env.reset()
-        # Vessel obs dimension should be 5 + short_h + 3
+        # Vessel obs dimension should be 8 + short_h + 3
         short_h = cfg["short_horizon_hours"]
-        expected_dim = 5 + short_h + 3
+        expected_dim = 8 + short_h + 3
         for v_obs in obs["vessels"]:
             self.assertEqual(len(v_obs), expected_dim)
 

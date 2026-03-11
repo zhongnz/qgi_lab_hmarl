@@ -303,7 +303,7 @@ def build_actor_critics(
     - Coordinator: discrete ``dest_port × departure_window`` bins.
     """
     hidden_dims = hidden_dims or [64, 64]
-    dep_windows = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
+    dep_windows = config.get("coordinator_departure_window_options", (0,))
     num_windows = len(dep_windows) if isinstance(dep_windows, (list, tuple)) else 1
     port_action_dim = (int(config["docks_per_port"]) + 1) ** 2
     coordinator_actions = int(config["num_ports"]) * max(int(num_windows), 1)
@@ -350,7 +350,7 @@ def build_per_agent_actor_critics(
     against the default shared-parameter CTDE architecture.
     """
     hidden_dims = hidden_dims or [64, 64]
-    dep_windows = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
+    dep_windows = config.get("coordinator_departure_window_options", (0,))
     num_windows = len(dep_windows) if isinstance(dep_windows, (list, tuple)) else 1
     port_action_dim = (int(config["docks_per_port"]) + 1) ** 2
     coordinator_actions = int(config["num_ports"]) * max(int(num_windows), 1)
@@ -392,7 +392,8 @@ def obs_dim_from_env(
     """Compute observation dimensions for each agent type.
 
     Based on the observation builders in ``agents.py`` and ``env.py``:
-    - Vessel: 5 (local: loc, speed, fuel, emissions, dock_avail)
+    - Vessel: 8 (local: loc, position_nm, speed, fuel, emissions,
+              stalled, port_service_state, dock_avail)
               + short_horizon_hours (forecast) + 3 (directive)
               + 1 if weather_enabled (sea_state)
     - Port: 5 (local: queue, docks, occupied, booked_arrivals,
@@ -400,7 +401,7 @@ def obs_dim_from_env(
               + 1 (incoming)
             + 3 if weather_enabled and port_weather_features
     - Coordinator: num_ports * medium_horizon_days + num_ports * 5
-                   + num_vessels * 4 + 1
+                   + num_vessels * 7 + 1
                    + num_ports * num_ports if weather_enabled
                    (flattened weather matrix)
     """
@@ -409,13 +410,13 @@ def obs_dim_from_env(
     medium_d = config["medium_horizon_days"]
     num_vessels = config["num_vessels"]
 
-    vessel_dim = 5 + short_h + 3  # 5 local (loc, speed, fuel, emissions, dock_avail)
+    vessel_dim = 8 + short_h + 3
     if config.get("weather_enabled", False):
         vessel_dim += 1  # sea_state on current route
     port_dim = 5 + short_h + 1
     if config.get("weather_enabled", False) and config.get("port_weather_features", True):
         port_dim += 3  # inbound weather summary (mean, max, rough_fraction)
-    coordinator_dim = num_ports * medium_d + num_ports * 5 + num_vessels * 4 + 1
+    coordinator_dim = num_ports * medium_d + num_ports * 5 + num_vessels * 7 + 1
     if config.get("weather_enabled", False):
         coordinator_dim += num_ports * num_ports
 

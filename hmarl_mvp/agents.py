@@ -18,7 +18,7 @@ class FleetCoordinatorState:
     cumulative_emissions: float = 0.0
     last_dest_port: int = 0
     emission_budget: float = 50.0
-    departure_window_hours: int = 12
+    departure_window_hours: int = 0
 
 
 class VesselAgent:
@@ -66,9 +66,12 @@ class VesselAgent:
                 np.array(
                     [
                         self.state.location,
+                        self.state.position_nm,
                         self.state.speed,
                         self.state.fuel,
                         self.state.emissions,
+                        float(bool(self.state.stalled)),
+                        float(getattr(self.state, "port_service_state", 0)),
                         dock_availability,
                     ],
                     dtype=float,
@@ -168,7 +171,7 @@ class FleetCoordinatorAgent:
         self.state = FleetCoordinatorState(coordinator_id=coordinator_id)
         self.last_action: dict[str, Any] = {
             "dest_port": 0,
-            "departure_window_hours": 12,
+            "departure_window_hours": 0,
             "emission_budget": 50.0,
         }
 
@@ -186,7 +189,18 @@ class FleetCoordinatorAgent:
         appends a zero vector to keep observation dimensions fixed.
         """
         vessel_summaries = np.array(
-            [[v.location, v.speed, v.fuel, v.emissions] for v in vessels],
+            [
+                [
+                    v.location,
+                    v.position_nm,
+                    v.speed,
+                    v.fuel,
+                    v.emissions,
+                    float(bool(v.stalled)),
+                    float(getattr(v, "port_service_state", 0)),
+                ]
+                for v in vessels
+            ],
             dtype=float,
         )
         num_ports = int(self.cfg.get("num_ports", 0))

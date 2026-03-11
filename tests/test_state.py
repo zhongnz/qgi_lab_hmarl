@@ -42,6 +42,8 @@ class PortStateTests(unittest.TestCase):
         self.assertEqual(p.cumulative_wait_hours, 0.0)
         self.assertEqual(p.vessels_served, 0)
         self.assertEqual(p.service_times, [])
+        self.assertEqual(p.queued_vessel_ids, [])
+        self.assertEqual(p.servicing_vessel_ids, [])
 
     def test_service_times_independent(self) -> None:
         """Each instance gets its own service_times list."""
@@ -61,6 +63,8 @@ class PortStateTests(unittest.TestCase):
         self.assertEqual(p.docks, 4)
         self.assertEqual(p.occupied, 2)
         self.assertEqual(p.service_times, [1.0, 2.0])
+        self.assertEqual(p.queued_vessel_ids, [])
+        self.assertEqual(p.servicing_vessel_ids, [])
         self.assertAlmostEqual(p.cumulative_wait_hours, 10.0)
         self.assertEqual(p.vessels_served, 7)
 
@@ -74,9 +78,11 @@ class VesselStateTests(unittest.TestCase):
         self.assertAlmostEqual(v.speed, 12.0)
         self.assertAlmostEqual(v.fuel, 100.0)
         self.assertAlmostEqual(v.initial_fuel, 100.0)
+        self.assertAlmostEqual(v.cumulative_fuel_used, 0.0)
         self.assertAlmostEqual(v.emissions, 0.0)
         self.assertAlmostEqual(v.delay_hours, 0.0)
         self.assertFalse(v.at_sea)
+        self.assertEqual(v.port_service_state, 0)
 
     def test_custom_values(self) -> None:
         v = VesselState(
@@ -120,6 +126,8 @@ class InitializePortsTests(unittest.TestCase):
         ports = initialize_ports(8, docks_per_port=4, rng=rng)
         for p in ports:
             self.assertEqual(len(p.service_times), p.occupied)
+            self.assertEqual(len(p.servicing_vessel_ids), p.occupied)
+            self.assertEqual(len(p.queued_vessel_ids), p.queue)
 
     def test_custom_service_time(self) -> None:
         rng = make_rng(42)

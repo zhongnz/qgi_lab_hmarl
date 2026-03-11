@@ -56,7 +56,7 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         medium = np.ones((5, self.cfg["medium_horizon_days"]))
         obs = agent.get_obs(medium, vessels)
         # medium_forecast flattened + port load summary + vessel_summaries + 1 (emissions)
-        expected = 5 * self.cfg["medium_horizon_days"] + 5 * 5 + 3 * 4 + 1
+        expected = 5 * self.cfg["medium_horizon_days"] + 5 * 5 + 3 * 7 + 1
         self.assertEqual(obs.shape, (expected,))
 
     def test_get_obs_includes_weather_matrix_when_enabled(self) -> None:
@@ -66,7 +66,7 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         medium = np.ones((3, cfg["medium_horizon_days"]))
         weather = np.ones((3, 3), dtype=float)
         obs = agent.get_obs(medium, vessels, weather=weather)
-        expected = 3 * cfg["medium_horizon_days"] + 3 * 5 + 2 * 4 + 1 + 3 * 3
+        expected = 3 * cfg["medium_horizon_days"] + 3 * 5 + 2 * 7 + 1 + 3 * 3
         self.assertEqual(obs.shape, (expected,))
 
     def test_get_obs_includes_port_load_summary(self) -> None:
@@ -103,7 +103,7 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         agent = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
         result = agent.apply_action({})
         self.assertEqual(result["dest_port"], 0)
-        self.assertEqual(result["departure_window_hours"], 12)
+        self.assertEqual(result["departure_window_hours"], 0)
         self.assertAlmostEqual(result["emission_budget"], 50.0)
 
 

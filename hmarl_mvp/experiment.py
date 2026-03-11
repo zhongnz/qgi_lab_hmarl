@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -28,6 +29,13 @@ from .state import make_rng
 VALID_POLICIES = {"independent", "reactive", "forecast", "oracle", "learned_forecast"}
 
 
+def _json_cell(value: Any) -> Any:
+    """Serialize structured action/event payloads for CSV-friendly logging."""
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, sort_keys=True)
+    return value
+
+
 def _flatten_vessel_state(vessels: list[Any], rewards: list[Any] | None = None) -> dict[str, float]:
     """Flatten per-vessel state into numeric columns for diagnostics."""
     flat: dict[str, float] = {}
@@ -39,10 +47,33 @@ def _flatten_vessel_state(vessels: list[Any], rewards: list[Any] | None = None) 
         flat[f"{prefix}_position_nm"] = float(vessel.position_nm)
         flat[f"{prefix}_speed"] = float(vessel.speed)
         flat[f"{prefix}_fuel"] = float(vessel.fuel)
+        flat[f"{prefix}_cumulative_fuel_used"] = float(
+            getattr(vessel, "cumulative_fuel_used", 0.0)
+        )
         flat[f"{prefix}_emissions"] = float(vessel.emissions)
         flat[f"{prefix}_delay_hours"] = float(vessel.delay_hours)
+        flat[f"{prefix}_schedule_delay_hours"] = float(
+            getattr(vessel, "schedule_delay_hours", 0.0)
+        )
         flat[f"{prefix}_at_sea"] = float(bool(vessel.at_sea))
         flat[f"{prefix}_stalled"] = float(bool(getattr(vessel, "stalled", False)))
+        flat[f"{prefix}_port_service_state"] = float(
+            getattr(vessel, "port_service_state", 0)
+        )
+        flat[f"{prefix}_requested_arrival_time"] = float(
+            getattr(vessel, "requested_arrival_time", 0.0)
+        )
+        flat[f"{prefix}_pending_requested_arrival_time"] = float(
+            getattr(vessel, "pending_requested_arrival_time", 0.0)
+        )
+        flat[f"{prefix}_completed_arrivals"] = float(getattr(vessel, "completed_arrivals", 0))
+        flat[f"{prefix}_completed_scheduled_arrivals"] = float(
+            getattr(vessel, "completed_scheduled_arrivals", 0)
+        )
+        flat[f"{prefix}_on_time_arrivals"] = float(getattr(vessel, "on_time_arrivals", 0))
+        flat[f"{prefix}_last_schedule_delay_hours"] = float(
+            getattr(vessel, "last_schedule_delay_hours", 0.0)
+        )
         flat[f"{prefix}_pending_departure"] = float(bool(vessel.pending_departure))
         flat[f"{prefix}_depart_at_step"] = float(vessel.depart_at_step)
         vid = int(vessel.vessel_id)
@@ -159,8 +190,16 @@ def _build_step_trace_row(
         "step_fuel_used": float(info.get("step_fuel_used", 0.0)),
         "step_co2_emitted": float(info.get("step_co2_emitted", 0.0)),
         "step_delay_hours": float(info.get("step_delay_hours", 0.0)),
+        "step_schedule_delay_hours": float(info.get("step_schedule_delay_hours", 0.0)),
         "step_stall_hours": float(info.get("step_stall_hours", 0.0)),
         "step_vessels_served": float(info.get("step_vessels_served", 0.0)),
+        "step_scheduled_arrivals_completed": float(
+            info.get("step_scheduled_arrivals_completed", 0.0)
+        ),
+        "step_on_time_arrivals": float(info.get("step_on_time_arrivals", 0.0)),
+        "step_fuel_capped_departures": float(info.get("step_fuel_capped_departures", 0.0)),
+        "step_fuel_blocked_departures": float(info.get("step_fuel_blocked_departures", 0.0)),
+        "step_refueled_vessels": float(info.get("step_refueled_vessels", 0.0)),
         **vessel_metrics,
         **port_metrics,
         **economic_metrics,
@@ -179,9 +218,84 @@ def _build_step_trace_row(
         ),
         **_flatten_coordinator_rewards(rewards.get("coordinators")),
     }
+    row.update(
+        {
+            key: float(value)
+            for key, value in info.items()
+            if key.startswith(("vessel_reward_", "port_reward_", "coordinator_reward_"))
+            and isinstance(value, (int, float, np.integer, np.floating))
+        }
+    )
     if extra:
         row.update(extra)
     return row
+
+
+def _build_action_trace_rows(
+    *,
+    t: int,
+    policy: str,
+    coordinator_actions: list[dict[str, Any]],
+    vessel_actions: list[dict[str, Any]],
+    port_actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build flat per-agent action rows for one environment step."""
+    rows: list[dict[str, Any]] = []
+    for agent_id, action in enumerate(vessel_actions):
+        rows.append(
+            {
+                "t": int(t),
+                "policy": policy,
+                "agent_type": "vessel",
+                "agent_id": int(agent_id),
+                "target_speed": float(action.get("target_speed", 0.0)),
+                "request_arrival_slot": int(bool(action.get("request_arrival_slot", False))),
+                "requested_arrival_time": float(action.get("requested_arrival_time", 0.0)),
+            }
+        )
+    for agent_id, action in enumerate(port_actions):
+        rows.append(
+            {
+                "t": int(t),
+                "policy": policy,
+                "agent_type": "port",
+                "agent_id": int(agent_id),
+                "service_rate": int(action.get("service_rate", 0)),
+                "accept_requests": int(action.get("accept_requests", 0)),
+            }
+        )
+    for agent_id, action in enumerate(coordinator_actions):
+        rows.append(
+            {
+                "t": int(t),
+                "policy": policy,
+                "agent_type": "coordinator",
+                "agent_id": int(agent_id),
+                "dest_port": int(action.get("dest_port", -1)),
+                "departure_window_hours": int(action.get("departure_window_hours", 0)),
+                "emission_budget": float(action.get("emission_budget", 0.0)),
+                "assigned_vessel_ids_json": _json_cell(action.get("assigned_vessel_ids", [])),
+                "per_vessel_dest_json": _json_cell(action.get("per_vessel_dest", {})),
+            }
+        )
+    return rows
+
+
+def _build_event_log_rows(
+    *,
+    default_t: int,
+    policy: str,
+    info: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build flat event rows from the environment step info payload."""
+    rows: list[dict[str, Any]] = []
+    for raw_event in info.get("events", []) or []:
+        row = {"policy": policy}
+        for key, value in raw_event.items():
+            row[key] = _json_cell(value)
+        row.setdefault("t", int(default_t))
+        rows.append(row)
+    return rows
 
 
 def run_experiment(
@@ -355,7 +469,9 @@ def run_trained_mappo_trace(
     num_steps: int | None = None,
     deterministic: bool = True,
     policy_label: str = "mappo",
-) -> pd.DataFrame:
+    return_logs: bool = False,
+    heuristic_coordinator: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run a trained MAPPO policy for one episode and return per-step diagnostics."""
     import torch
 
@@ -369,6 +485,8 @@ def run_trained_mappo_trace(
 
     device = trainer.device
     rows: list[dict[str, Any]] = []
+    action_rows: list[dict[str, Any]] = []
+    event_rows: list[dict[str, Any]] = []
     cumulative_vessel_requests = 0.0
     cumulative_port_accepted = 0.0
 
@@ -410,20 +528,24 @@ def run_trained_mappo_trace(
                 )
                 port_actions.append(_nn_to_port_action(action_t.squeeze(0), i, trainer.env))
 
-            assignments = trainer.env._build_assignments()
-            coord_actions = []
-            c_mask = trainer._coordinator_mask_tensor()
-            for i, c_obs in enumerate(obs["coordinators"]):
-                c_obs_n = trainer._eval_normalize_obs(c_obs, "coordinator")
-                c_t = torch.as_tensor(
-                    c_obs_n, dtype=torch.float32, device=device
-                ).unsqueeze(0)
-                action_t, _, _ = trainer._get_ac("coordinator", i).get_action_and_value(
-                    c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
-                )
-                coord_actions.append(
-                    _nn_to_coordinator_action(action_t.squeeze(0), i, trainer.env, assignments)
-                )
+            if heuristic_coordinator:
+                heuristic_actions = trainer.env.sample_stub_actions()
+                coord_actions = list(heuristic_actions.get("coordinators", []))
+            else:
+                assignments = trainer.env._build_assignments()
+                coord_actions = []
+                c_mask = trainer._coordinator_mask_tensor()
+                for i, c_obs in enumerate(obs["coordinators"]):
+                    c_obs_n = trainer._eval_normalize_obs(c_obs, "coordinator")
+                    c_t = torch.as_tensor(
+                        c_obs_n, dtype=torch.float32, device=device
+                    ).unsqueeze(0)
+                    action_t, _, _ = trainer._get_ac("coordinator", i).get_action_and_value(
+                        c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
+                    )
+                    coord_actions.append(
+                        _nn_to_coordinator_action(action_t.squeeze(0), i, trainer.env, assignments)
+                    )
 
         env_actions = {
             "coordinator": coord_actions[0] if coord_actions else {},
@@ -431,7 +553,23 @@ def run_trained_mappo_trace(
             "vessels": vessel_actions,
             "ports": port_actions,
         }
+        action_rows.extend(
+            _build_action_trace_rows(
+                t=step_i,
+                policy=policy_label,
+                coordinator_actions=coord_actions,
+                vessel_actions=vessel_actions,
+                port_actions=port_actions,
+            )
+        )
         obs, rewards, done, info = trainer.env.step(env_actions)
+        event_rows.extend(
+            _build_event_log_rows(
+                default_t=step_i,
+                policy=policy_label,
+                info=info,
+            )
+        )
         step_requests = float(info.get("requests_submitted", 0.0))
         step_accepted = float(info.get("requests_accepted", 0.0))
         cumulative_vessel_requests += step_requests
@@ -453,7 +591,10 @@ def run_trained_mappo_trace(
         if done:
             break
 
-    return pd.DataFrame(rows)
+    trace_df = pd.DataFrame(rows)
+    if return_logs:
+        return trace_df, pd.DataFrame(action_rows), pd.DataFrame(event_rows)
+    return trace_df
 
 
 def run_policy_sweep(
@@ -655,6 +796,70 @@ def run_mappo_comparison(
     # Attach training log
     results["_train_log"] = pd.DataFrame(train_log)
     return results
+
+
+def run_mappo_coordinator_ablation(
+    train_iterations: int = 50,
+    rollout_length: int = 64,
+    eval_steps: int | None = None,
+    seed: int = SEED,
+    config: dict[str, Any] | None = None,
+    mappo_kwargs: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Compare fully learned MAPPO against a heuristic-coordinator hybrid.
+
+    The hybrid keeps learned vessel and port policies but replaces the
+    coordinator with the forecast heuristic during both rollout collection
+    and evaluation.
+    """
+    from .mappo import MAPPOConfig, MAPPOTrainer
+
+    cfg = get_default_config(**(config or {}))
+    eval_steps = eval_steps or rollout_length
+    extra = dict(mappo_kwargs or {})
+    extra.setdefault("rollout_length", rollout_length)
+
+    rows: list[dict[str, Any]] = []
+    traces: dict[str, pd.DataFrame] = {}
+    variants = {
+        "all_learned": False,
+        "heuristic_coordinator": True,
+    }
+
+    for label, heuristic_coordinator in variants.items():
+        trainer = MAPPOTrainer(
+            env_config=cfg,
+            mappo_config=MAPPOConfig(**extra),
+            seed=seed,
+        )
+        for _ in range(train_iterations):
+            trainer.collect_rollout(heuristic_coordinator=heuristic_coordinator)
+            trainer.update()
+
+        eval_result = trainer.evaluate(
+            num_steps=eval_steps,
+            deterministic=True,
+            heuristic_coordinator=heuristic_coordinator,
+        )
+        traces[label] = run_trained_mappo_trace(
+            trainer,
+            num_steps=eval_steps,
+            deterministic=True,
+            policy_label=label,
+            heuristic_coordinator=heuristic_coordinator,
+        )
+
+        history = trainer.reward_history
+        row: dict[str, Any] = {
+            "variant": label,
+            "heuristic_coordinator": heuristic_coordinator,
+            "final_mean_reward": history[-1] if history else 0.0,
+            "best_mean_reward": max(history) if history else 0.0,
+        }
+        row.update(eval_result)
+        rows.append(row)
+
+    return pd.DataFrame(rows), traces
 
 
 # ---------------------------------------------------------------------------

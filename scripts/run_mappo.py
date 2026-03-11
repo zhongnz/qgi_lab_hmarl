@@ -265,8 +265,20 @@ def cmd_train(args: argparse.Namespace) -> None:
         json.dump(eval_result, f, indent=2, default=str)
 
     # Per-step diagnostics trace
-    eval_trace = run_trained_mappo_trace(trainer, num_steps=env_cfg["rollout_steps"])
+    trace_result = run_trained_mappo_trace(
+        trainer,
+        num_steps=env_cfg["rollout_steps"],
+        return_logs=True,
+    )
+    if isinstance(trace_result, tuple):
+        eval_trace, eval_action_trace, eval_event_log = trace_result
+    else:
+        eval_trace = trace_result
+        eval_action_trace = pd.DataFrame()
+        eval_event_log = pd.DataFrame()
     eval_trace.to_csv(out_dir / "eval_trace.csv", index=False)
+    eval_action_trace.to_csv(out_dir / "eval_action_trace.csv", index=False)
+    eval_event_log.to_csv(out_dir / "eval_event_log.csv", index=False)
 
     # Generate report
     report = generate_training_report(

@@ -427,6 +427,8 @@ class TestCLIWeatherWiring:
         assert (tmp_path / "train_history.csv").exists()
         assert (tmp_path / "eval_result.json").exists()
         assert (tmp_path / "eval_trace.csv").exists()
+        assert (tmp_path / "eval_action_trace.csv").exists()
+        assert (tmp_path / "eval_event_log.csv").exists()
         assert (tmp_path / "training_curves.png").exists()
         assert (tmp_path / "diagnostics_trace.png").exists()
         assert (tmp_path / "diagnostics_trace_vessels.png").exists()

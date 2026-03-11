@@ -34,18 +34,27 @@ class HMARLConfig:
     fuel_weight: float = 1.0
     delay_weight: float = 1.5
     emission_weight: float = 0.7
-    transit_time_weight: float = 12.0
+    transit_time_weight: float = 8.0
     arrival_reward: float = 15.0
+    on_time_arrival_reward: float = 20.0
+    schedule_delay_weight: float = 8.0
     emission_lambda: float = 2.0
     dock_idle_weight: float = 0.5
     port_accept_reward: float = 1.5
     port_reject_penalty: float = 1.0
     port_service_reward: float = 2.0
+    coordinator_fuel_weight: float = 0.25
+    coordinator_queue_weight: float = 0.75
+    coordinator_emission_weight: float = 0.2
     coordinator_delay_weight: float = 3.0
-    coordinator_accept_reward: float = 3.0
+    coordinator_schedule_delay_weight: float = 6.0
+    coordinator_accept_reward: float = 2.0
     coordinator_reject_penalty: float = 2.0
-    coordinator_service_reward: float = 4.0
-    coordinator_idle_dock_weight: float = 1.0
+    coordinator_service_reward: float = 6.0
+    coordinator_idle_dock_weight: float = 0.75
+    coordinator_utilization_reward: float = 2.0
+    on_time_tolerance_hours: float = 2.0
+    requested_arrival_slack_hours: float = 6.0
     # Physics
     fuel_rate_coeff: float = 0.002
     emission_factor: float = 3.114
@@ -62,7 +71,7 @@ class HMARLConfig:
     weather_autocorrelation: float = 0.0
     weather_shaping_weight: float = 0.3
     port_weather_features: bool = True
-    coordinator_departure_window_options: tuple[int, ...] = (0, 6, 12, 24)
+    coordinator_departure_window_options: tuple[int, ...] = (0,)
     # Economic parameters (RQ4)
     cargo_value_per_vessel: float = 1_000_000.0
     fuel_price_per_ton: float = 600.0
@@ -104,16 +113,25 @@ class HMARLConfig:
             "emission_weight": "float>=0",
             "transit_time_weight": "float>=0",
             "arrival_reward": "float>=0",
+            "on_time_arrival_reward": "float>=0",
+            "schedule_delay_weight": "float>=0",
             "emission_lambda": "float>=0",
             "dock_idle_weight": "float>=0",
             "port_accept_reward": "float>=0",
             "port_reject_penalty": "float>=0",
             "port_service_reward": "float>=0",
+            "coordinator_fuel_weight": "float>=0",
+            "coordinator_queue_weight": "float>=0",
+            "coordinator_emission_weight": "float>=0",
             "coordinator_delay_weight": "float>=0",
+            "coordinator_schedule_delay_weight": "float>=0",
             "coordinator_accept_reward": "float>=0",
             "coordinator_reject_penalty": "float>=0",
             "coordinator_service_reward": "float>=0",
             "coordinator_idle_dock_weight": "float>=0",
+            "coordinator_utilization_reward": "float>=0",
+            "on_time_tolerance_hours": "float>=0",
+            "requested_arrival_slack_hours": "float>=0",
             # Economic parameters
             "fuel_price_per_ton": "float>=0",
             "delay_penalty_per_hour": "float>=0",

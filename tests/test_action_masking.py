@@ -185,6 +185,10 @@ class TestExplainedVariance:
         r = PPOUpdateResult()
         assert hasattr(r, "explained_variance")
         assert r.explained_variance == 0.0
+        assert hasattr(r, "top1_prob")
+        assert r.top1_prob == 0.0
+        assert hasattr(r, "entropy_gap_from_uniform")
+        assert r.entropy_gap_from_uniform == 0.0
 
     def test_mappo_update_returns_explained_variance(self) -> None:
         """After a MAPPO update, explained_variance is populated."""
@@ -196,6 +200,10 @@ class TestExplainedVariance:
             # Should be a finite float (can be negative if value fn is very bad)
             assert isinstance(res.explained_variance, float)
             assert np.isfinite(res.explained_variance)
+            assert isinstance(res.top1_prob, float)
+            assert np.isfinite(res.top1_prob)
+            assert isinstance(res.entropy_gap_from_uniform, float)
+            assert np.isfinite(res.entropy_gap_from_uniform)
 
     def test_explained_variance_logged_in_train(self) -> None:
         """The train() method logs explained_variance per agent type."""
@@ -206,6 +214,12 @@ class TestExplainedVariance:
             assert "vessel_explained_variance" in entry
             assert "port_explained_variance" in entry
             assert "coordinator_explained_variance" in entry
+            assert "vessel_log_std_0" in entry
+            assert "vessel_log_std_1" in entry
+            assert "port_top1_prob" in entry
+            assert "coordinator_top1_prob" in entry
+            assert "port_entropy_gap_from_uniform" in entry
+            assert "coordinator_entropy_gap_from_uniform" in entry
 
 
 # ===================================================================

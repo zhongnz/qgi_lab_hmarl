@@ -18,6 +18,8 @@ class PortState:
     docks: int
     occupied: int
     service_times: list[float] = field(default_factory=list)
+    queued_vessel_ids: list[int] = field(default_factory=list)
+    servicing_vessel_ids: list[int] = field(default_factory=list)
     cumulative_wait_hours: float = 0.0
     vessels_served: int = 0
 
@@ -33,11 +35,20 @@ class VesselState:
     speed: float = 12.0
     fuel: float = 100.0
     initial_fuel: float = 100.0
+    cumulative_fuel_used: float = 0.0
     emissions: float = 0.0
     delay_hours: float = 0.0
+    schedule_delay_hours: float = 0.0
     at_sea: bool = False
     stalled: bool = False
+    port_service_state: int = 0
     trip_start_step: int = 0
+    requested_arrival_time: float = 0.0
+    pending_requested_arrival_time: float = 0.0
+    completed_arrivals: int = 0
+    completed_scheduled_arrivals: int = 0
+    on_time_arrivals: int = 0
+    last_schedule_delay_hours: float = 0.0
     # Departure-window enforcement: vessel waits at port until depart_at_step.
     pending_departure: bool = False
     depart_at_step: int = 0
@@ -57,14 +68,17 @@ def initialize_ports(
     """Initialize random port states."""
     ports: list[PortState] = []
     for i in range(num_ports):
+        queue = int(rng.integers(0, 5))
         occupied = int(rng.integers(0, docks_per_port))
         ports.append(
             PortState(
                 port_id=i,
-                queue=int(rng.integers(0, 5)),
+                queue=queue,
                 docks=docks_per_port,
                 occupied=occupied,
                 service_times=[float(service_time_hours) for _ in range(occupied)],
+                queued_vessel_ids=[-1 for _ in range(queue)],
+                servicing_vessel_ids=[-1 for _ in range(occupied)],
             )
         )
     return ports

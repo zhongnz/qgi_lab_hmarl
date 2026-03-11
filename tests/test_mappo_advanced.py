@@ -8,7 +8,11 @@ import pytest
 
 from hmarl_mvp.buffer import MultiAgentRolloutBuffer, RolloutBuffer
 from hmarl_mvp.config import get_default_config
-from hmarl_mvp.experiment import run_mappo_comparison, run_trained_mappo_trace
+from hmarl_mvp.experiment import (
+    run_mappo_comparison,
+    run_mappo_coordinator_ablation,
+    run_trained_mappo_trace,
+)
 from hmarl_mvp.mappo import MAPPOConfig, MAPPOTrainer, RunningMeanStd
 from hmarl_mvp.plotting import plot_mappo_comparison, plot_training_curves
 
@@ -194,6 +198,10 @@ class TestMAPPOComparison:
             "step_delay_hours",
             "avg_vessel_reward",
             "coordinator_reward",
+            "vessel_reward_fuel_cost_total",
+            "port_reward_service_bonus_total",
+            "coordinator_reward_utilization_bonus_total",
+            "coordinator_reward_delay_penalty_total",
             "directive_queue_size",
             "arrival_request_queue_size",
             "slot_response_queue_size",
@@ -206,6 +214,56 @@ class TestMAPPOComparison:
             "port_0_reward",
         ):
             assert col in trace.columns
+
+    def test_run_trained_mappo_trace_can_return_action_and_event_logs(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=4, rollout_steps=12)
+        mappo_cfg = MAPPOConfig(rollout_length=4, hidden_dims=[16, 16])
+        trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=42)
+        trace, action_log, event_log = run_trained_mappo_trace(
+            trainer, num_steps=5, return_logs=True
+        )
+        assert isinstance(trace, pd.DataFrame)
+        assert isinstance(action_log, pd.DataFrame)
+        assert isinstance(event_log, pd.DataFrame)
+        assert len(trace) > 0
+        assert len(action_log) > 0
+        for col in ("t", "policy", "agent_type", "agent_id"):
+            assert col in action_log.columns
+        assert {"vessel", "port", "coordinator"}.issubset(set(action_log["agent_type"]))
+        for col in ("t", "policy", "event_type", "stage"):
+            assert col in event_log.columns
+        assert len(event_log) > 0
+
+    def test_run_trained_mappo_trace_with_heuristic_coordinator(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=4, rollout_steps=12)
+        mappo_cfg = MAPPOConfig(rollout_length=4, hidden_dims=[16, 16])
+        trainer = MAPPOTrainer(env_config=cfg, mappo_config=mappo_cfg, seed=42)
+        trainer.collect_rollout(heuristic_coordinator=True)
+        trainer.update()
+        trace = run_trained_mappo_trace(
+            trainer,
+            num_steps=5,
+            heuristic_coordinator=True,
+            policy_label="hybrid",
+        )
+        assert isinstance(trace, pd.DataFrame)
+        assert len(trace) > 0
+        assert (trace["policy"] == "hybrid").all()
+
+    def test_run_mappo_coordinator_ablation(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=4, rollout_steps=20)
+        summary, traces = run_mappo_coordinator_ablation(
+            train_iterations=2,
+            rollout_length=8,
+            eval_steps=5,
+            seed=42,
+            config=cfg,
+            mappo_kwargs={"hidden_dims": [16, 16]},
+        )
+        assert set(summary["variant"]) == {"all_learned", "heuristic_coordinator"}
+        assert set(traces.keys()) == {"all_learned", "heuristic_coordinator"}
+        assert len(traces["all_learned"]) == 5
+        assert len(traces["heuristic_coordinator"]) == 5
 
 
 # ---------------------------------------------------------------------------

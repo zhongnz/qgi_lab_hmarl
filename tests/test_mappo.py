@@ -98,7 +98,7 @@ class TestActionTranslation:
         assert action["dest_port"] == 1
         assert "per_vessel_dest" in action
         assert "emission_budget" in action
-        assert action["departure_window_hours"] in (0, 6, 12, 24)
+        assert action["departure_window_hours"] in tuple(cfg["coordinator_departure_window_options"])
 
 
 class TestMAPPOTrainer:

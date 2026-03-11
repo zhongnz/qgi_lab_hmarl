@@ -28,7 +28,7 @@ from torch import nn
 from .buffer import MultiAgentRolloutBuffer
 from .env import MaritimeEnv
 from .metrics import compute_economic_metrics, compute_port_metrics, compute_vessel_metrics
-from .networks import ActorCritic, build_actor_critics, obs_dim_from_env
+from .networks import ActorCritic, DiscreteActor, build_actor_critics, obs_dim_from_env
 
 # ---------------------------------------------------------------------------
 # Global-state dimension helper
@@ -43,7 +43,7 @@ def global_state_dim_from_config(config: dict[str, Any]) -> int:
     coordinator dimension so the global state has a deterministic size::
 
         N_c * (num_ports * medium_d + num_ports * 5
-               + num_vessels * 4 + 1 [+ num_ports^2 if weather])
+               + num_vessels * 7 + 1 [+ num_ports^2 if weather])
         + num_vessels * vessel_dim + num_ports * port_dim
         + num_ports + 1
     """
@@ -155,6 +155,8 @@ class PPOUpdateResult:
     grad_norm: float = 0.0
     weight_norm: float = 0.0
     approx_kl: float = 0.0
+    top1_prob: float = 0.0
+    entropy_gap_from_uniform: float = 0.0
     entropy_coeff: float = 0.0
     kl_early_stopped: bool = False
     explained_variance: float = 0.0
@@ -232,13 +234,13 @@ def _nn_to_vessel_action(
 
 def _coordinator_departure_window_options(config: dict[str, Any]) -> list[int]:
     """Return sorted unique non-negative departure-window options (hours)."""
-    raw = config.get("coordinator_departure_window_options", (0, 6, 12, 24))
+    raw = config.get("coordinator_departure_window_options", (0,))
     if isinstance(raw, (int, float)):
         raw_opts = [raw]
     elif isinstance(raw, (list, tuple)):
         raw_opts = list(raw)
     else:
-        raw_opts = [0, 6, 12, 24]
+        raw_opts = [0]
     opts = sorted({max(int(v), 0) for v in raw_opts})
     return opts if opts else [0]
 
@@ -345,14 +347,14 @@ class MAPPOConfig:
     max_grad_norm: float = 0.5
     # Optimiser
     lr: float = 3e-4
-    lr_end: float = 0.0
+    lr_end: float = 1e-4
     weight_decay: float = 0.0
     gamma: float = 0.99
     gae_lambda: float = 0.95
     # KL early stopping (set target_kl=0 to disable)
     target_kl: float = 0.02
     # Entropy scheduling (linear decay from entropy_coeff → entropy_coeff_end)
-    entropy_coeff_end: float | None = None
+    entropy_coeff_end: float | None = 0.002
     # LR warmup (fraction of total_iterations for linear warmup)
     lr_warmup_fraction: float = 0.0
     # Gradient accumulation (effective batch = minibatch_size * grad_accum_steps)
@@ -713,7 +715,7 @@ class MAPPOTrainer:
     # Rollout collection
     # ------------------------------------------------------------------
 
-    def collect_rollout(self) -> dict[str, float]:
+    def collect_rollout(self, heuristic_coordinator: bool = False) -> dict[str, float]:
         """Collect one rollout of ``rollout_length`` steps.
 
         Returns a dict with summary statistics (mean rewards, etc.).
@@ -793,33 +795,37 @@ class MAPPOTrainer:
                     )
 
             # --- Coordinator actions ---
-            assignments = self.env._build_assignments()
             coordinator_actions_list: list[dict[str, Any]] = []
-            coord_mask = self._coordinator_mask_tensor()
-            with torch.no_grad():
-                for i, c_obs in enumerate(obs["coordinators"]):
-                    c_obs_n = self._normalize_obs(c_obs, "coordinator")
-                    c_obs_t = torch.as_tensor(
-                        c_obs_n, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    c_ac = self._get_ac("coordinator", i)
-                    action_t, log_prob_t, value_t = c_ac.get_action_and_value(
-                        c_obs_t, gs_tensor, action_mask=coord_mask
-                    )
-                    action_dict = _nn_to_coordinator_action(
-                        action_t.squeeze(0), i, self.env, assignments
-                    )
-                    coordinator_actions_list.append(action_dict)
-                    self.coordinator_buf[i].add(
-                        obs=c_obs_n,
-                        action=np.array([action_t.squeeze(0).cpu().item()]),
-                        reward=0.0,
-                        done=False,
-                        log_prob=log_prob_t.item(),
-                        value=value_t.item(),
-                        global_state=gs_np,
-                        action_mask=self._build_coordinator_mask(),
-                    )
+            if heuristic_coordinator:
+                heuristic_actions = self.env.sample_stub_actions()
+                coordinator_actions_list = list(heuristic_actions.get("coordinators", []))
+            else:
+                assignments = self.env._build_assignments()
+                coord_mask = self._coordinator_mask_tensor()
+                with torch.no_grad():
+                    for i, c_obs in enumerate(obs["coordinators"]):
+                        c_obs_n = self._normalize_obs(c_obs, "coordinator")
+                        c_obs_t = torch.as_tensor(
+                            c_obs_n, dtype=torch.float32, device=self.device
+                        ).unsqueeze(0)
+                        c_ac = self._get_ac("coordinator", i)
+                        action_t, log_prob_t, value_t = c_ac.get_action_and_value(
+                            c_obs_t, gs_tensor, action_mask=coord_mask
+                        )
+                        action_dict = _nn_to_coordinator_action(
+                            action_t.squeeze(0), i, self.env, assignments
+                        )
+                        coordinator_actions_list.append(action_dict)
+                        self.coordinator_buf[i].add(
+                            obs=c_obs_n,
+                            action=np.array([action_t.squeeze(0).cpu().item()]),
+                            reward=0.0,
+                            done=False,
+                            log_prob=log_prob_t.item(),
+                            value=value_t.item(),
+                            global_state=gs_np,
+                            action_mask=self._build_coordinator_mask(),
+                        )
 
             # --- Step environment ---
             actions_dict: dict[str, Any] = {
@@ -854,10 +860,15 @@ class MAPPOTrainer:
             for i, r in enumerate(rewards["coordinators"]):
                 raw_r = float(r)
                 self._reward_normalizers["coordinator"].update(raw_r)
-                rew = self._reward_normalizers["coordinator"].normalize(raw_r) if norm else raw_r
-                buf = self.coordinator_buf[i]
-                buf.set_reward(-1, rew)
-                buf.set_done(-1, float(done))
+                if not heuristic_coordinator:
+                    rew = (
+                        self._reward_normalizers["coordinator"].normalize(raw_r)
+                        if norm
+                        else raw_r
+                    )
+                    buf = self.coordinator_buf[i]
+                    buf.set_reward(-1, rew)
+                    buf.set_done(-1, float(done))
                 total_coord_reward_rollout += raw_r
 
             # Backward-compatible headline reward used by existing training
@@ -962,6 +973,10 @@ class MAPPOTrainer:
                         grad_norm=float(np.mean([r.grad_norm for r in type_res])),
                         weight_norm=float(np.mean([r.weight_norm for r in type_res])),
                         approx_kl=float(np.mean([r.approx_kl for r in type_res])),
+                        top1_prob=float(np.mean([r.top1_prob for r in type_res])),
+                        entropy_gap_from_uniform=float(
+                            np.mean([r.entropy_gap_from_uniform for r in type_res])
+                        ),
                         entropy_coeff=type_res[0].entropy_coeff,
                         kl_early_stopped=any(r.kl_early_stopped for r in type_res),
                         explained_variance=float(np.mean([r.explained_variance for r in type_res])),
@@ -1153,6 +1168,25 @@ class MAPPOTrainer:
                 explained_var = float(
                     1.0 - (returns_t - old_values_t).var() / var_returns
                 )
+            top1_prob = 0.0
+            entropy_gap_from_uniform = 0.0
+            if isinstance(ac.actor, DiscreteActor):
+                dist = ac.actor.forward(obs_t, action_mask=masks_t)
+                probs = dist.probs
+                top1_prob = float(probs.max(dim=-1).values.mean().item())
+                valid_actions = (
+                    masks_t.sum(dim=-1).to(dtype=torch.float32)
+                    if masks_t is not None
+                    else torch.full(
+                        (probs.shape[0],),
+                        float(probs.shape[-1]),
+                        device=probs.device,
+                    )
+                )
+                uniform_entropy = valid_actions.clamp(min=1.0).log()
+                entropy_gap_from_uniform = float(
+                    (uniform_entropy - dist.entropy()).mean().item()
+                )
 
         denom = max(num_updates, 1)
         return PPOUpdateResult(
@@ -1164,6 +1198,8 @@ class MAPPOTrainer:
             grad_norm=epoch_grad_norm / denom,
             weight_norm=weight_norm,
             approx_kl=epoch_approx_kl / denom,
+            top1_prob=top1_prob,
+            entropy_gap_from_uniform=entropy_gap_from_uniform,
             entropy_coeff=ent_coeff,
             kl_early_stopped=kl_early_stopped,
             explained_variance=explained_var,
@@ -1272,8 +1308,21 @@ class MAPPOTrainer:
                 entry[f"{agent_type}_clip_frac"] = res.clip_fraction
                 entry[f"{agent_type}_grad_norm"] = res.grad_norm
                 entry[f"{agent_type}_approx_kl"] = res.approx_kl
+                if agent_type in {"port", "coordinator"}:
+                    entry[f"{agent_type}_top1_prob"] = res.top1_prob
+                    entry[f"{agent_type}_entropy_gap_from_uniform"] = (
+                        res.entropy_gap_from_uniform
+                    )
                 entry[f"{agent_type}_kl_early_stopped"] = res.kl_early_stopped
                 entry[f"{agent_type}_explained_variance"] = res.explained_variance
+            vessel_ac = self._get_ac("vessel", 0)
+            vessel_actor = vessel_ac.actor
+            if hasattr(vessel_actor, "log_std"):
+                log_std = (
+                    vessel_actor.log_std.detach().cpu().view(-1).tolist()  # type: ignore[attr-defined]
+                )
+                for idx, value in enumerate(log_std):
+                    entry[f"vessel_log_std_{idx}"] = float(value)
 
             # --- Optional eval ---
             if eval_interval > 0 and (it + 1) % eval_interval == 0:
@@ -1381,6 +1430,7 @@ class MAPPOTrainer:
         self,
         num_steps: int | None = None,
         deterministic: bool = True,
+        heuristic_coordinator: bool = False,
     ) -> dict[str, float]:
         """Run a deterministic evaluation episode and return mean metrics."""
         num_steps = num_steps or int(self.cfg["rollout_steps"])
@@ -1435,20 +1485,24 @@ class MAPPOTrainer:
                     port_actions.append(_nn_to_port_action(a.squeeze(0), i, self.env))
 
                 # Coordinators
-                assignments = self.env._build_assignments()
-                coord_actions: list[dict[str, Any]] = []
-                c_mask = self._coordinator_mask_tensor()
-                for i, c_obs in enumerate(obs["coordinators"]):
-                    c_obs_n = self._eval_normalize_obs(c_obs, "coordinator")
-                    c_t = torch.as_tensor(
-                        c_obs_n, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    a, _, _ = self._get_ac("coordinator", i).get_action_and_value(
-                        c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
-                    )
-                    coord_actions.append(
-                        _nn_to_coordinator_action(a.squeeze(0), i, self.env, assignments)
-                    )
+                if heuristic_coordinator:
+                    heuristic_actions = self.env.sample_stub_actions()
+                    coord_actions = list(heuristic_actions.get("coordinators", []))
+                else:
+                    assignments = self.env._build_assignments()
+                    coord_actions = []
+                    c_mask = self._coordinator_mask_tensor()
+                    for i, c_obs in enumerate(obs["coordinators"]):
+                        c_obs_n = self._eval_normalize_obs(c_obs, "coordinator")
+                        c_t = torch.as_tensor(
+                            c_obs_n, dtype=torch.float32, device=self.device
+                        ).unsqueeze(0)
+                        a, _, _ = self._get_ac("coordinator", i).get_action_and_value(
+                            c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
+                        )
+                        coord_actions.append(
+                            _nn_to_coordinator_action(a.squeeze(0), i, self.env, assignments)
+                        )
 
             actions_dict: dict[str, Any] = {
                 "coordinator": coord_actions[0] if coord_actions else {},

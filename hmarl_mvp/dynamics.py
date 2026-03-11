@@ -140,6 +140,7 @@ def step_vessels(
         stalled = False
         travel_hours = 0.0
         stall_hours = 0.0
+        arrival_step = 0.0
         if not vessel.at_sea:
             vessel.stalled = False
             step_stats[vessel.vessel_id] = {
@@ -148,6 +149,7 @@ def step_vessels(
                 "arrived": arrived,
                 "travel_hours": travel_hours,
                 "stall_hours": stall_hours,
+                "arrival_step": arrival_step,
                 "stalled": stalled,
             }
             continue
@@ -172,6 +174,7 @@ def step_vessels(
             vessel.at_sea = False
             vessel.stalled = False
             arrived = True
+            arrival_step = float(current_step)
         elif effective_speed > 0.0:
             hours_to_arrive = remaining_distance / effective_speed
             planned_hours = min(float(dt_hours), float(hours_to_arrive))
@@ -186,6 +189,7 @@ def step_vessels(
                 co2 = float(required_co2)
                 vessel.position_nm += effective_speed * travel_hours
                 vessel.fuel = max(available_fuel - fuel_used, 0.0)
+                vessel.cumulative_fuel_used += fuel_used
                 vessel.emissions += co2
                 vessel.stalled = False
                 if hours_to_arrive <= float(dt_hours) + 1e-9:
@@ -193,6 +197,9 @@ def step_vessels(
                     vessel.location = vessel.destination
                     vessel.at_sea = False
                     arrived = True
+                    arrival_step = float(current_step) + (
+                        travel_hours / max(float(dt_hours), 1e-9)
+                    )
             else:
                 hourly_fuel, hourly_co2 = compute_fuel_and_emissions(
                     vessel.speed, config, 1.0, sea_state=sea_state,
@@ -208,6 +215,7 @@ def step_vessels(
                     fuel_used = min(float(fuel_used), available_fuel)
                     co2 = float(hourly_co2 * travel_hours)
                     vessel.position_nm += effective_speed * travel_hours
+                    vessel.cumulative_fuel_used += fuel_used
                     vessel.emissions += co2
                 vessel.fuel = 0.0
                 vessel.stalled = True
@@ -221,6 +229,7 @@ def step_vessels(
             "arrived": arrived,
             "travel_hours": float(travel_hours),
             "stall_hours": float(stall_hours),
+            "arrival_step": float(arrival_step),
             "stalled": stalled,
         }
     return step_stats
@@ -231,13 +240,18 @@ def step_ports(
     service_rates: list[int],
     dt_hours: float = 1.0,
     service_time_hours: float = 6.0,
-) -> None:
+) -> list[list[int]]:
     """Advance port service state, admit queued vessels, and accumulate waiting time.
 
     ``service_rates`` acts as a per-port *admission cap* — the maximum
     number of queued vessels that may be admitted to a berth this tick,
     subject to available dock capacity.
+
+    Returns a per-port list of vessel IDs whose service completed during
+    the tick. Background congestion seeded at reset is tracked with
+    sentinel IDs ``< 0``.
     """
+    completed_vessel_ids_by_port: list[list[int]] = []
     for port, rate in zip(ports, service_rates):
         # Normalize potentially stale manual test overrides of occupied/service_times.
         if len(port.service_times) != int(port.occupied):
@@ -245,20 +259,47 @@ def step_ports(
             if len(port.service_times) < int(port.occupied):
                 missing = int(port.occupied) - len(port.service_times)
                 port.service_times.extend([float(service_time_hours)] * missing)
+        if len(port.servicing_vessel_ids) != len(port.service_times):
+            port.servicing_vessel_ids = list(
+                port.servicing_vessel_ids[: len(port.service_times)]
+            )
+            if len(port.servicing_vessel_ids) < len(port.service_times):
+                missing = len(port.service_times) - len(port.servicing_vessel_ids)
+                port.servicing_vessel_ids.extend([-1] * missing)
+        if len(port.queued_vessel_ids) != int(port.queue):
+            port.queued_vessel_ids = list(port.queued_vessel_ids[: max(int(port.queue), 0)])
+            if len(port.queued_vessel_ids) < int(port.queue):
+                missing = int(port.queue) - len(port.queued_vessel_ids)
+                port.queued_vessel_ids.extend([-1] * missing)
 
         # Complete ongoing services and free berths.
-        remaining = [max(t - dt_hours, 0.0) for t in port.service_times]
-        port.service_times = [t for t in remaining if t > 0.0]
+        remaining_times: list[float] = []
+        remaining_ids: list[int] = []
+        completed_vessel_ids: list[int] = []
+        for service_time, vessel_id in zip(port.service_times, port.servicing_vessel_ids):
+            remaining_time = max(service_time - dt_hours, 0.0)
+            if remaining_time > 0.0:
+                remaining_times.append(remaining_time)
+                remaining_ids.append(int(vessel_id))
+            else:
+                completed_vessel_ids.append(int(vessel_id))
+        port.service_times = remaining_times
+        port.servicing_vessel_ids = remaining_ids
         port.occupied = len(port.service_times)
 
         port.cumulative_wait_hours += port.queue * dt_hours
         available_slots = max(port.docks - port.occupied, 0)
         served = min(port.queue, max(int(rate), 0), available_slots)
-        port.queue = max(port.queue - served, 0)
+        admitted_vessel_ids = list(port.queued_vessel_ids[:served])
+        port.queued_vessel_ids = list(port.queued_vessel_ids[served:])
+        port.queue = len(port.queued_vessel_ids)
         port.vessels_served += served
         if served > 0:
             port.service_times.extend([float(service_time_hours)] * int(served))
+            port.servicing_vessel_ids.extend(admitted_vessel_ids)
             port.occupied = len(port.service_times)
+        completed_vessel_ids_by_port.append(completed_vessel_ids)
+    return completed_vessel_ids_by_port
 
 
 def dispatch_vessel(
@@ -269,6 +310,7 @@ def dispatch_vessel(
     current_step: int = 0,
     departure_window_hours: int = 0,
     dt_hours: float = 1.0,
+    requested_arrival_time: float = 0.0,
 ) -> None:
     """Send a vessel to a destination at a clipped speed.
 
@@ -297,12 +339,19 @@ def dispatch_vessel(
         Simulation time step in hours, used to convert the window to steps.
     """
     if int(destination) == vessel.location:
+        vessel.pending_requested_arrival_time = 0.0
+        vessel.requested_arrival_time = 0.0
+        vessel.last_schedule_delay_hours = 0.0
         return
     vessel.destination = int(destination)
     vessel.speed = float(np.clip(speed, config["speed_min"], config["speed_max"]))
     vessel.position_nm = 0.0
     vessel.stalled = False
+    vessel.port_service_state = 0
     vessel.trip_start_step = int(current_step)
+    vessel.requested_arrival_time = float(max(requested_arrival_time, 0.0))
+    vessel.pending_requested_arrival_time = 0.0
+    vessel.last_schedule_delay_hours = 0.0
     window_steps = int(departure_window_hours / dt_hours) if dt_hours > 0 else 0
     if window_steps > 0:
         vessel.pending_departure = True

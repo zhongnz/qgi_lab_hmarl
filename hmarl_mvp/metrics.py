@@ -9,6 +9,13 @@ import numpy as np
 from .state import PortState, VesselState
 
 
+def _total_fuel_used(vessel: VesselState) -> float:
+    """Return cumulative fuel burn, preserving compatibility with manual tests."""
+    tracked = float(getattr(vessel, "cumulative_fuel_used", 0.0))
+    fallback = max(float(vessel.initial_fuel) - float(vessel.fuel), 0.0)
+    return max(tracked, fallback)
+
+
 def forecast_mae(predicted: np.ndarray, actual: np.ndarray) -> float:
     """Mean absolute error between predicted and actual arrays."""
     return float(np.mean(np.abs(predicted - actual)))
@@ -23,11 +30,18 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
     """Aggregate fleet-level metrics: speed, fuel, emissions, delay, on-time rate."""
     avg_speed = float(np.mean([v.speed for v in vessels])) if vessels else 0.0
     avg_fuel = float(np.mean([v.fuel for v in vessels])) if vessels else 0.0
-    total_fuel_used = float(sum(max(v.initial_fuel - v.fuel, 0.0) for v in vessels))
+    total_fuel_used = float(sum(_total_fuel_used(v) for v in vessels))
     total_emissions = float(sum(v.emissions for v in vessels))
     avg_delay = float(np.mean([v.delay_hours for v in vessels])) if vessels else 0.0
-    on_time_count = sum(1 for v in vessels if v.delay_hours < 2.0)
-    on_time_rate = on_time_count / len(vessels) if vessels else 0.0
+    scheduled_arrivals = float(sum(max(int(v.completed_scheduled_arrivals), 0) for v in vessels))
+    on_time_arrivals = float(sum(max(int(v.on_time_arrivals), 0) for v in vessels))
+    completed_arrivals = float(sum(max(int(v.completed_arrivals), 0) for v in vessels))
+    total_schedule_delay = float(sum(max(v.schedule_delay_hours, 0.0) for v in vessels))
+    if scheduled_arrivals > 0.0:
+        on_time_rate = on_time_arrivals / scheduled_arrivals
+    else:
+        on_time_count = sum(1 for v in vessels if v.delay_hours < 2.0)
+        on_time_rate = on_time_count / len(vessels) if vessels else 0.0
     stalled_vessels = float(sum(bool(getattr(v, "stalled", False)) for v in vessels))
     return {
         "avg_speed": avg_speed,
@@ -35,7 +49,13 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
         "total_fuel_used": total_fuel_used,
         "total_emissions_co2": total_emissions,
         "avg_delay_hours": avg_delay,
+        "avg_schedule_delay_hours": (
+            total_schedule_delay / scheduled_arrivals if scheduled_arrivals > 0.0 else 0.0
+        ),
         "on_time_rate": on_time_rate,
+        "completed_arrivals": completed_arrivals,
+        "scheduled_arrivals": scheduled_arrivals,
+        "on_time_arrivals": on_time_arrivals,
         "stalled_vessels": stalled_vessels,
         "stalled_rate": (stalled_vessels / len(vessels)) if vessels else 0.0,
     }
@@ -62,7 +82,7 @@ def compute_economic_metrics(
 ) -> dict[str, float]:
     """End-of-episode economic costs: fuel, delay, carbon, and reliability."""
     fuel_cost_total = sum(
-        max(v.initial_fuel - v.fuel, 0.0) * config["fuel_price_per_ton"]
+        _total_fuel_used(v) * config["fuel_price_per_ton"]
         for v in vessels
     )
     delay_cost_total = sum(v.delay_hours * config["delay_penalty_per_hour"] for v in vessels)

@@ -206,7 +206,7 @@ class TestCoordinatorActionMasking:
         )
         trainer.env.reset()
         mask = trainer._build_coordinator_mask()
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0, 6, 12, 24)))
+        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
         assert mask.shape == (3 * num_windows,)
         assert mask.sum() == float(3 * num_windows)  # all ports valid across all windows
 
@@ -225,7 +225,7 @@ class TestCoordinatorActionMasking:
 
         mask = trainer._build_coordinator_mask()
         num_ports = trainer.env.num_ports
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0, 6, 12, 24)))
+        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
         for w in range(num_windows):
             off = w * num_ports
             assert mask[off + 1] == 0.0, "Congested port should be masked"
@@ -246,7 +246,7 @@ class TestCoordinatorActionMasking:
             port.service_times = [6.0] * port.docks
 
         mask = trainer._build_coordinator_mask()
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0, 6, 12, 24)))
+        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
         assert mask.sum() == float(2 * num_windows), "All congested -> safety fallback: all allowed"
 
     def test_coordinator_mask_tensor_shape(self) -> None:
@@ -257,7 +257,7 @@ class TestCoordinatorActionMasking:
         )
         trainer.env.reset()
         mask_t = trainer._coordinator_mask_tensor()
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0, 6, 12, 24)))
+        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
         assert mask_t.shape == (1, 4 * num_windows)
         assert mask_t.dtype == torch.bool
 
@@ -271,7 +271,7 @@ class TestCoordinatorActionMasking:
         # Check that coordinator buffer has mask storage
         coord_buf = trainer.coordinator_buf[0]
         assert coord_buf.mask_dim is not None
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0, 6, 12, 24)))
+        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
         assert coord_buf.mask_dim == 3 * num_windows
 
     def test_collect_rollout_with_coordinator_mask(self) -> None:

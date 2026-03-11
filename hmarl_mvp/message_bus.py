@@ -31,6 +31,7 @@ class MessageBus:
         }
         self._awaiting_slot_response: set[int] = set()
         self._latest_directive_by_vessel: dict[int, dict[str, Any]] = {}
+        self._last_delivery_events: list[dict[str, Any]] = []
 
     def reset(self, num_ports: int | None = None) -> None:
         """Clear all queues and pending state."""
@@ -47,6 +48,7 @@ class MessageBus:
         }
         self._awaiting_slot_response = set()
         self._latest_directive_by_vessel = {}
+        self._last_delivery_events = []
 
     # -- Enqueueing ----------------------------------------------------------
 
@@ -102,6 +104,11 @@ class MessageBus:
     def latest_directives(self) -> dict[int, dict[str, Any]]:
         """Mapping of vessel_id → latest delivered directive (read-only copy)."""
         return dict(self._latest_directive_by_vessel)
+
+    @property
+    def last_delivery_events(self) -> list[dict[str, Any]]:
+        """Flat event rows emitted during the most recent ``deliver_due`` call."""
+        return [dict(event) for event in self._last_delivery_events]
 
     def get_latest_directive(self, vessel_id: int) -> dict[str, Any] | None:
         """Return the latest delivered directive for *vessel_id*, or None."""
@@ -171,12 +178,28 @@ class MessageBus:
         vessels that received a port response this tick.
         """
         delivered_responses: dict[int, dict[str, Any]] = {}
+        delivery_events: list[dict[str, Any]] = []
 
         # Directives
         remaining: list[tuple[int, int, dict[str, Any]]] = []
         for deliver_step, vessel_id, directive in self._directive_queue:
             if deliver_step <= current_step:
                 self._latest_directive_by_vessel[vessel_id] = directive
+                delivery_events.append(
+                    {
+                        "t": int(current_step),
+                        "stage": "phase0",
+                        "event_type": "directive_delivered",
+                        "deliver_step": int(deliver_step),
+                        "vessel_id": int(vessel_id),
+                        "coordinator_id": int(directive.get("coordinator_id", -1)),
+                        "port_id": int(directive.get("dest_port", -1)),
+                        "departure_window_hours": int(
+                            directive.get("departure_window_hours", 0)
+                        ),
+                        "emission_budget": float(directive.get("emission_budget", 0.0)),
+                    }
+                )
             else:
                 remaining.append((deliver_step, vessel_id, directive))
         self._directive_queue = remaining
@@ -188,6 +211,17 @@ class MessageBus:
                 if 0 <= destination < self.num_ports:
                     self._pending_port_requests[destination].append(vessel_id)
                     self._pending_port_arrival_times[destination].append(arr_time)
+                    delivery_events.append(
+                        {
+                            "t": int(current_step),
+                            "stage": "phase0",
+                            "event_type": "arrival_request_delivered",
+                            "deliver_step": int(deliver_step),
+                            "vessel_id": int(vessel_id),
+                            "port_id": int(destination),
+                            "requested_arrival_time": float(arr_time),
+                        }
+                    )
             else:
                 remaining_requests.append((deliver_step, vessel_id, destination, arr_time))
         self._arrival_request_queue = remaining_requests
@@ -200,11 +234,23 @@ class MessageBus:
                     "accepted": bool(accepted),
                     "dest_port": int(destination),
                 }
+                delivery_events.append(
+                    {
+                        "t": int(current_step),
+                        "stage": "phase0",
+                        "event_type": "slot_response_delivered",
+                        "deliver_step": int(deliver_step),
+                        "vessel_id": int(vessel_id),
+                        "port_id": int(destination),
+                        "accepted": bool(accepted),
+                    }
+                )
             else:
                 remaining_responses.append(
                     (deliver_step, vessel_id, accepted, destination)
                 )
         self._slot_response_queue = remaining_responses
+        self._last_delivery_events = delivery_events
 
         return delivered_responses
 

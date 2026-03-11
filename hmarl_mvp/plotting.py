@@ -344,6 +344,53 @@ def plot_training_curves(
 
         panel_builders.append(("policy_diagnostics", _plot_policy_diagnostics))
 
+    has_top1_prob = any(c.endswith("_top1_prob") for c in df.columns)
+    has_entropy_gap = any(c.endswith("_entropy_gap_from_uniform") for c in df.columns)
+    if has_top1_prob or has_entropy_gap:
+        def _plot_policy_confidence(ax: Any) -> None:
+            lines = []
+            labels = []
+            ax2 = None
+            for col in sorted(c for c in df.columns if c.endswith("_top1_prob")):
+                agent = col.replace("_top1_prob", "")
+                color = color_by_agent.get(agent, None)
+                (line,) = ax.plot(
+                    iters,
+                    df[col],
+                    color=color,
+                    linewidth=1.5,
+                    label=f"{agent} top1",
+                )
+                lines.append(line)
+                labels.append(f"{agent} top1")
+            ax.set_xlabel("Iteration")
+            ax.set_ylabel("Top-1 Probability")
+            ax.set_ylim(bottom=0.0)
+            if has_entropy_gap:
+                ax2 = ax.twinx()
+                for col in sorted(
+                    c for c in df.columns if c.endswith("_entropy_gap_from_uniform")
+                ):
+                    agent = col.replace("_entropy_gap_from_uniform", "")
+                    color = color_by_agent.get(agent, None)
+                    (line,) = ax2.plot(
+                        iters,
+                        df[col],
+                        color=color,
+                        linestyle="--",
+                        linewidth=1.3,
+                        label=f"{agent} gap",
+                    )
+                    lines.append(line)
+                    labels.append(f"{agent} gap")
+                ax2.set_ylabel("Entropy Gap")
+                ax2.set_ylim(bottom=0.0)
+            ax.set_title("Policy Confidence")
+            if lines:
+                ax.legend(lines, labels, fontsize=8, loc="best")
+
+        panel_builders.append(("policy_confidence", _plot_policy_confidence))
+
     n_panels = max(len(panel_builders), 1)
     ncols = 2 if n_panels > 1 else 1
     nrows = (n_panels + ncols - 1) // ncols
