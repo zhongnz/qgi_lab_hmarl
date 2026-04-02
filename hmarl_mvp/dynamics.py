@@ -128,6 +128,17 @@ def step_vessels(
     penalty = float(config.get("weather_penalty_factor", 0.15))
     step_stats: dict[int, dict[str, float | bool]] = {}
     for vessel in vessels:
+        if bool(getattr(vessel, "mission_done", False)):
+            step_stats[vessel.vessel_id] = {
+                "fuel_used": 0.0,
+                "co2_emitted": 0.0,
+                "arrived": False,
+                "travel_hours": 0.0,
+                "stall_hours": 0.0,
+                "arrival_step": 0.0,
+                "stalled": bool(getattr(vessel, "stalled", False)),
+            }
+            continue
         # Activate pending departures when the coordinator's departure window opens.
         if vessel.pending_departure and current_step >= vessel.depart_at_step:
             vessel.at_sea = True

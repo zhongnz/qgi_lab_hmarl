@@ -19,8 +19,8 @@ from hmarl_mvp.metrics import (
 from hmarl_mvp.rewards import (
     compute_coordinator_reward_breakdown,
     compute_coordinator_reward_step,
-    compute_port_reward_breakdown,
     compute_port_reward,
+    compute_port_reward_breakdown,
     compute_vessel_reward_breakdown,
     compute_vessel_reward_step,
 )

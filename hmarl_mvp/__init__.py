@@ -32,10 +32,10 @@ from .experiment import (
     run_mappo_ablation,
     run_mappo_comparison,
     run_mappo_hyperparam_sweep,
-    run_trained_mappo_trace,
     run_noise_sweep,
     run_policy_sweep,
     run_sharing_sweep,
+    run_trained_mappo_trace,
     save_result_dict,
     summarize_policy_results,
 )

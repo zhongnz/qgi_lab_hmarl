@@ -514,15 +514,15 @@
             Project context, environment and experiment setup, current progress, and recommended next steps.
           </p>
         </div>
-        <div class="meta">
+          <div class="meta">
           <span>Independent Study • Spring 2026</span>
           <span>Supervisor: Prof. Aboussalah</span>
-          <span>Recommended baseline: v3</span>
+          <span>Baseline: v3 + GT benchmark</span>
         </div>
       </header>
       <div class="slide-body">
         <div class="hero-quote">
-          We built a hierarchical MARL simulator for maritime scheduling, made the environment and diagnostics much more trustworthy, and now have a clear baseline for studying the tradeoff between throughput, schedule quality, and cost.
+          We built a hierarchical MARL simulator for maritime scheduling, made the environment and diagnostics much more trustworthy, and now have both a strong continuous baseline and a controlled benchmark for validating the core control logic.
         </div>
         <div class="stat-grid two-up">
           <div class="stat">
@@ -531,9 +531,9 @@
             <div class="note">Coordinator, vessel, and port agents</div>
           </div>
           <div class="stat">
-            <span class="label">Preferred Run</span>
-            <span class="value">v3</span>
-            <div class="note">Current working baseline</div>
+            <span class="label">Current Setup</span>
+            <span class="value">v3 + GT</span>
+            <div class="note">Operating baseline plus validation benchmark</div>
           </div>
         </div>
       </div>
@@ -680,9 +680,9 @@
           <ul>
             <li>Algorithm: MAPPO with centralized training and decentralized execution.</li>
             <li>Parameter sharing across vessels and across ports.</li>
-            <li>Current baseline run: <strong>100</strong> iterations, <strong>64</strong>-step rollouts.</li>
+            <li>Main operating baseline: <strong>100</strong> iterations, <strong>64</strong>-step rollouts.</li>
             <li>Environment horizon is <strong>69</strong> steps to fully evaluate the rollout.</li>
-            <li>Reported baseline run was trained locally on <strong>CPU</strong> with <strong>seed 42</strong>.</li>
+            <li>Reported runs were trained locally on <strong>CPU</strong> with <strong>seed 42</strong>.</li>
           </ul>
         </div>
         <div class="grid-2x2">
@@ -691,8 +691,8 @@
             <p>Coordinator chooses destination guidance; vessels control speed and slot requests; ports manage acceptance and service.</p>
           </div>
           <div class="card soft-orange">
-            <h3>Optimization</h3>
-            <p>Learning rate decays from <strong>3e-4</strong> to <strong>1e-4</strong>; entropy decays from <strong>0.01</strong> to <strong>0.002</strong>.</p>
+            <h3>Controlled benchmark</h3>
+            <p><strong>Single-mission</strong> episodes plus <strong>ground-truth</strong> forecasts isolate the controller from forecast noise.</p>
           </div>
           <div class="card">
             <h3>Primary metrics</h3>
@@ -700,7 +700,7 @@
           </div>
           <div class="card">
             <h3>Evaluation</h3>
-            <p>Multi-episode reporting plus step-level traces, action logs, and event logs.</p>
+            <p>Two tracks: continuous scheduling as the real task, and the simplified benchmark for validating core mechanics.</p>
           </div>
         </div>
       </div>
@@ -803,7 +803,7 @@
           <h2>What changed since March 6</h2>
         </div>
       </header>
-      <div class="slide-body three-col">
+      <div class="slide-body grid-2x2">
         <div class="card soft-teal">
           <h3>Corrected vessel behavior</h3>
           <ul>
@@ -813,19 +813,27 @@
           </ul>
         </div>
         <div class="card soft-orange">
-          <h3>Fuel and stalling</h3>
+          <h3>Fuel and service realism</h3>
           <ul>
-            <li>Fuel exhaustion causes a true mid-route stall.</li>
-            <li>Departures are checked for fuel feasibility.</li>
-            <li>Infeasible routes are capped or blocked before dispatch.</li>
+            <li>Fuel exhaustion now causes a true mid-route stall.</li>
+            <li>Departures are checked for fuel feasibility before dispatch.</li>
+            <li>Ports track actual vessel IDs through queue, service, and refueling.</li>
           </ul>
         </div>
         <div class="card">
-          <h3>Port service realism</h3>
+          <h3>Reward redesign</h3>
           <ul>
-            <li>Ports track actual vessel IDs through queue and service.</li>
-            <li>Refueling happens after real service completion.</li>
-            <li>Booked and imminent arrivals are now visible to policies.</li>
+            <li>Rewards moved from mostly aggregate penalties to event-driven terms.</li>
+            <li>Arrival, acceptance, rejection, service, and on-time events now matter directly.</li>
+            <li>This removed the earlier near-constant reward problem.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Validation variants</h3>
+          <ul>
+            <li><strong>single_mission</strong> ends the episode after one trip per vessel.</li>
+            <li><strong>ground_truth</strong> forecast rolls forward the committed system state.</li>
+            <li>These modes help debug control logic before reintroducing forecast error.</li>
           </ul>
         </div>
       </div>
@@ -919,59 +927,50 @@
     <section class="slide">
       <header class="slide-header">
         <div>
-          <div class="eyebrow">Comparison</div>
-          <h2>What recent tuning taught us</h2>
+          <div class="eyebrow">Benchmark</div>
+          <h2>Continuous task vs. single-mission validation benchmark</h2>
         </div>
       </header>
       <div class="slide-body">
         <table class="comparison">
           <thead>
             <tr>
-              <th>Run</th>
-              <th>Total reward</th>
+              <th>Setting</th>
+              <th>Eval total reward</th>
               <th>On-time rate</th>
               <th>Completed arrivals</th>
               <th>Vessels served</th>
-              <th>Dock utilization</th>
-              <th>Total ops cost</th>
+              <th>Mission success rate</th>
+              <th>Eval trace steps</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>reward_balance_v2</strong></td>
-              <td>-1137.46</td>
-              <td>0.9448</td>
-              <td>23.8</td>
-              <td>33.2</td>
-              <td>0.1467</td>
-              <td>$1.382M</td>
+              <td><strong>Continuous + ground truth</strong></td>
+              <td>-673.99</td>
+              <td class="good">0.759</td>
+              <td class="good">14.8</td>
+              <td class="good">24.2</td>
+              <td>0.0</td>
+              <td>37</td>
             </tr>
             <tr>
-              <td><strong>transit_rebalanced_v3</strong></td>
-              <td class="good">-923.38</td>
-              <td>0.9282</td>
-              <td class="good">26.8</td>
-              <td class="good">36.2</td>
-              <td class="good">0.2800</td>
-              <td class="good">$1.330M</td>
-            </tr>
-            <tr>
-              <td><strong>ontime_rebalanced_v4</strong></td>
-              <td class="warn">-864.58</td>
-              <td class="good">1.0000</td>
-              <td class="risk">24.0</td>
-              <td class="risk">33.4</td>
-              <td class="risk">0.0667</td>
-              <td class="risk">$1.373M</td>
+              <td><strong>Single mission + ground truth</strong></td>
+              <td class="good">-481.51</td>
+              <td class="warn">0.575</td>
+              <td>8.0</td>
+              <td>9.4</td>
+              <td class="good">1.0</td>
+              <td class="good">24</td>
             </tr>
           </tbody>
         </table>
         <div class="callout">
-          <strong>Takeaway:</strong> v4 wins on strict schedule adherence, but v3 is the better operational baseline because it keeps throughput, berth utilization, and operating cost in a stronger overall balance.
+          <strong>Takeaway:</strong> the simplified benchmark is easier to complete and gives a much cleaner success signal, but the continuous setting still has higher throughput and remains the real target environment.
         </div>
       </div>
       <footer class="slide-footer">
-        <span>Recent experiment comparison</span>
+        <span>Controlled benchmark comparison</span>
         <span class="page">11</span>
       </footer>
     </section>
@@ -995,11 +994,11 @@
         </div>
         <div class="card soft-teal">
           <h3>Recommended baseline</h3>
-          <p>Keep <strong>transit-rebalanced v3</strong> as the working default because it gives the best current balance of throughput, schedule quality, and cost.</p>
+          <p>Keep <strong>transit-rebalanced v3</strong> as the working continuous default because it still gives the best overall operating balance.</p>
         </div>
         <div class="card">
           <h3>Next steps</h3>
-          <p>Run short multi-seed validation of v3 versus v4, then decide whether the next cycle should move to real ports and nautical distances.</p>
+          <p>Use <strong>single_mission + ground_truth</strong> as the validation benchmark, run short multi-seed comparisons in both settings, then reintroduce imperfect forecasting and decide whether to move to real ports and nautical distances.</p>
         </div>
       </div>
       <footer class="slide-footer">

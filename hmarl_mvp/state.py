@@ -49,6 +49,9 @@ class VesselState:
     completed_scheduled_arrivals: int = 0
     on_time_arrivals: int = 0
     last_schedule_delay_hours: float = 0.0
+    mission_done: bool = False
+    mission_success: bool = False
+    mission_failed: bool = False
     # Departure-window enforcement: vessel waits at port until depart_at_step.
     pending_departure: bool = False
     depart_at_step: int = 0
