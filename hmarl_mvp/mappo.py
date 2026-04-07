@@ -1317,10 +1317,9 @@ class MAPPOTrainer:
                 entry[f"{agent_type}_explained_variance"] = res.explained_variance
             vessel_ac = self._get_ac("vessel", 0)
             vessel_actor = vessel_ac.actor
-            if hasattr(vessel_actor, "log_std"):
-                log_std = (
-                    vessel_actor.log_std.detach().cpu().view(-1).tolist()  # type: ignore[attr-defined]
-                )
+            log_std_param = getattr(vessel_actor, "log_std", None)
+            if isinstance(log_std_param, torch.Tensor):
+                log_std = log_std_param.detach().cpu().view(-1).tolist()
                 for idx, value in enumerate(log_std):
                     entry[f"vessel_log_std_{idx}"] = float(value)
 

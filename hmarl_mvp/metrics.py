@@ -37,6 +37,9 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
     on_time_arrivals = float(sum(max(int(v.on_time_arrivals), 0) for v in vessels))
     completed_arrivals = float(sum(max(int(v.completed_arrivals), 0) for v in vessels))
     total_schedule_delay = float(sum(max(v.schedule_delay_hours, 0.0) for v in vessels))
+    mission_done = float(sum(bool(getattr(v, "mission_done", False)) for v in vessels))
+    mission_successes = float(sum(bool(getattr(v, "mission_success", False)) for v in vessels))
+    mission_failures = float(sum(bool(getattr(v, "mission_failed", False)) for v in vessels))
     if scheduled_arrivals > 0.0:
         on_time_rate = on_time_arrivals / scheduled_arrivals
     else:
@@ -56,6 +59,10 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
         "completed_arrivals": completed_arrivals,
         "scheduled_arrivals": scheduled_arrivals,
         "on_time_arrivals": on_time_arrivals,
+        "mission_done": mission_done,
+        "mission_successes": mission_successes,
+        "mission_failures": mission_failures,
+        "mission_success_rate": (mission_successes / len(vessels)) if vessels else 0.0,
         "stalled_vessels": stalled_vessels,
         "stalled_rate": (stalled_vessels / len(vessels)) if vessels else 0.0,
     }

@@ -83,6 +83,9 @@ class VesselStateTests(unittest.TestCase):
         self.assertAlmostEqual(v.delay_hours, 0.0)
         self.assertFalse(v.at_sea)
         self.assertEqual(v.port_service_state, 0)
+        self.assertFalse(v.mission_done)
+        self.assertFalse(v.mission_success)
+        self.assertFalse(v.mission_failed)
 
     def test_custom_values(self) -> None:
         v = VesselState(

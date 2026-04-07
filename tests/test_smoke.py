@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 import numpy as np
 
 from hmarl_mvp.config import get_default_config
 from hmarl_mvp.env import MaritimeEnv
 from hmarl_mvp.experiment import run_experiment
+from hmarl_mvp.gym_wrapper import MaritimeGymEnv
 
 
 class SmokeTests(unittest.TestCase):
@@ -135,6 +137,35 @@ class SmokeTests(unittest.TestCase):
         self.assertTrue((oracle_df["policy_agreement_rate"] >= 0.0).all())
         self.assertTrue((oracle_df["policy_agreement_rate"] <= 1.0).all())
 
+    def test_ground_truth_policy_runs_and_labels_output(self) -> None:
+        cfg = get_default_config(
+            num_ports=3,
+            num_vessels=6,
+            docks_per_port=5,
+            rollout_steps=10,
+            message_latency_steps=2,
+        )
+        df = run_experiment(policy_type="ground_truth", steps=10, seed=42, config=cfg)
+        self.assertEqual(len(df), 10)
+        self.assertTrue((df["policy"] == "ground_truth").all())
+        self.assertGreaterEqual(float(df["total_vessel_requests"].iloc[-1]), 0.0)
+
+    def test_env_supports_ground_truth_forecast_source(self) -> None:
+        cfg = get_default_config(
+            rollout_steps=3,
+            forecast_source="ground_truth",
+        )
+        env = MaritimeEnv(config=cfg, seed=42)
+        obs = env.reset()
+        assert env.medium_forecast is not None
+        assert env.short_forecast is not None
+        self.assertEqual(env.medium_forecast.shape, (cfg["num_ports"], cfg["medium_horizon_days"]))
+        self.assertEqual(
+            env.short_forecast.shape,
+            (cfg["num_ports"], cfg["short_horizon_hours"]),
+        )
+        self.assertEqual(len(obs["coordinators"]), cfg["num_coordinators"])
+
     def test_independent_baseline_generates_operational_activity(self) -> None:
         cfg = get_default_config(
             num_ports=3,
@@ -185,8 +216,9 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(vessel.depart_at_step, 4)
 
         # Simulate step_vessels ticking forward; vessel activates exactly at step 4
-        from hmarl_mvp.dynamics import step_vessels
         import numpy as np
+
+        from hmarl_mvp.dynamics import step_vessels
 
         dist = np.array([[0, 500], [500, 0]], dtype=float)
         for step in range(1, 4):
@@ -194,6 +226,83 @@ class SmokeTests(unittest.TestCase):
             self.assertFalse(vessel.at_sea, f"Should still be pending at step {step}")
         step_vessels([vessel], dist, cfg, dt_hours=1.0, current_step=4)
         self.assertTrue(vessel.at_sea, "Vessel should be at sea after window elapses at step 4")
+
+    def test_single_mission_mode_terminates_on_arrival(self) -> None:
+        cfg = get_default_config(
+            num_ports=2,
+            num_vessels=1,
+            num_coordinators=1,
+            docks_per_port=1,
+            rollout_steps=10,
+            coord_decision_interval_steps=1,
+            vessel_decision_interval_steps=1,
+            port_decision_interval_steps=1,
+            message_latency_steps=1,
+            service_time_hours=1.0,
+            episode_mode="single_mission",
+            mission_success_on="arrival",
+        )
+        env = MaritimeEnv(config=cfg, seed=42, distance_nm=np.array([[0.0, 12.0], [12.0, 0.0]]))
+        env.reset()
+        vessel = env.vessels[0]
+        vessel.location = 0
+        vessel.destination = 0
+        vessel.at_sea = False
+        vessel.position_nm = 0.0
+        env.ports[0].queue = 0
+        env.ports[0].occupied = 0
+        env.ports[0].queued_vessel_ids = []
+        env.ports[0].servicing_vessel_ids = []
+        env.ports[0].service_times = []
+        env.ports[1].queue = 0
+        env.ports[1].occupied = 0
+        env.ports[1].queued_vessel_ids = []
+        env.ports[1].servicing_vessel_ids = []
+        env.ports[1].service_times = []
+
+        fixed_actions = {
+            "coordinators": [
+                {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
+            ],
+            "coordinator": {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
+            "vessels": [{"target_speed": 12.0, "request_arrival_slot": True}],
+            "ports": [
+                {"service_rate": 1, "accept_requests": 0},
+                {"service_rate": 1, "accept_requests": 1},
+            ],
+        }
+
+        done = False
+        info: dict[str, Any] = {}
+        for _ in range(4):
+            _obs, _rewards, done, info = env.step(fixed_actions)
+            if done:
+                break
+
+        self.assertTrue(done)
+        self.assertEqual(info["done_reason"], "all_missions_complete")
+        self.assertEqual(info["terminated"], 1)
+        self.assertEqual(info["truncated"], 0)
+        self.assertTrue(env.vessels[0].mission_done)
+        self.assertTrue(env.vessels[0].mission_success)
+        self.assertFalse(env.vessels[0].mission_failed)
+
+    def test_gym_wrapper_reports_truncation_split(self) -> None:
+        env = MaritimeGymEnv(
+            config=get_default_config(
+                num_ports=2,
+                num_vessels=1,
+                rollout_steps=1,
+                episode_mode="single_mission",
+                mission_success_on="arrival",
+            ),
+            seed=42,
+        )
+        obs, _info = env.reset()
+        _obs, _reward, terminated, truncated, info = env.step(env.action_space.sample())
+        self.assertIn("done_reason", info)
+        self.assertEqual(bool(terminated), bool(info["terminated"]))
+        self.assertEqual(bool(truncated), bool(info["truncated"]))
 
 
 if __name__ == "__main__":

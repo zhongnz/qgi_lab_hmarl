@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 import numpy as np
 
@@ -135,13 +136,68 @@ class AllPoliciesScenarioTests(unittest.TestCase):
             docks_per_port=4,
             rollout_steps=8,
         )
-        for policy in ["independent", "reactive", "forecast", "oracle"]:
+        for policy in ["independent", "reactive", "forecast", "oracle", "ground_truth"]:
             with self.subTest(policy=policy):
                 df = run_experiment(
                     policy_type=policy, steps=8, seed=42, config=cfg
                 )
                 self.assertEqual(len(df), 8)
                 self.assertEqual(df["policy"].iloc[0], policy)
+
+
+class SingleMissionScenarioTests(unittest.TestCase):
+    """Smoke tests for the episodic single-mission variant."""
+
+    def test_single_mission_env_can_end_early(self) -> None:
+        cfg = get_default_config(
+            num_ports=2,
+            num_vessels=1,
+            num_coordinators=1,
+            docks_per_port=1,
+            rollout_steps=10,
+            coord_decision_interval_steps=1,
+            vessel_decision_interval_steps=1,
+            port_decision_interval_steps=1,
+            message_latency_steps=1,
+            service_time_hours=1.0,
+            episode_mode="single_mission",
+            mission_success_on="arrival",
+        )
+        env = MaritimeEnv(config=cfg, seed=42, distance_nm=np.array([[0.0, 12.0], [12.0, 0.0]]))
+        env.reset()
+        env.vessels[0].location = 0
+        env.vessels[0].destination = 0
+        env.ports[0].queue = 0
+        env.ports[0].occupied = 0
+        env.ports[0].queued_vessel_ids = []
+        env.ports[0].servicing_vessel_ids = []
+        env.ports[0].service_times = []
+        env.ports[1].queue = 0
+        env.ports[1].occupied = 0
+        env.ports[1].queued_vessel_ids = []
+        env.ports[1].servicing_vessel_ids = []
+        env.ports[1].service_times = []
+        fixed_actions = {
+            "coordinators": [
+                {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
+            ],
+            "coordinator": {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
+            "vessels": [{"target_speed": 12.0, "request_arrival_slot": True}],
+            "ports": [
+                {"service_rate": 1, "accept_requests": 0},
+                {"service_rate": 1, "accept_requests": 1},
+            ],
+        }
+        steps = 0
+        done = False
+        info: dict[str, Any] = {}
+        while not done and steps < 10:
+            _obs, _rewards, done, info = env.step(fixed_actions)
+            steps += 1
+
+        self.assertTrue(done)
+        self.assertLess(steps, 10)
+        self.assertEqual(info["done_reason"], "all_missions_complete")
 
 
 if __name__ == "__main__":

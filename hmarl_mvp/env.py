@@ -17,17 +17,19 @@ from .dynamics import (
     update_weather_ar1,
     weather_speed_factor,
 )
-from .forecasts import MediumTermForecaster, ShortTermForecaster
+from .forecasts import (
+    GroundTruthForecaster,
+    MediumTermForecaster,
+    OracleForecaster,
+    ShortTermForecaster,
+)
 from .message_bus import MessageBus
 from .metrics import compute_port_metrics
 from .policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
 from .rewards import (
     compute_coordinator_reward_breakdown,
-    compute_coordinator_reward_step,
     compute_port_reward_breakdown,
-    compute_port_reward,
     compute_vessel_reward_breakdown,
-    compute_vessel_reward_step,
     weather_coordinator_shaping,
     weather_vessel_shaping,
 )
@@ -70,11 +72,44 @@ class MaritimeEnv:
         self.short_forecast: np.ndarray | None = None
         self.medium_forecaster = MediumTermForecaster(self.cfg["medium_horizon_days"])
         self.short_forecaster = ShortTermForecaster(self.cfg["short_horizon_hours"])
+        self.oracle_forecaster = OracleForecaster(
+            medium_horizon_days=self.cfg["medium_horizon_days"],
+            short_horizon_hours=self.cfg["short_horizon_hours"],
+        )
+        self.ground_truth_forecaster = GroundTruthForecaster(
+            medium_horizon_days=self.cfg["medium_horizon_days"],
+            short_horizon_hours=self.cfg["short_horizon_hours"],
+            config=self.cfg,
+            distance_nm=self.distance_nm,
+        )
 
         self.bus = MessageBus(self.num_ports)
         self._last_port_actions: list[dict[str, Any]] = []
         self._weather_enabled = bool(self.cfg.get("weather_enabled", False))
         self._weather: np.ndarray | None = None
+        self._last_done_reason = "rollout_limit"
+
+    def _single_mission_enabled(self) -> bool:
+        """Return True when the episodic single-mission variant is active."""
+        return str(self.cfg.get("episode_mode", "continuous")) == "single_mission"
+
+    def _mission_success_on(self) -> str:
+        """Return the terminal-success criterion for single-mission mode."""
+        return str(self.cfg.get("mission_success_on", "arrival"))
+
+    def _mark_vessel_mission_terminal(
+        self,
+        vessel: VesselState,
+        *,
+        success: bool,
+    ) -> None:
+        """Mark a vessel's single mission as complete and suppress redispatch."""
+        vessel.mission_done = True
+        vessel.mission_success = bool(success)
+        vessel.mission_failed = not bool(success)
+        vessel.pending_departure = False
+        vessel.pending_requested_arrival_time = 0.0
+        vessel.requested_arrival_time = 0.0
 
     def reset(self) -> dict[str, Any]:
         """Reset state and return initial observations."""
@@ -198,6 +233,8 @@ class MaritimeEnv:
         step_fuel_capped_departures = 0.0
         step_fuel_blocked_departures = 0.0
         step_refueled_vessels = 0.0
+        step_mission_successes = 0.0
+        step_mission_failures = 0.0
         step_events: list[dict[str, Any]] = []
 
         def log_event(event_type: str, stage: str, **fields: Any) -> None:
@@ -267,7 +304,14 @@ class MaritimeEnv:
             if directive is None:
                 directive = self._fallback_directive_for_vessel(vessel_id, assignments)
 
-            if due["vessel"]:
+            if self._single_mission_enabled() and bool(vessel.mission_done):
+                self.bus.clear_awaiting(vessel_id)
+                normalized = {
+                    "target_speed": float(vessel.speed),
+                    "request_arrival_slot": False,
+                    "requested_arrival_time": 0.0,
+                }
+            elif due["vessel"]:
                 normalized = vessel_agent.apply_action(vessel_inputs[idx])
                 if (
                     normalized.get("request_arrival_slot", False)
@@ -331,6 +375,15 @@ class MaritimeEnv:
                             requested_speed=float(normalized["target_speed"]),
                             available_fuel=float(vessel.fuel),
                         )
+                        if self._single_mission_enabled():
+                            self._mark_vessel_mission_terminal(vessel, success=False)
+                            step_mission_failures += 1.0
+                            log_event(
+                                "mission_failed",
+                                "phase2",
+                                vessel_id=int(vessel_id),
+                                reason="dispatch_blocked_fuel",
+                            )
                     else:
                         if speed_capped:
                             step_fuel_capped_departures += 1.0
@@ -401,12 +454,20 @@ class MaritimeEnv:
             if stall_hours > 0.0:
                 vessel.delay_hours += stall_hours
                 step_delay_by_vessel[vessel.vessel_id] += stall_hours
+                if self._single_mission_enabled() and not vessel.mission_done:
+                    self._mark_vessel_mission_terminal(vessel, success=False)
+                    step_mission_failures += 1.0
+                    log_event(
+                        "mission_failed",
+                        "phase3",
+                        vessel_id=int(vessel.vessel_id),
+                        reason="fuel_stall",
+                    )
             if (
                 pre_step_at_sea.get(vessel.vessel_id, False)
                 and not vessel.at_sea
                 and vessel.location == vessel.destination
             ):
-                self._enqueue_arrived_vessel(vessel.location, vessel.vessel_id)
                 log_event(
                     "vessel_arrived",
                     "phase3",
@@ -416,13 +477,24 @@ class MaritimeEnv:
                         vessel_step_stats.get(vessel.vessel_id, {}).get("arrival_step", self.t)
                     ),
                 )
-                log_event(
-                    "arrival_queued",
-                    "phase3",
-                    vessel_id=int(vessel.vessel_id),
-                    port_id=int(vessel.location),
-                    queue_length=float(self.ports[vessel.location].queue),
-                )
+                if self._single_mission_enabled() and self._mission_success_on() == "arrival":
+                    self._mark_vessel_mission_terminal(vessel, success=True)
+                    step_mission_successes += 1.0
+                    log_event(
+                        "mission_succeeded",
+                        "phase3",
+                        vessel_id=int(vessel.vessel_id),
+                        reason="arrival",
+                    )
+                else:
+                    self._enqueue_arrived_vessel(vessel.location, vessel.vessel_id)
+                    log_event(
+                        "arrival_queued",
+                        "phase3",
+                        vessel_id=int(vessel.vessel_id),
+                        port_id=int(vessel.location),
+                        queue_length=float(self.ports[vessel.location].queue),
+                    )
             deadline_step = float(pre_step_deadline.get(vessel.vessel_id, 0.0))
             arrived = bool(vessel_step_stats.get(vessel.vessel_id, {}).get("arrived", False))
             if deadline_step > 0.0 and (
@@ -536,16 +608,28 @@ class MaritimeEnv:
                         vessel_id=int(vessel_id),
                         port_id=int(port_id),
                     )
-                    vessel.fuel = float(vessel.initial_fuel)
-                    vessel.stalled = False
-                    step_refueled_vessels += 1.0
-                    log_event(
-                        "vessel_refueled",
-                        "phase4",
-                        vessel_id=int(vessel_id),
-                        port_id=int(port_id),
-                        fuel=float(vessel.fuel),
-                    )
+                    if self._single_mission_enabled() and self._mission_success_on() == "service_complete":
+                        if not vessel.mission_done:
+                            self._mark_vessel_mission_terminal(vessel, success=True)
+                            step_mission_successes += 1.0
+                            log_event(
+                                "mission_succeeded",
+                                "phase4",
+                                vessel_id=int(vessel_id),
+                                port_id=int(port_id),
+                                reason="service_complete",
+                            )
+                    else:
+                        vessel.fuel = float(vessel.initial_fuel)
+                        vessel.stalled = False
+                        step_refueled_vessels += 1.0
+                        log_event(
+                            "vessel_refueled",
+                            "phase4",
+                            vessel_id=int(vessel_id),
+                            port_id=int(port_id),
+                            fuel=float(vessel.fuel),
+                        )
         self._sync_vessel_port_service_state()
         step_served_by_port = [
             float(port.vessels_served) - pre
@@ -574,8 +658,20 @@ class MaritimeEnv:
         # t increments here; _refresh_weather() advances W_t → W_{t+1} via
         # AR(1).  Observations returned below therefore contain W_{t+1}, which
         # agents should treat as the weather forecast for their *next* action.
+        terminated = bool(
+            self._single_mission_enabled()
+            and self.vessels
+            and all(bool(v.mission_done) for v in self.vessels)
+        )
         self.t += 1
-        done = self.t >= self.cfg["rollout_steps"]
+        truncated = bool((not terminated) and self.t >= self.cfg["rollout_steps"])
+        done = bool(terminated or truncated)
+        if terminated:
+            self._last_done_reason = "all_missions_complete"
+        elif truncated:
+            self._last_done_reason = "rollout_limit"
+        else:
+            self._last_done_reason = "in_progress"
         self._refresh_weather()
         self._refresh_forecasts()
         obs = self._get_observations()
@@ -616,9 +712,17 @@ class MaritimeEnv:
             "step_fuel_capped_departures": step_fuel_capped_departures,
             "step_fuel_blocked_departures": step_fuel_blocked_departures,
             "step_refueled_vessels": step_refueled_vessels,
+            "step_mission_successes": step_mission_successes,
+            "step_mission_failures": step_mission_failures,
+            "mission_successes": float(sum(bool(v.mission_success) for v in self.vessels)),
+            "mission_failures": float(sum(bool(v.mission_failed) for v in self.vessels)),
+            "mission_done": float(sum(bool(v.mission_done) for v in self.vessels)),
             "stalled_vessels": float(sum(bool(v.stalled) for v in self.vessels)),
             "weather_enabled": self._weather_enabled,
             "events": step_events,
+            "terminated": int(terminated),
+            "truncated": int(truncated),
+            "done_reason": self._last_done_reason,
             **self._aggregate_reward_components(rewards),
         }
         if self._weather_enabled and self._weather is not None:
@@ -717,6 +821,18 @@ class MaritimeEnv:
 
     def _refresh_forecasts(self) -> None:
         """Refresh cached forecasts exactly once per environment tick."""
+        source = str(self.cfg.get("forecast_source", "heuristic"))
+        if source == "oracle_current":
+            self.medium_forecast, self.short_forecast = self.oracle_forecaster.predict(self.ports)
+            return
+        if source == "ground_truth":
+            self.medium_forecast, self.short_forecast = self.ground_truth_forecaster.predict(
+                self.ports,
+                self.vessels,
+                current_step=self.t,
+                weather=self._weather if self._weather_enabled else None,
+            )
+            return
         self.medium_forecast = self.medium_forecaster.predict(self.ports, self.rng)
         self.short_forecast = self.short_forecaster.predict(self.ports, self.rng)
 
@@ -789,6 +905,8 @@ class MaritimeEnv:
         until ``depart_at_step`` is included.
         """
         if not (0 <= destination < self.num_ports):
+            return float(np.inf)
+        if bool(getattr(vessel, "mission_done", False)):
             return float(np.inf)
         if bool(vessel.stalled) or float(vessel.speed) <= 0.0 or float(vessel.fuel) <= 0.0:
             return float(np.inf)
@@ -964,6 +1082,8 @@ class MaritimeEnv:
         imminent_arrivals = np.zeros(self.num_ports, dtype=float)
         imminent_horizon = float(self.cfg.get("short_horizon_hours", 0))
         for vessel in self.vessels:
+            if bool(getattr(vessel, "mission_done", False)):
+                continue
             if not (vessel.at_sea or vessel.pending_departure):
                 continue
             dest = int(vessel.destination)

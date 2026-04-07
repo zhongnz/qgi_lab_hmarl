@@ -25,6 +25,7 @@ class HMARLConfig:
     # Forecast horizons
     medium_horizon_days: int = 5
     short_horizon_hours: int = 12
+    forecast_source: str = "heuristic"
     # Asynchronous cadence (simulation steps)
     coord_decision_interval_steps: int = 12
     vessel_decision_interval_steps: int = 1
@@ -79,6 +80,8 @@ class HMARLConfig:
     carbon_price_per_ton: float = 90.0
     # Simulation
     rollout_steps: int = 20
+    episode_mode: str = "continuous"
+    mission_success_on: str = "arrival"
     seed: int = SEED
 
     def validate(self) -> None:
@@ -170,6 +173,22 @@ class HMARLConfig:
         if self.speed_min > self.speed_max:
             raise ValueError(
                 f"speed_min ({self.speed_min}) must be <= speed_max ({self.speed_max})"
+            )
+        if self.forecast_source not in {"heuristic", "oracle_current", "ground_truth"}:
+            raise ValueError(
+                "forecast_source must be one of "
+                "{'heuristic', 'oracle_current', 'ground_truth'}, "
+                f"got {self.forecast_source!r}"
+            )
+        if self.episode_mode not in {"continuous", "single_mission"}:
+            raise ValueError(
+                "episode_mode must be one of {'continuous', 'single_mission'}, "
+                f"got {self.episode_mode!r}"
+            )
+        if self.mission_success_on not in {"arrival", "service_complete"}:
+            raise ValueError(
+                "mission_success_on must be one of {'arrival', 'service_complete'}, "
+                f"got {self.mission_success_on!r}"
             )
         if self.weather_autocorrelation > 1.0:
             raise ValueError(

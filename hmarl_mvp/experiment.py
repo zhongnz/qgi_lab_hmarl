@@ -11,7 +11,12 @@ import pandas as pd
 
 from .config import SEED, get_default_config
 from .env import MaritimeEnv
-from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+from .forecasts import (
+    GroundTruthForecaster,
+    MediumTermForecaster,
+    OracleForecaster,
+    ShortTermForecaster,
+)
 from .learned_forecaster import LearnedForecaster
 from .metrics import (
     compute_economic_metrics,
@@ -26,7 +31,14 @@ from .policies import (
 )
 from .state import make_rng
 
-VALID_POLICIES = {"independent", "reactive", "forecast", "oracle", "learned_forecast"}
+VALID_POLICIES = {
+    "independent",
+    "reactive",
+    "forecast",
+    "oracle",
+    "ground_truth",
+    "learned_forecast",
+}
 
 
 def _json_cell(value: Any) -> Any:
@@ -74,6 +86,11 @@ def _flatten_vessel_state(vessels: list[Any], rewards: list[Any] | None = None) 
         flat[f"{prefix}_last_schedule_delay_hours"] = float(
             getattr(vessel, "last_schedule_delay_hours", 0.0)
         )
+        flat[f"{prefix}_mission_done"] = float(bool(getattr(vessel, "mission_done", False)))
+        flat[f"{prefix}_mission_success"] = float(
+            bool(getattr(vessel, "mission_success", False))
+        )
+        flat[f"{prefix}_mission_failed"] = float(bool(getattr(vessel, "mission_failed", False)))
         flat[f"{prefix}_pending_departure"] = float(bool(vessel.pending_departure))
         flat[f"{prefix}_depart_at_step"] = float(vessel.depart_at_step)
         vid = int(vessel.vessel_id)
@@ -200,6 +217,11 @@ def _build_step_trace_row(
         "step_fuel_capped_departures": float(info.get("step_fuel_capped_departures", 0.0)),
         "step_fuel_blocked_departures": float(info.get("step_fuel_blocked_departures", 0.0)),
         "step_refueled_vessels": float(info.get("step_refueled_vessels", 0.0)),
+        "step_mission_successes": float(info.get("step_mission_successes", 0.0)),
+        "step_mission_failures": float(info.get("step_mission_failures", 0.0)),
+        "done_reason": str(info.get("done_reason", "in_progress")),
+        "terminated": float(info.get("terminated", 0.0)),
+        "truncated": float(info.get("truncated", 0.0)),
         **vessel_metrics,
         **port_metrics,
         **economic_metrics,
@@ -290,7 +312,7 @@ def _build_event_log_rows(
     """Build flat event rows from the environment step info payload."""
     rows: list[dict[str, Any]] = []
     for raw_event in info.get("events", []) or []:
-        row = {"policy": policy}
+        row: dict[str, Any] = {"policy": policy}
         for key, value in raw_event.items():
             row[key] = _json_cell(value)
         row.setdefault("t", int(default_t))
@@ -316,7 +338,8 @@ def run_experiment(
     - independent: no coordination, no forecast usage
     - reactive: coordination using current state only (no forecast)
     - forecast: forecast-informed coordination with noisy forecasts
-    - oracle: forecast-informed coordination with perfect queue knowledge
+    - oracle: forecast-informed coordination with current queue repeated forward
+    - ground_truth: forecast-informed coordination with deterministic committed-state rollout
     - learned_forecast: uses a trained ``LearnedForecaster`` for predictions
     """
     if policy_type not in VALID_POLICIES:
@@ -325,7 +348,9 @@ def run_experiment(
         raise ValueError("learned_forecaster must be provided when policy_type='learned_forecast'")
 
     # For learned_forecast, use the same heuristic policy logic but with learned predictions
-    effective_mode = "forecast" if policy_type == "learned_forecast" else policy_type
+    effective_mode = (
+        "forecast" if policy_type in {"learned_forecast", "ground_truth"} else policy_type
+    )
 
     cfg = get_default_config(**(config or {}))
     steps = cfg["rollout_steps"] if steps is None else steps
@@ -344,6 +369,12 @@ def run_experiment(
         medium_horizon_days=cfg["medium_horizon_days"],
         short_horizon_hours=forecast_horizon,
     )
+    ground_truth_forecaster = GroundTruthForecaster(
+        medium_horizon_days=cfg["medium_horizon_days"],
+        short_horizon_hours=forecast_horizon,
+        config=cfg,
+        distance_nm=env.distance_nm,
+    )
 
     log: list[dict[str, Any]] = []
     cumulative_vessel_requests = 0.0
@@ -354,6 +385,13 @@ def run_experiment(
         step_context = env.peek_step_context()
         if policy_type == "oracle":
             medium, short = oracle_forecaster.predict(env.ports)
+        elif policy_type == "ground_truth":
+            medium, short = ground_truth_forecaster.predict(
+                env.ports,
+                env.vessels,
+                current_step=t,
+                weather=getattr(env, "_weather", None) if cfg.get("weather_enabled") else None,
+            )
         elif policy_type == "learned_forecast" and learned_forecaster is not None:
             # Use the trained model for both medium and short forecasts
             medium = learned_forecaster.predict(env.ports, rng=rng)

@@ -1,8 +1,8 @@
 # HMARL Maritime Scheduling — Presentation Materials
 
 **Audience:** project presentation for professor and general technical audience  
-**Date:** 2026-03-13  
-**Prepared from:** project status as of 2026-03-12  
+**Date:** 2026-03-31  
+**Prepared from:** project status as of 2026-03-31  
 **Recommended format:** 12 main slides + 4 backup slides  
 **Recommended length:** 10-12 minutes
 
@@ -23,6 +23,10 @@ By the end, the audience should understand:
 The core message for the audience is:
 
 > We built a hierarchical multi-agent maritime scheduling simulator, made the environment and diagnostics substantially more trustworthy, and now have a clear working baseline (`v3`) for studying the tradeoff between throughput, schedule quality, and operating cost.
+
+Updated framing:
+
+> We now have both a strong continuous baseline (`v3`) and a controlled validation benchmark (`single_mission + ground_truth`) for checking whether the core control logic is working before reintroducing forecast uncertainty.
 
 ## 3. Recommended slide deck
 
@@ -103,12 +107,16 @@ How the current baseline is trained and evaluated
 
 - algorithm: MAPPO with centralized training and decentralized execution
 - parameter sharing across vessel agents and across port agents
-- baseline run:
+- main operating baseline:
   - `100` training iterations
   - `rollout_length = 64`
   - environment horizon `= 69`
   - `seed = 42`
   - local CPU training for the reported run
+- controlled validation benchmark:
+  - `single_mission`
+  - `ground_truth` forecasts
+  - each vessel completes at most one trip per episode
 - primary evaluation metrics:
   - on-time rate
   - completed arrivals
@@ -118,7 +126,7 @@ How the current baseline is trained and evaluated
 
 **Speaker notes:**
 
-Do not overload this slide with every hyperparameter. The goal is to show the experimental logic clearly enough that the audience sees the results as reproducible.
+Do not overload this slide with every hyperparameter. The important point now is that the project has two evaluation tracks: the continuous environment as the main task, and the simplified benchmark as a debugging and validation environment.
 
 ## Slide 6 — System architecture
 
@@ -169,7 +177,7 @@ This slide now carries the actual reward equations, but they should be presented
 ## Slide 8 — What changed since March 6
 
 **Title:**  
-Simulator realism and correctness improvements
+Simulator realism, rewards, and validation changes
 
 **Bullets:**
 
@@ -178,10 +186,13 @@ Simulator realism and correctness improvements
 - fuel exhaustion now causes real mid-route stalling
 - departures are checked for fuel feasibility
 - ports track actual vessels through queueing, service, and refueling
+- rewards were redesigned from mostly aggregate penalties to event-driven, role-specific signals
+- added `single_mission` as a finish-state benchmark
+- added `ground_truth` forecasts as a deterministic no-noise benchmark
 
 **Speaker notes:**
 
-This is a strong progress slide. It shows the audience that a large portion of the recent work went into simulator correctness and not only reward tuning.
+This is a strong progress slide. It shows that recent work was not only reward tuning. We improved simulator correctness, made the reward signal more informative, and added a controlled benchmark for validating the model before dealing with forecast error.
 
 ## Slide 9 — Why we trust the results more now
 
@@ -227,21 +238,26 @@ Current recommended baseline: transit-rebalanced v3
 
 This is the “where we are now” slide. Make it clear that `v3` is recommended because it is the best balance, not because it is perfect.
 
-## Slide 11 — What recent tuning taught us
+## Slide 11 — Controlled benchmark comparison
 
 **Title:**  
-Balanced performance matters more than one perfect metric
+Continuous task vs. single-mission validation benchmark
 
 **Bullets:**
 
-- `reward_balance_v2`: better aligned than earlier runs but still throughput-limited
-- `transit_rebalanced_v3`: best overall operating balance
-- `ontime_rebalanced_v4`: perfect on-time rate, but too conservative
-- key lesson: over-optimizing schedule can reduce berth usage and throughput
+- continuous + ground truth:
+  - better throughput and higher on-time rate
+  - closer to the real target environment
+- single_mission + ground truth:
+  - shorter episodes
+  - `100%` mission success in the benchmark run
+  - cleaner success signal for debugging
+- key lesson:
+  - the simplified benchmark helps validate core logic, but it does not replace the continuous scheduler
 
 **Speaker notes:**
 
-This is the research takeaway slide. It shows that the project is already producing a meaningful systems insight, not only a software artifact.
+This slide should make the benchmark role very clear. The simplified setup is useful because it makes success and failure easier to interpret, but it is not the final research environment.
 
 ## Slide 12 — Limitations and next steps
 
@@ -254,8 +270,10 @@ What is simplified, and what comes next
 - route distances were scaled so multiple trips fit in one rollout
 - current fuel level is generous relative to route length
 - next steps:
-  - keep `v3` as the working baseline
-  - run short multi-seed validation of `v3` vs `v4`
+  - keep `v3` as the working continuous baseline
+  - use `single_mission + ground_truth` as a controlled validation benchmark
+  - run short multi-seed comparisons in both settings
+  - reintroduce imperfect forecasts after validating core control behavior
   - decide whether to move to real ports and nautical distances
 
 **Speaker notes:**

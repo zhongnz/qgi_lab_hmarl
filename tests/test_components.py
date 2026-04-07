@@ -11,7 +11,12 @@ from hmarl_mvp.agents import (
     assign_vessels_to_coordinators,
 )
 from hmarl_mvp.config import DecisionCadence, get_default_config, should_update
-from hmarl_mvp.forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+from hmarl_mvp.forecasts import (
+    GroundTruthForecaster,
+    MediumTermForecaster,
+    OracleForecaster,
+    ShortTermForecaster,
+)
 from hmarl_mvp.policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
 from hmarl_mvp.state import PortState, VesselState, initialize_ports, initialize_vessels, make_rng
 
@@ -114,6 +119,53 @@ class AgentInterfaceTests(unittest.TestCase):
         ).predict(ports)
         self.assertEqual(oracle_medium.shape, medium.shape)
         self.assertEqual(oracle_short.shape, short.shape)
+
+    def test_ground_truth_forecaster_projects_committed_arrivals(self) -> None:
+        cfg = get_default_config(
+            num_ports=2,
+            num_vessels=1,
+            medium_horizon_days=3,
+            short_horizon_hours=4,
+            service_time_hours=6.0,
+        )
+        distance_nm = np.array([[0.0, 12.0], [12.0, 0.0]], dtype=float)
+        ports = [
+            PortState(port_id=0, queue=0, docks=1, occupied=0),
+            PortState(
+                port_id=1,
+                queue=0,
+                docks=1,
+                occupied=1,
+                service_times=[6.0],
+                servicing_vessel_ids=[-1],
+            ),
+        ]
+        vessels = [
+            VesselState(
+                vessel_id=0,
+                location=0,
+                destination=1,
+                position_nm=0.0,
+                speed=cfg["nominal_speed"],
+                at_sea=True,
+            )
+        ]
+
+        oracle_medium, oracle_short = OracleForecaster(
+            medium_horizon_days=cfg["medium_horizon_days"],
+            short_horizon_hours=cfg["short_horizon_hours"],
+        ).predict(ports)
+        gt_medium, gt_short = GroundTruthForecaster(
+            medium_horizon_days=cfg["medium_horizon_days"],
+            short_horizon_hours=cfg["short_horizon_hours"],
+            config=cfg,
+            distance_nm=distance_nm,
+        ).predict(ports, vessels, current_step=0)
+
+        self.assertEqual(gt_medium.shape, oracle_medium.shape)
+        self.assertEqual(gt_short.shape, oracle_short.shape)
+        self.assertEqual(float(oracle_short[1, 0]), 0.0)
+        self.assertEqual(float(gt_short[1, 0]), 1.0)
 
 
 if __name__ == "__main__":

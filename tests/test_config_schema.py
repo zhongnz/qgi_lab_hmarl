@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from hmarl_mvp.config import HMARLConfig, get_default_config, resolve_distance_matrix, validate_config
+from hmarl_mvp.config import (
+    HMARLConfig,
+    get_default_config,
+    resolve_distance_matrix,
+    validate_config,
+)
 
 
 class ConfigSchemaTests(unittest.TestCase):
@@ -40,6 +45,28 @@ class ConfigSchemaTests(unittest.TestCase):
         cfg = validate_config({"rollout_steps": 5, "num_coordinators": 1})
         self.assertEqual(cfg["rollout_steps"], 5)
         self.assertEqual(cfg["num_coordinators"], 1)
+
+    def test_single_mission_config_validates(self) -> None:
+        cfg = get_default_config(episode_mode="single_mission", mission_success_on="arrival")
+        self.assertEqual(cfg["episode_mode"], "single_mission")
+        self.assertEqual(cfg["mission_success_on"], "arrival")
+        self.assertEqual(cfg["forecast_source"], "heuristic")
+
+    def test_ground_truth_forecast_source_validates(self) -> None:
+        cfg = get_default_config(forecast_source="ground_truth")
+        self.assertEqual(cfg["forecast_source"], "ground_truth")
+
+    def test_invalid_episode_mode_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            get_default_config(episode_mode="not_real")
+
+    def test_invalid_mission_success_on_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            get_default_config(mission_success_on="dock")
+
+    def test_invalid_forecast_source_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            get_default_config(forecast_source="not_real")
 
     def test_default_distances_are_reachable_within_episode(self) -> None:
         cfg = get_default_config()

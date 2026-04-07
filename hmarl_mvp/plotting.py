@@ -474,8 +474,9 @@ def plot_time_series_diagnostics(
         Optional figure title override.
     """
     import math
-    import pandas as pd
     import re
+
+    import pandas as pd
 
     df = pd.DataFrame(step_log) if not isinstance(step_log, pd.DataFrame) else step_log
     if df.empty or time_col not in df.columns:

@@ -155,8 +155,8 @@ class MaritimeGymEnv(gym.Env):
             info["weather_matrix"] = self._env._weather.copy()
 
         # Gymnasium convention: terminated vs truncated
-        terminated = done
-        truncated = False
+        terminated = bool(info.get("terminated", done))
+        truncated = bool(info.get("truncated", False))
 
         return flat_obs, total_reward, terminated, truncated, info
 

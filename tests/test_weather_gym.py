@@ -283,14 +283,16 @@ class TestMaritimeGymEnv(unittest.TestCase):
         env = MaritimeGymEnv(config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 3})
         env.reset()
         terminated = False
+        truncated = False
         steps = 0
-        while not terminated:
+        while not (terminated or truncated):
             action = env.action_space.sample()
             _, _, terminated, truncated, _ = env.step(action)
             steps += 1
             if steps > 100:
                 break
-        self.assertTrue(terminated)
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
         self.assertEqual(steps, 3)
 
     def test_reset_with_seed(self) -> None:

@@ -49,6 +49,7 @@ class TestLearnedForecastPolicyType:
 
     def test_learned_forecast_in_valid_policies(self) -> None:
         assert "learned_forecast" in VALID_POLICIES
+        assert "ground_truth" in VALID_POLICIES
 
     def test_learned_forecast_requires_forecaster(
         self, small_config: dict[str, object]
