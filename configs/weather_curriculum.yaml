@@ -1,4 +1,4 @@
-# Weather-enabled experiment with curriculum training.
+# Weather-enabled curriculum experiment at the current 8v/5p scale.
 # Usage: python scripts/run_experiment.py configs/weather_curriculum.yaml
 
 name: weather_curriculum
@@ -11,17 +11,17 @@ tags:
   - progressive
 
 env:
-  num_vessels: 3
-  num_ports: 2
+  num_vessels: 8
+  num_ports: 5
   docks_per_port: 3
-  rollout_steps: 55
+  rollout_steps: 69
   weather_enabled: true
   weather_penalty_factor: 0.15
 
 mappo:
   lr: 0.0003                   # initial Adam learning rate
   lr_end: 0.00005               # linearly anneal LR to this value
-  rollout_length: 50            # steps per rollout before PPO update
+  rollout_length: 64            # steps per rollout before PPO update
   num_epochs: 4                 # PPO epochs per update
   minibatch_size: 128           # samples per PPO minibatch
   clip_eps: 0.2                 # PPO clipping epsilon

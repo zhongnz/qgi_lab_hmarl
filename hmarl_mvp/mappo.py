@@ -1430,111 +1430,119 @@ class MAPPOTrainer:
         num_steps: int | None = None,
         deterministic: bool = True,
         heuristic_coordinator: bool = False,
+        seed: int | None = None,
     ) -> dict[str, float]:
         """Run a deterministic evaluation episode and return mean metrics."""
         num_steps = num_steps or int(self.cfg["rollout_steps"])
-        obs = self.env.reset()
+        eval_seed = self._seed if seed is None else int(seed)
+        original_seed = self.env.seed
+        original_next_reset_seed = getattr(self.env, "_next_reset_seed", self.env.seed)
+        try:
+            obs = self.env.reset(seed=eval_seed)
 
-        for _ac in self.actor_critics.values():
-            _ac.eval()
+            for _ac in self.actor_critics.values():
+                _ac.eval()
 
-        total_vessel_reward = 0.0
-        total_port_reward = 0.0
-        total_coord_reward = 0.0
-        actual_steps = 0
+            total_vessel_reward = 0.0
+            total_port_reward = 0.0
+            total_coord_reward = 0.0
+            actual_steps = 0
 
-        for _ in range(num_steps):
-            global_state = self.env.get_global_state()
-            gs_tensor = torch.as_tensor(
-                global_state, dtype=torch.float32, device=self.device
-            ).unsqueeze(0)
+            for _ in range(num_steps):
+                global_state = self.env.get_global_state()
+                gs_tensor = torch.as_tensor(
+                    global_state, dtype=torch.float32, device=self.device
+                ).unsqueeze(0)
 
-            with torch.no_grad():
-                # Vessels
-                vessel_actions: list[dict[str, Any]] = []
-                for i, v_obs in enumerate(obs["vessels"]):
-                    v_obs_n = self._eval_normalize_obs(v_obs, "vessel")
-                    v_t = torch.as_tensor(
-                        v_obs_n, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    a, _, _ = self._get_ac("vessel", i).get_action_and_value(
-                        v_t, gs_tensor, deterministic=deterministic
-                    )
-                    speed_cap = self._vessel_weather_speed_cap(i)
-                    vessel_actions.append(
-                        _nn_to_vessel_action(
-                            a.squeeze(0),
-                            self.cfg,
-                            speed_cap=speed_cap,
-                            current_step=self.env.t,
-                        )
-                    )
-
-                # Ports
-                port_actions: list[dict[str, Any]] = []
-                for i, p_obs in enumerate(obs["ports"]):
-                    p_obs_n = self._eval_normalize_obs(p_obs, "port")
-                    p_t = torch.as_tensor(
-                        p_obs_n, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    p_mask = self._port_mask_tensor(i)
-                    a, _, _ = self._get_ac("port", i).get_action_and_value(
-                        p_t, gs_tensor, deterministic=deterministic, action_mask=p_mask
-                    )
-                    port_actions.append(_nn_to_port_action(a.squeeze(0), i, self.env))
-
-                # Coordinators
-                if heuristic_coordinator:
-                    heuristic_actions = self.env.sample_stub_actions()
-                    coord_actions = list(heuristic_actions.get("coordinators", []))
-                else:
-                    assignments = self.env._build_assignments()
-                    coord_actions = []
-                    c_mask = self._coordinator_mask_tensor()
-                    for i, c_obs in enumerate(obs["coordinators"]):
-                        c_obs_n = self._eval_normalize_obs(c_obs, "coordinator")
-                        c_t = torch.as_tensor(
-                            c_obs_n, dtype=torch.float32, device=self.device
+                with torch.no_grad():
+                    # Vessels
+                    vessel_actions: list[dict[str, Any]] = []
+                    for i, v_obs in enumerate(obs["vessels"]):
+                        v_obs_n = self._eval_normalize_obs(v_obs, "vessel")
+                        v_t = torch.as_tensor(
+                            v_obs_n, dtype=torch.float32, device=self.device
                         ).unsqueeze(0)
-                        a, _, _ = self._get_ac("coordinator", i).get_action_and_value(
-                            c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
+                        a, _, _ = self._get_ac("vessel", i).get_action_and_value(
+                            v_t, gs_tensor, deterministic=deterministic
                         )
-                        coord_actions.append(
-                            _nn_to_coordinator_action(a.squeeze(0), i, self.env, assignments)
+                        speed_cap = self._vessel_weather_speed_cap(i)
+                        vessel_actions.append(
+                            _nn_to_vessel_action(
+                                a.squeeze(0),
+                                self.cfg,
+                                speed_cap=speed_cap,
+                                current_step=self.env.t,
+                            )
                         )
 
-            actions_dict: dict[str, Any] = {
-                "coordinator": coord_actions[0] if coord_actions else {},
-                "coordinators": coord_actions,
-                "vessels": vessel_actions,
-                "ports": port_actions,
+                    # Ports
+                    port_actions: list[dict[str, Any]] = []
+                    for i, p_obs in enumerate(obs["ports"]):
+                        p_obs_n = self._eval_normalize_obs(p_obs, "port")
+                        p_t = torch.as_tensor(
+                            p_obs_n, dtype=torch.float32, device=self.device
+                        ).unsqueeze(0)
+                        p_mask = self._port_mask_tensor(i)
+                        a, _, _ = self._get_ac("port", i).get_action_and_value(
+                            p_t, gs_tensor, deterministic=deterministic, action_mask=p_mask
+                        )
+                        port_actions.append(_nn_to_port_action(a.squeeze(0), i, self.env))
+
+                    # Coordinators
+                    if heuristic_coordinator:
+                        heuristic_actions = self.env.sample_stub_actions()
+                        coord_actions = list(heuristic_actions.get("coordinators", []))
+                    else:
+                        assignments = self.env._build_assignments()
+                        coord_actions = []
+                        c_mask = self._coordinator_mask_tensor()
+                        for i, c_obs in enumerate(obs["coordinators"]):
+                            c_obs_n = self._eval_normalize_obs(c_obs, "coordinator")
+                            c_t = torch.as_tensor(
+                                c_obs_n, dtype=torch.float32, device=self.device
+                            ).unsqueeze(0)
+                            a, _, _ = self._get_ac("coordinator", i).get_action_and_value(
+                                c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
+                            )
+                            coord_actions.append(
+                                _nn_to_coordinator_action(a.squeeze(0), i, self.env, assignments)
+                            )
+
+                actions_dict: dict[str, Any] = {
+                    "coordinator": coord_actions[0] if coord_actions else {},
+                    "coordinators": coord_actions,
+                    "vessels": vessel_actions,
+                    "ports": port_actions,
+                }
+                obs, rewards, done, _ = self.env.step(actions_dict)
+                actual_steps += 1
+                total_vessel_reward += float(np.mean(rewards["vessels"]))
+                total_port_reward += float(np.mean(rewards["ports"]))
+                total_coord_reward += float(rewards["coordinator"])
+                if done:
+                    break
+
+            # Operational and economic metrics from final environment state
+            vessel_metrics = compute_vessel_metrics(self.env.vessels)
+            port_metrics = compute_port_metrics(self.env.ports)
+            economic_metrics = compute_economic_metrics(
+                self.env.vessels, dict(self.cfg),
+            )
+
+            denom = max(actual_steps, 1)
+            result: dict[str, float] = {
+                "mean_vessel_reward": total_vessel_reward / denom,
+                "mean_port_reward": total_port_reward / denom,
+                "mean_coordinator_reward": total_coord_reward / denom,
+                "total_reward": total_vessel_reward + total_port_reward + total_coord_reward,
             }
-            obs, rewards, done, _ = self.env.step(actions_dict)
-            actual_steps += 1
-            total_vessel_reward += float(np.mean(rewards["vessels"]))
-            total_port_reward += float(np.mean(rewards["ports"]))
-            total_coord_reward += float(rewards["coordinator"])
-            if done:
-                break
-
-        # Operational and economic metrics from final environment state
-        vessel_metrics = compute_vessel_metrics(self.env.vessels)
-        port_metrics = compute_port_metrics(self.env.ports)
-        economic_metrics = compute_economic_metrics(
-            self.env.vessels, dict(self.cfg),
-        )
-
-        denom = max(actual_steps, 1)
-        result: dict[str, float] = {
-            "mean_vessel_reward": total_vessel_reward / denom,
-            "mean_port_reward": total_port_reward / denom,
-            "mean_coordinator_reward": total_coord_reward / denom,
-            "total_reward": total_vessel_reward + total_port_reward + total_coord_reward,
-        }
-        result.update(vessel_metrics)
-        result.update(port_metrics)
-        result.update(economic_metrics)
-        return result
+            result.update(vessel_metrics)
+            result.update(port_metrics)
+            result.update(economic_metrics)
+            return result
+        finally:
+            self.env.seed = original_seed
+            self.env._next_reset_seed = original_next_reset_seed
 
     def evaluate_episodes(
         self,
@@ -1563,15 +1571,20 @@ class MAPPOTrainer:
             ``episodes`` — list of per-episode metric dicts.
         """
         episodes: list[dict[str, float]] = []
-        base_seed = self.env.seed
-        for ep_i in range(num_episodes):
-            self.env.seed = base_seed + ep_i
-            ep_result = self.evaluate(
-                num_steps=num_steps,
-                deterministic=deterministic,
-            )
-            episodes.append(ep_result)
-        self.env.seed = base_seed  # restore original seed
+        base_seed = self._seed
+        original_seed = self.env.seed
+        original_next_reset_seed = getattr(self.env, "_next_reset_seed", self.env.seed)
+        try:
+            for ep_i in range(num_episodes):
+                ep_result = self.evaluate(
+                    num_steps=num_steps,
+                    deterministic=deterministic,
+                    seed=base_seed + ep_i,
+                )
+                episodes.append(ep_result)
+        finally:
+            self.env.seed = original_seed
+            self.env._next_reset_seed = original_next_reset_seed
 
         if not episodes:
             return {"mean": {}, "std": {}, "min": {}, "max": {}, "episodes": []}

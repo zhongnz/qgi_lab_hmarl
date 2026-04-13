@@ -205,6 +205,8 @@ python scripts/run_experiment.py configs/baseline.yaml --smoke
 
 Experiment configs specify environment, MAPPO hyper-parameters, curriculum
 stages, seed counts, and output paths in a single reproducible YAML file.
+The shipped YAML configs now target the current 8-vessel / 5-port simulator
+scale with `rollout_steps: 69` and `rollout_length: 64`.
 
 ### 7) Run MAPPO comparison vs baselines
 

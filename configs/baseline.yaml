@@ -1,4 +1,4 @@
-# Baseline experiment — standard parameters, single seed, no curriculum.
+# Baseline experiment — standard parameters at the current 8-vessel / 5-port scale.
 # Usage: python scripts/run_experiment.py configs/baseline.yaml
 
 name: baseline
@@ -8,14 +8,14 @@ tags:
   - default
 
 env:
-  num_vessels: 3
-  num_ports: 2
+  num_vessels: 8
+  num_ports: 5
   docks_per_port: 3
-  rollout_steps: 55
+  rollout_steps: 69
 
 mappo:
   lr: 0.0003                   # Adam learning rate
-  rollout_length: 50            # steps per rollout before PPO update
+  rollout_length: 64            # steps per rollout before PPO update
   num_epochs: 4                 # PPO epochs per update
   minibatch_size: 128           # samples per PPO minibatch
   clip_eps: 0.2                 # PPO clipping epsilon

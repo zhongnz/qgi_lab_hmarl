@@ -18,8 +18,8 @@ CSV outputs from `scripts/run_baselines.py`.
 - `avg_queue`: mean queue length across ports.
 - `dock_utilization`: mean `occupied / docks` across ports.
 - `total_wait_hours`: cumulative wait-hours across all ports.
-- `total_vessels_served`: cumulative served vessels across all ports.
-- `avg_wait_per_vessel`: `total_wait_hours / total_vessels_served`.
+- `total_vessels_served`: cumulative port service admissions across all ports. This includes any seeded background port workload present at reset, so it is a system-throughput metric rather than a count of unique controllable vessels.
+- `avg_wait_per_vessel`: `total_wait_hours / total_vessels_served` using the same system-throughput denominator.
 - `pending_arrival_requests`: requests waiting in port inbox queues.
 
 ## Vessel / Emissions State
@@ -29,7 +29,7 @@ CSV outputs from `scripts/run_baselines.py`.
 - `total_fuel_used`: cumulative fleet fuel consumption from initial fuel levels.
 - `total_emissions_co2`: cumulative fleet CO2 emissions.
 - `avg_delay_hours`: average vessel delay.
-- `on_time_rate`: share of vessels with delay < 2 hours.
+- `on_time_rate`: share of scheduled arrivals completed within `on_time_tolerance_hours` of their requested arrival time.
 
 ## Coordination Counters
 

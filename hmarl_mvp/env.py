@@ -56,6 +56,8 @@ class MaritimeEnv:
         self.cfg = get_default_config(**user_cfg)
         self.seed = int(self.cfg["seed"])
         self.rng = make_rng(self.seed)
+        self._next_reset_seed = self.seed
+        self._last_reset_seed = self.seed
         self.num_ports = self.cfg["num_ports"]
         self.num_vessels = self.cfg["num_vessels"]
         self.num_coordinators = max(1, int(self.cfg.get("num_coordinators", 1)))
@@ -111,10 +113,33 @@ class MaritimeEnv:
         vessel.pending_requested_arrival_time = 0.0
         vessel.requested_arrival_time = 0.0
 
-    def reset(self) -> dict[str, Any]:
-        """Reset state and return initial observations."""
+    def reset(self, *, seed: int | None = None) -> dict[str, Any]:
+        """Reset state and return initial observations.
+
+        Reset seeding follows two simple rules:
+
+        - ``reset(seed=123)`` is fully deterministic and replays the exact
+          same initial state whenever the same seed is provided.
+        - ``reset()`` advances to the next reproducible episode seed so that
+          repeated training resets explore different initial states while
+          remaining deterministic for a fixed run seed.
+        """
+        if seed is not None:
+            effective_seed = int(seed)
+            self.seed = effective_seed
+            self._next_reset_seed = effective_seed + 1
+        elif self.seed != self._next_reset_seed - 1:
+            # Respect explicit ``env.seed = ...`` overrides used by older code.
+            effective_seed = int(self.seed)
+            self._next_reset_seed = effective_seed + 1
+        else:
+            effective_seed = int(self._next_reset_seed)
+            self.seed = effective_seed
+            self._next_reset_seed = effective_seed + 1
+
         self.t = 0
-        self.rng = make_rng(self.seed)
+        self._last_reset_seed = effective_seed
+        self.rng = make_rng(effective_seed)
         self.ports = initialize_ports(
             num_ports=self.num_ports,
             docks_per_port=self.cfg["docks_per_port"],

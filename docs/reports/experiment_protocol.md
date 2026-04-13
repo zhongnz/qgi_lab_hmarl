@@ -17,6 +17,12 @@
 
 ## Experiment Matrix
 
+All shipped YAML configs now target the current simulator scale:
+- `num_vessels: 8`
+- `num_ports: 5`
+- `rollout_steps: 69`
+- `rollout_length: 64`
+
 ### E1 — Baseline Policy Sweep (RQ1, RQ2)
 
 **Goal:** Establish that MAPPO outperforms heuristic and random baselines.
@@ -186,7 +192,7 @@ from hmarl_mvp import run_forecaster_ablation
 results = run_forecaster_ablation(seeds=[42, 49, 56], num_iterations=200)
 ```
 
-> **Depends on**: E1 complete, YAML configs updated to 8v/5p scale (see Critical Prerequisites).
+> **Depends on**: E1 complete on the current 8v/5p experiment configs.
 
 ---
 
@@ -200,23 +206,11 @@ All multi-seed comparisons use:
 
 ---
 
-## Critical Prerequisites
-
-> **BEFORE RUNNING ANY EXPERIMENT:** Update all YAML configs from the current
-> development scale (`num_vessels: 3, num_ports: 2`) to the proposal-specified
-> scale (`num_vessels: 8, num_ports: 5`). Results at 3v/2p are not comparable
-> to the research proposal and should not be used in the final report.
->
-> Configs to update: `configs/baseline.yaml`, `configs/multi_seed.yaml`,
-> `configs/weather_curriculum.yaml`, `configs/no_sharing_ablation.yaml`.
-
----
-
 ## Execution Plan
 
 | Phase | Experiments | Est. Time | Prerequisites |
 |-------|-------------|-----------|---------------|
-| 0. Scale fix | Update all configs to 8v/5p | 30 min | None |
+| 0. Smoke check | Verify the shipped 8v/5p configs with a smoke run | 30 min | None |
 | 1. Validation | E1 (baseline sweep) | 2 hours | Phase 0 done |
 | 2. Ablations  | E2 (param sharing), E4 (noise), E5 (sharing) | 4 hours | E1 done |
 | 3. Horizons   | E3 (horizon sweep) | 3 hours | E1 done |

@@ -516,7 +516,7 @@ def run_trained_mappo_trace(
     from .mappo import _nn_to_coordinator_action, _nn_to_port_action, _nn_to_vessel_action
 
     num_steps = int(trainer.cfg["rollout_steps"]) if num_steps is None else int(num_steps)
-    obs = trainer.env.reset()
+    obs = trainer.env.reset(seed=trainer._seed)
 
     for actor_critic in trainer.actor_critics.values():
         actor_critic.eval()

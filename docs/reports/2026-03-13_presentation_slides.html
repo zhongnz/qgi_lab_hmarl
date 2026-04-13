@@ -511,18 +511,18 @@
           <div class="eyebrow">Friday Presentation</div>
           <h1>Hierarchical Multi-Agent Reinforcement Learning for Congestion-Aware Maritime Scheduling</h1>
           <p class="subhead">
-            Project context, environment and experiment setup, current progress, and recommended next steps.
+            Project context, environment and experiment setup, current progress, and the final continuous + ground-truth run plan.
           </p>
         </div>
           <div class="meta">
           <span>Independent Study • Spring 2026</span>
           <span>Supervisor: Prof. Aboussalah</span>
-          <span>Baseline: v3 + GT benchmark</span>
+          <span>Final path: continuous + GT</span>
         </div>
       </header>
       <div class="slide-body">
         <div class="hero-quote">
-          We built a hierarchical MARL simulator for maritime scheduling, made the environment and diagnostics much more trustworthy, and now have both a strong continuous baseline and a controlled benchmark for validating the core control logic.
+          We built a hierarchical MARL simulator for maritime scheduling, made the environment and diagnostics much more trustworthy, and now have a clean final run path for studying continuous control under reliable forecasts.
         </div>
         <div class="stat-grid two-up">
           <div class="stat">
@@ -532,8 +532,8 @@
           </div>
           <div class="stat">
             <span class="label">Current Setup</span>
-            <span class="value">v3 + GT</span>
-            <div class="note">Operating baseline plus validation benchmark</div>
+            <span class="value">Cont. + GT</span>
+            <div class="note">Continuous environment with reliable forecasts</div>
           </div>
         </div>
       </div>
@@ -691,16 +691,16 @@
             <p>Coordinator chooses destination guidance; vessels control speed and slot requests; ports manage acceptance and service.</p>
           </div>
           <div class="card soft-orange">
-            <h3>Controlled benchmark</h3>
-            <p><strong>Single-mission</strong> episodes plus <strong>ground-truth</strong> forecasts isolate the controller from forecast noise.</p>
+            <h3>Final completion path</h3>
+            <p><strong>Continuous</strong> episodes plus <strong>ground-truth</strong> forecasts isolate control quality while keeping the real task definition.</p>
           </div>
           <div class="card">
             <h3>Primary metrics</h3>
-            <p>On-time rate, completed arrivals, vessels served, dock utilization, and total operating cost.</p>
+            <p>On-time rate, completed arrivals, port service events, dock utilization, and total operating cost.</p>
           </div>
           <div class="card">
             <h3>Evaluation</h3>
-            <p>Two tracks: continuous scheduling as the real task, and the simplified benchmark for validating core mechanics.</p>
+            <p>One artifact run plus one five-seed run: rich diagnostics for storytelling, and multi-seed stability for the final claim.</p>
           </div>
         </div>
       </div>
@@ -828,14 +828,14 @@
             <li>This removed the earlier near-constant reward problem.</li>
           </ul>
         </div>
-        <div class="card">
-          <h3>Validation variants</h3>
-          <ul>
-            <li><strong>single_mission</strong> ends the episode after one trip per vessel.</li>
-            <li><strong>ground_truth</strong> forecast rolls forward the committed system state.</li>
-            <li>These modes help debug control logic before reintroducing forecast error.</li>
-          </ul>
-        </div>
+          <div class="card">
+            <h3>Final run cleanup</h3>
+            <ul>
+              <li><strong>ground_truth</strong> forecasts are now used to isolate control quality.</li>
+              <li>Training resets now vary reproducibly across episodes.</li>
+              <li>The final completion path is one continuous environment, not two competing tracks.</li>
+            </ul>
+          </div>
       </div>
       <footer class="slide-footer">
         <span>Environment correctness</span>
@@ -928,45 +928,45 @@
       <header class="slide-header">
         <div>
           <div class="eyebrow">Benchmark</div>
-          <h2>Continuous task vs. single-mission validation benchmark</h2>
+          <h2>Final full-scale run plan</h2>
         </div>
       </header>
       <div class="slide-body">
         <table class="comparison">
           <thead>
             <tr>
-              <th>Setting</th>
-              <th>Eval total reward</th>
-              <th>On-time rate</th>
-              <th>Completed arrivals</th>
-              <th>Vessels served</th>
-              <th>Mission success rate</th>
-              <th>Eval trace steps</th>
+              <th>Stage</th>
+              <th>Environment</th>
+              <th>Forecast</th>
+              <th>Iterations</th>
+              <th>Seeds</th>
+              <th>Purpose</th>
+              <th>Main outputs</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>Continuous + ground truth</strong></td>
-              <td>-673.99</td>
-              <td class="good">0.759</td>
-              <td class="good">14.8</td>
-              <td class="good">24.2</td>
-              <td>0.0</td>
-              <td>37</td>
+              <td><strong>Artifact run</strong></td>
+              <td>Continuous</td>
+              <td>Ground truth</td>
+              <td>100</td>
+              <td>42</td>
+              <td>Generate figures, traces, report, and saved model.</td>
+              <td><code>report.md</code>, trace CSVs, plots, model</td>
             </tr>
             <tr>
-              <td><strong>Single mission + ground truth</strong></td>
-              <td class="good">-481.51</td>
-              <td class="warn">0.575</td>
-              <td>8.0</td>
-              <td>9.4</td>
-              <td class="good">1.0</td>
-              <td class="good">24</td>
+              <td><strong>Multi-seed run</strong></td>
+              <td>Continuous</td>
+              <td>Ground truth</td>
+              <td>100</td>
+              <td>42, 49, 56, 63, 70</td>
+              <td>Produce the final quantitative stability claim.</td>
+              <td><code>summary.csv</code>, <code>experiment_summary.json</code></td>
             </tr>
           </tbody>
         </table>
         <div class="callout">
-          <strong>Takeaway:</strong> the simplified benchmark is easier to complete and gives a much cleaner success signal, but the continuous setting still has higher throughput and remains the real target environment.
+          <strong>Takeaway:</strong> we now finish the project on one clean task definition: continuous scheduling with reliable forecasts, plus one representative run for artifacts and one five-seed run for stability.
         </div>
       </div>
       <footer class="slide-footer">
@@ -992,14 +992,14 @@
             <li>This is still a controlled research environment, not an operational map.</li>
           </ul>
         </div>
-        <div class="card soft-teal">
-          <h3>Recommended baseline</h3>
-          <p>Keep <strong>transit-rebalanced v3</strong> as the working continuous default because it still gives the best overall operating balance.</p>
-        </div>
-        <div class="card">
-          <h3>Next steps</h3>
-          <p>Use <strong>single_mission + ground_truth</strong> as the validation benchmark, run short multi-seed comparisons in both settings, then reintroduce imperfect forecasting and decide whether to move to real ports and nautical distances.</p>
-        </div>
+          <div class="card soft-teal">
+            <h3>Current finish line</h3>
+            <p>Use <strong>continuous + ground_truth</strong> as the canonical final training path so the project isolates control quality without forecast noise.</p>
+          </div>
+          <div class="card">
+            <h3>Next steps</h3>
+            <p>Run the artifact seed, run the five-seed summary, finalize the report and slides, then treat imperfect forecasts and real-port geography as follow-on work.</p>
+          </div>
       </div>
       <footer class="slide-footer">
         <span>Limitations and next steps</span>

@@ -55,6 +55,30 @@ class SmokeTests(unittest.TestCase):
         state_2 = env.get_global_state()
         self.assertTrue(np.array_equal(state_1, state_2))
 
+    def test_env_reset_advances_episode_seed_by_default(self) -> None:
+        env = MaritimeEnv(config=get_default_config(num_ports=3, num_vessels=4), seed=42)
+        env.reset()
+        state_1 = env.get_global_state().copy()
+        seed_1 = env._last_reset_seed
+
+        env.reset()
+        state_2 = env.get_global_state().copy()
+        seed_2 = env._last_reset_seed
+
+        self.assertEqual(seed_1, 42)
+        self.assertEqual(seed_2, 43)
+        self.assertFalse(np.array_equal(state_1, state_2))
+
+    def test_env_reset_with_explicit_seed_replays_same_start(self) -> None:
+        env = MaritimeEnv(config=get_default_config(num_ports=3, num_vessels=4), seed=42)
+        env.reset(seed=123)
+        state_1 = env.get_global_state().copy()
+
+        env.reset(seed=123)
+        state_2 = env.get_global_state().copy()
+
+        np.testing.assert_array_equal(state_1, state_2)
+
     def test_async_latency_delays_dispatch(self) -> None:
         cfg = get_default_config(
             num_ports=2,

@@ -207,6 +207,19 @@ class TestMAPPOTrainer:
             eval_after["total_reward"], abs=0.01
         )
 
+    def test_evaluate_reuses_base_seed_after_training(
+        self, small_config: dict[str, object], small_mappo_cfg: MAPPOConfig
+    ) -> None:
+        trainer = MAPPOTrainer(
+            env_config=small_config,
+            mappo_config=small_mappo_cfg,
+        )
+        trainer.collect_rollout()
+        eval_one = trainer.evaluate(num_steps=5)
+        eval_two = trainer.evaluate(num_steps=5)
+
+        assert eval_one["total_reward"] == pytest.approx(eval_two["total_reward"], abs=0.01)
+
 
 class TestPPOLossDirection:
     """Sanity check that PPO loss values are in reasonable ranges."""
