@@ -23,7 +23,10 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
           python -m pip install -e .
 
-      - name: Lint
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Typecheck (mypy)
         run: python -m mypy
 
       - name: Test

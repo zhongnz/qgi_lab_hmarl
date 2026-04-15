@@ -232,7 +232,7 @@ The coordinator operates every `coord_decision_interval_steps = 12` simulation s
 
 The coordinator outputs a **per-vessel destination directive**: `{dest_port, per_vessel_dest, departure_window_hours, emission_budget}`. In the MAPPO setting, one `ActorCritic` is shared across all coordinator instances (there is currently one coordinator for the full fleet; multi-coordinator partitioning is scaffolded but not yet activated at scale).
 
-The coordinator's action space is discrete: it selects one of $N_P$ destination ports for each vessel via a `DiscreteActor`. In the heuristic setting, four modes are implemented: `independent` (random destinations), `reactive` (direct vessels to least-congested port), `forecast` (rank ports by mean predicted congestion), and `oracle` (same as forecast but with perfect future knowledge).
+The coordinator's action space is discrete: it selects one of $N_P$ destination ports for each vessel via a `DiscreteActor`. In the heuristic setting, four modes are implemented: `independent` (random destinations), `reactive` (direct vessels to least-congested port), `forecast` (rank ports by mean predicted congestion), and `noiseless` (same as forecast but with perfect current-state knowledge, no noise).
 
 ### 5.2 Vessel Agents
 
@@ -277,9 +277,9 @@ where $\beta = 0.5$ is the dock idle-time weight. The first term measures waitin
 
 ### Per-step coordinator reward
 
-$$R_C = -\bigl(\Delta F_{\text{fleet}} + \bar{Q} + \lambda \cdot \Delta E_{\text{fleet}}\bigr)$$
+$$R_C = -\bigl(\Delta F_{\text{fleet}} + \bar{Q} + w_e \cdot \Delta E_{\text{fleet}}\bigr)$$
 
-where $\lambda = 2.0$ amplifies the CO₂ signal at the coordinator level. This intentional overlap with vessel rewards is deliberate: the coordinator and vessel are rewarded for the same fuel/emissions events, aligning them toward joint fuel reduction without requiring explicit coordination bonuses that could distort policy learning.
+where $w_e$ = `coordinator_emission_weight` = 0.2 scales the CO₂ signal at the coordinator level. This intentional overlap with vessel rewards is deliberate: the coordinator and vessel are rewarded for the same fuel/emissions events, aligning them toward joint fuel reduction without requiring explicit coordination bonuses that could distort policy learning.
 
 A **weather-aware shaping bonus** is also available:
 
@@ -313,7 +313,7 @@ Three heuristic forecasters are implemented in `forecasts.py`, all producing a `
 |------------|--------|-----|
 | `MediumTermForecaster` | Queue + linear trend + Gaussian noise | Coordinator (strategic) |
 | `ShortTermForecaster` | Queue + Gaussian noise | Vessels and ports (operational) |
-| `OracleForecaster` | Perfect current-queue repeat | Upper-bound ablation |
+| `NoiselessForecaster` | Perfect current-queue repeat | Upper-bound ablation |
 
 All implement a `predict(ports)` interface, enabling transparent substitution at experiment time.
 
@@ -425,11 +425,11 @@ Four heuristic policies are implemented in `policies.py` and serve as the compar
 | `independent` | Random destination per vessel | Nominal speed | Admit up to capacity |
 | `reactive` | Nearest (least-congested) port | Nominal speed | Admit up to capacity |
 | `forecast` | Forecast-ranked port (lowest predicted congestion) | Adjust speed for ETA | Admit up to capacity |
-| `oracle` | Perfect future congestion, weather-aware routing | Weather-aware speed | Admit up to capacity |
+| `noiseless` | Noiseless current-state congestion, weather-aware routing | Weather-aware speed | Admit up to capacity |
 
-The `forecast` policy is weather-aware: port scores are modified by mean sea-state to the destination, penalising routes through rough weather by an amount proportional to `weather_penalty_factor`. The `oracle` policy uses `OracleForecaster` (zero-noise future state repeat) as an achievable upper bound.
+The `forecast` policy is weather-aware: port scores are modified by mean sea-state to the destination, penalising routes through rough weather by an amount proportional to `weather_penalty_factor`. The `noiseless` policy uses `NoiselessForecaster` (zero-noise current-state repeat) as an achievable upper bound.
 
-All four heuristics are compared against the MAPPO neural policy in E1. The `forecast` and `oracle` policies set the primary bars that MAPPO must plausibly beat to constitute a positive result.
+All four heuristics are compared against the MAPPO neural policy in E1. The `forecast` and `noiseless` policies set the primary bars that MAPPO must plausibly beat to constitute a positive result.
 
 ---
 
@@ -442,7 +442,7 @@ All four heuristics are compared against the MAPPO neural policy in E1. The `for
 1. **Linear ramp**: integer parameters (`num_vessels`, `num_ports`, `docks_per_port`, `rollout_steps`) are linearly interpolated from `start_config` to `target_config` over `warmup_fraction` of training (default 30%).
 2. **Multi-stage**: explicit `CurriculumStage` definitions give full control over parameter trajectories.
 
-Float parameters (`sea_state_max`, `weather_penalty_factor`, `weather_shaping_weight`, `emission_lambda`) and boolean parameters (`weather_enabled`) are also rampable. The boolean threshold is 0.5: weather is disabled until the ramp crosses 50%, then enabled.
+Float parameters (`sea_state_max`, `weather_penalty_factor`, `weather_shaping_weight`, `coordinator_emission_weight`) and boolean parameters (`weather_enabled`) are also rampable. The boolean threshold is 0.5: weather is disabled until the ramp crosses 50%, then enabled.
 
 The curriculum is critical for the weather scenario: training MAPPO directly on harsh weather (max sea state 3.0) from random initialisation is unstable; ramping from flat seas to storm conditions gives the actor time to learn basic routing before encountering stochastic disruption.
 
@@ -633,7 +633,7 @@ Nine experiments are specified in `docs/reports/experiment_protocol.md`, mapping
 | Core simulation (env, state, dynamics) | ✅ Complete | Physics verified numerically, 644 tests |
 | Reward functions (all 3 agent types) | ✅ Complete | Economic model included |
 | Metrics (operational + economic) | ✅ Complete | All keys standardised |
-| Heuristic baselines (4 policies) | ✅ Complete | Independent, reactive, forecast, oracle |
+| Heuristic baselines (4 policies) | ✅ Complete | Independent, reactive, forecast, noiseless |
 | MAPPO/CTDE training stack | ✅ Complete | Networks, buffer, GAE, PPO update, reward norm |
 | Parameter sharing / ablation | ✅ Complete | `MAPPOConfig.parameter_sharing` toggle |
 | Curriculum learning | ✅ Complete | Linear ramp + multi-stage; weather rampable |
@@ -725,7 +725,7 @@ Nine experiments are specified in `docs/reports/experiment_protocol.md`, mapping
 | `fuel_weight` | 1.0 | Vessel reward fuel term weight |
 | `delay_weight` | 1.5 | Vessel reward delay term weight |
 | `emission_weight` | 0.7 | Vessel reward emission term weight |
-| `emission_lambda` | 2.0 | Coordinator emission amplification |
+| `coordinator_emission_weight` | 0.2 | Coordinator emission weight |
 | `fuel_rate_coeff` | 0.002 | Cubic fuel model coefficient |
 | `emission_factor` | 3.114 | CO₂ tons per ton fuel (IMO) |
 | `speed_min / speed_max` | 8 / 18 kn | Vessel speed bounds |

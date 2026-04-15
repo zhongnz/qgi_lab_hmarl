@@ -32,9 +32,8 @@ the port currently assigned by the Fleet Coordinator.
 ### Docks per port
 
 Each port has **multiple docks** — the default is `docks_per_port = 3`
-(configurable via `HMARLConfig.docks_per_port`). The experiment configs
-use 3 docks for the 3-port baseline and 5 docks for the 8-port
-full-scale runs. Port observations expose `docks` (total) and `occupied`
+(configurable via `HMARLConfig.docks_per_port`). All experiment configs
+use 3 docks per port. Port observations expose `docks` (total) and `occupied`
 (in service), so agents can infer available capacity.
 
 ## Dataflow diagram

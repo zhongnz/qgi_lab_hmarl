@@ -58,6 +58,17 @@ class ExperimentConfig:
     console_log: bool = True
     log_every: int = 10
 
+    # Training mode
+    heuristic_coordinator: bool = False
+
+    # Sweep: run the same experiment for each value of a parameter.
+    # Example: {"parameter": "env.docks_per_port", "values": [1, 2, 3]}
+    sweep: dict[str, Any] | None = None
+
+    # Ablation: run named variants with different overrides.
+    # Example: {"variants": {"freeze_coord": {"heuristic_coordinator": true}}}
+    ablation: dict[str, Any] | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to a plain dict suitable for YAML/JSON serialisation."""
         return asdict(self)
@@ -68,7 +79,7 @@ class ExperimentConfig:
         data: dict[str, Any],
         *,
         strict: bool = True,
-    ) -> "ExperimentConfig":
+    ) -> ExperimentConfig:
         """Construct from a plain dict (e.g. loaded from YAML).
 
         Parameters
@@ -79,7 +90,7 @@ class ExperimentConfig:
             When False, unknown keys are ignored.
         """
         known = {f.name for f in cls.__dataclass_fields__.values()}
-        unknown = sorted(k for k in data.keys() if k not in known)
+        unknown = sorted(k for k in data if k not in known)
         if strict and unknown:
             raise KeyError(f"Unknown experiment config keys: {unknown}")
         filtered = {k: v for k, v in data.items() if k in known}
@@ -158,17 +169,65 @@ def load_experiment_config(
     return ExperimentConfig.from_dict(data, strict=strict)
 
 
+def _set_nested(d: dict, dotted_key: str, value: Any) -> None:
+    """Set a value in a nested dict using dotted key (e.g. 'env.docks_per_port')."""
+    keys = dotted_key.split(".")
+    for k in keys[:-1]:
+        d = d.setdefault(k, {})
+    d[keys[-1]] = value
+
+
 def run_from_config(config: ExperimentConfig) -> dict[str, Any]:
     """Execute a full experiment from an ``ExperimentConfig``.
 
     Handles single- and multi-seed training with optional curriculum,
-    TensorBoard logging, and checkpointing.
+    TensorBoard logging, checkpointing, sweep, and ablation modes.
 
     Returns
     -------
     dict
         Result dict with histories, summaries, and aggregate stats.
     """
+    import copy
+
+    # --- Sweep mode: run once per parameter value ---
+    if config.sweep is not None:
+        param = config.sweep["parameter"]
+        values = config.sweep["values"]
+        sweep_results: dict[str, Any] = {"sweep_parameter": param, "runs": {}}
+        for val in values:
+            sub = copy.deepcopy(config)
+            sub.sweep = None
+            sub.name = f"{config.name}_{param.split('.')[-1]}_{val}"
+            sub.output_dir = f"{config.output_dir}/{param.split('.')[-1]}_{val}"
+            cfg_dict = sub.to_dict()
+            _set_nested(cfg_dict, param, val)
+            sub = ExperimentConfig.from_dict(cfg_dict, strict=False)
+            sweep_results["runs"][str(val)] = run_from_config(sub)
+        return sweep_results
+
+    # --- Ablation mode: run each named variant ---
+    if config.ablation is not None:
+        variants = config.ablation.get("variants", {})
+        ablation_results: dict[str, Any] = {"variants": {}}
+        for variant_name, overrides in variants.items():
+            sub = copy.deepcopy(config)
+            sub.ablation = None
+            sub.name = f"{config.name}_{variant_name}"
+            sub.output_dir = f"{config.output_dir}/{variant_name}"
+            if overrides.get("heuristic_coordinator"):
+                sub.heuristic_coordinator = True
+            if "frozen_agent_types" in overrides:
+                import warnings
+                warnings.warn(
+                    f"frozen_agent_types in ablation variant '{variant_name}' "
+                    "is not yet supported — skipping this variant.",
+                    stacklevel=2,
+                )
+                continue
+            ablation_results["variants"][variant_name] = run_from_config(sub)
+        return ablation_results
+
     from .curriculum import CurriculumScheduler, CurriculumStage
     from .mappo import MAPPOConfig, MAPPOTrainer, train_multi_seed
 
@@ -197,11 +256,27 @@ def run_from_config(config: ExperimentConfig) -> dict[str, Any]:
     if config.tensorboard:
         tb_writer = _try_create_tb_writer(config.output_dir)
 
+    # Build log function from TensorBoard + console settings
     log_fn = None
+    log_fns: list[Any] = []
     if tb_writer is not None:
-        def log_fn(it: int, entry: dict[str, Any]) -> None:
-            """Write per-iteration scalars to TensorBoard."""
+        def _tb_log(it: int, entry: dict[str, Any]) -> None:
             _write_tb_scalars(tb_writer, it, entry)
+        log_fns.append(_tb_log)
+    if config.console_log:
+        _log_every = max(config.log_every, 1)
+        _name = config.name
+        def _console_log(it: int, entry: dict[str, Any]) -> None:
+            if it % _log_every == 0:
+                mr = entry.get("mean_reward", 0.0)
+                print(f"[{_name}] iter={it:>4d}  mean_reward={mr:+.4f}")
+        log_fns.append(_console_log)
+    if log_fns:
+        def log_fn(it: int, entry: dict[str, Any]) -> None:
+            for fn in log_fns:
+                fn(it, entry)
+
+    use_heuristic_coord = config.heuristic_coordinator
 
     # Multi-seed or single-seed
     if config.num_seeds > 1 or (config.seeds and len(config.seeds) > 1):
@@ -225,6 +300,7 @@ def run_from_config(config: ExperimentConfig) -> dict[str, Any]:
             mappo_config=mappo_cfg,
             seed=seed,
         )
+        trainer.heuristic_coordinator = use_heuristic_coord
         history = trainer.train(
             num_iterations=config.num_iterations,
             curriculum=curriculum,
@@ -320,9 +396,7 @@ def _write_tb_scalars(
     for key, val in entry.items():
         if not isinstance(val, (int, float)):
             continue
-        if key in _SCALAR_KEYS:
-            writer.add_scalar(f"train/{key}", val, step)
-        elif any(key.endswith(s) for s in _SUFFIX_KEYS):
+        if key in _SCALAR_KEYS or any(key.endswith(s) for s in _SUFFIX_KEYS):
             writer.add_scalar(f"train/{key}", val, step)
 
     writer.flush()

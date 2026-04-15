@@ -38,6 +38,8 @@ class VesselAgent:
         short_forecast_row: np.ndarray,
         directive: dict[str, Any] | None = None,
         dock_availability: float = 0.0,
+        remaining_range_nm: float = 0.0,
+        deadline_delta_hours: float = 0.0,
     ) -> np.ndarray:
         """Build local vessel observation vector.
 
@@ -51,6 +53,10 @@ class VesselAgent:
             Fraction of available (unoccupied) docks at the destination port.
             This corresponds to the "dock availability signals from ports"
             specified in the proposal (Section 4.1).
+        remaining_range_nm:
+            Nautical miles remaining to destination (0.0 when docked).
+        deadline_delta_hours:
+            Hours until requested arrival deadline (0.0 when no deadline).
         """
         directive = directive or {}
         directive_vec = np.array(
@@ -61,10 +67,15 @@ class VesselAgent:
             ],
             dtype=float,
         )
+        # Vessel identity: normalized index [0, 1] so parameter-shared
+        # vessels can differentiate and break herding symmetry.
+        num_vessels = max(int(self.cfg.get("num_vessels", 1)), 1)
+        vessel_id_norm = float(self.state.vessel_id) / max(num_vessels - 1, 1)
         return np.concatenate(
             [
                 np.array(
                     [
+                        vessel_id_norm,
                         self.state.location,
                         self.state.position_nm,
                         self.state.speed,
@@ -73,6 +84,9 @@ class VesselAgent:
                         float(bool(self.state.stalled)),
                         float(getattr(self.state, "port_service_state", 0)),
                         dock_availability,
+                        float(bool(self.state.at_sea)),
+                        remaining_range_nm,
+                        deadline_delta_hours,
                     ],
                     dtype=float,
                 ),
@@ -83,9 +97,14 @@ class VesselAgent:
 
     def apply_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Apply local control action (speed target, arrival-slot request, and requested arrival time)."""
+        raw_speed = action.get("target_speed", self.state.speed)
+        raw_arrival = action.get("requested_arrival_time", 0.0)
+        # Guard against NaN/Inf from corrupted network outputs
+        speed_val = float(raw_speed) if np.isfinite(float(raw_speed)) else float(self.cfg["nominal_speed"])
+        arrival_val = float(raw_arrival) if np.isfinite(float(raw_arrival)) else 0.0
         speed = float(
             np.clip(
-                action.get("target_speed", self.state.speed),
+                speed_val,
                 self.cfg["speed_min"],
                 self.cfg["speed_max"],
             )
@@ -93,10 +112,7 @@ class VesselAgent:
         normalized = {
             "target_speed": speed,
             "request_arrival_slot": bool(action.get("request_arrival_slot", False)),
-            # Explicit arrival time (t_arr) requested by the vessel agent.
-            # A value of 0.0 means "no preference"; positive values are absolute
-            # simulation steps by which the vessel wants to arrive.
-            "requested_arrival_time": float(action.get("requested_arrival_time", 0.0)),
+            "requested_arrival_time": arrival_val,
         }
         self.state.speed = speed
         self.last_action = normalized
@@ -138,6 +154,7 @@ class PortAgent:
                         self.state.occupied,
                         float(booked_arrivals),
                         float(imminent_arrivals),
+                        float(self.state.occupied) / max(float(self.state.docks), 1.0),
                     ],
                     dtype=float,
                 ),
@@ -149,8 +166,11 @@ class PortAgent:
 
     def apply_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Apply local port control action."""
-        service_rate = int(max(action.get("service_rate", 1), 0))
-        accept_requests = int(max(action.get("accept_requests", 0), 0))
+        raw_sr = action.get("service_rate", 1)
+        raw_ar = action.get("accept_requests", 0)
+        # Guard against NaN/Inf from corrupted network outputs
+        service_rate = int(max(raw_sr, 0)) if np.isfinite(float(raw_sr)) else 1
+        accept_requests = int(max(raw_ar, 0)) if np.isfinite(float(raw_ar)) else 0
         normalized = {
             "service_rate": service_rate,
             "accept_requests": accept_requests,
@@ -216,9 +236,8 @@ class FleetCoordinatorAgent:
             else:
                 port_load_features = port_load_features[:expected_port_summary]
         total_emissions = float(sum(v.emissions for v in vessels))
-        self.state.cumulative_emissions = total_emissions
         weather_features = np.array([], dtype=float)
-        if bool(self.cfg.get("weather_enabled", False)):
+        if bool(self.cfg.get("weather_enabled", True)):
             expected = num_ports * num_ports
             if weather is not None:
                 weather_arr = np.asarray(weather, dtype=float)

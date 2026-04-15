@@ -231,11 +231,15 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0  # (2+4)/2
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = (
             self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
             - (
                 self.cfg["coordinator_queue_weight"] * avg_queue
                 + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
+                + queue_imbalance
             )
         )
         self.assertAlmostEqual(reward, expected)
@@ -247,10 +251,14 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = -(
             self.cfg["coordinator_queue_weight"] * avg_queue
             + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
             + self.cfg["coordinator_emission_weight"] * 10.0
+            + queue_imbalance
         ) + self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
         self.assertAlmostEqual(reward, expected)
 
@@ -265,10 +273,14 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = -(
             self.cfg["coordinator_queue_weight"] * avg_queue
             + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
             + self.cfg["coordinator_delay_weight"] * 2.0
+            + queue_imbalance
         ) + self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
         self.assertAlmostEqual(reward, expected)
 
@@ -283,10 +295,14 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = -(
             self.cfg["coordinator_queue_weight"] * avg_queue
             + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
             + self.cfg["coordinator_schedule_delay_weight"] * 1.5
+            + queue_imbalance
         ) + self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
         self.assertAlmostEqual(reward, expected)
 
@@ -300,6 +316,9 @@ class CoordinatorRewardTests(unittest.TestCase):
             served_vessels=3.0,
         )
         avg_queue = 3.0
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = (
             self.cfg["coordinator_service_reward"] * 3.0
             + self.cfg["coordinator_utilization_reward"] * 1.5
@@ -307,6 +326,7 @@ class CoordinatorRewardTests(unittest.TestCase):
                 self.cfg["coordinator_fuel_weight"] * 1.0
                 + self.cfg["coordinator_queue_weight"] * avg_queue
                 + self.cfg["coordinator_idle_dock_weight"] * 1.5
+                + queue_imbalance
             )
         )
         self.assertAlmostEqual(reward, expected)
@@ -322,12 +342,16 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = (
             self.cfg["coordinator_accept_reward"] * 2.0
             + self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
             - (
                 self.cfg["coordinator_queue_weight"] * avg_queue
                 + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
+                + queue_imbalance
             )
         )
         self.assertAlmostEqual(reward, expected)
@@ -343,10 +367,14 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = -(
             self.cfg["coordinator_queue_weight"] * avg_queue
             + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
             + self.cfg["coordinator_reject_penalty"] * 2.0
+            + queue_imbalance
         ) + self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
         self.assertAlmostEqual(reward, expected)
 
@@ -362,11 +390,15 @@ class CoordinatorRewardTests(unittest.TestCase):
         avg_queue = 3.0
         avg_idle_docks = 1.5
         avg_occupied_docks = 1.5
+        queue_imbalance = self.cfg["coordinator_queue_imbalance_weight"] * float(
+            __import__("numpy").std([2.0, 4.0])
+        )
         expected = (
             self.cfg["coordinator_utilization_reward"] * avg_occupied_docks
             - (
                 self.cfg["coordinator_queue_weight"] * avg_queue
                 + self.cfg["coordinator_idle_dock_weight"] * avg_idle_docks
+                + queue_imbalance
             )
         )
         self.assertAlmostEqual(reward, expected)
@@ -401,6 +433,44 @@ class CoordinatorRewardTests(unittest.TestCase):
             rejected_requests=1.0,
         )
         self.assertAlmostEqual(parts["total"], reward)
+
+    def test_coordinator_queue_imbalance_penalty(self) -> None:
+        """Queue imbalance penalty penalises uneven distribution across ports."""
+        from hmarl_mvp.state import PortState
+
+        cfg = dict(self.cfg)
+        cfg["coordinator_queue_imbalance_weight"] = 1.0
+        # Balanced: all queues = 2 → std = 0
+        balanced = [PortState(port_id=i, docks=3, queue=2, occupied=1) for i in range(3)]
+        parts_balanced = compute_coordinator_reward_breakdown(
+            balanced, cfg, fuel_used=0, co2_emitted=0,
+        )
+        self.assertAlmostEqual(parts_balanced["queue_imbalance_penalty"], 0.0)
+
+        # Imbalanced: queues = [0, 0, 6] → std ≈ 2.83
+        imbalanced = [
+            PortState(port_id=0, docks=3, queue=0, occupied=0),
+            PortState(port_id=1, docks=3, queue=0, occupied=0),
+            PortState(port_id=2, docks=3, queue=6, occupied=3),
+        ]
+        parts_imb = compute_coordinator_reward_breakdown(
+            imbalanced, cfg, fuel_used=0, co2_emitted=0,
+        )
+        self.assertGreater(parts_imb["queue_imbalance_penalty"], 2.0)
+        # Imbalanced total should be worse (more negative)
+        self.assertLess(parts_imb["total"], parts_balanced["total"])
+
+    def test_coordinator_queue_imbalance_zero_weight(self) -> None:
+        """Penalty is zero when weight is zero."""
+        cfg = dict(self.cfg)
+        cfg["coordinator_queue_imbalance_weight"] = 0.0
+        from hmarl_mvp.state import PortState
+        ports = [
+            PortState(port_id=0, docks=3, queue=0, occupied=0),
+            PortState(port_id=1, docks=3, queue=5, occupied=3),
+        ]
+        parts = compute_coordinator_reward_breakdown(ports, cfg, fuel_used=0, co2_emitted=0)
+        self.assertAlmostEqual(parts["queue_imbalance_penalty"], 0.0)
 
 
 class ForecastMetricTests(unittest.TestCase):

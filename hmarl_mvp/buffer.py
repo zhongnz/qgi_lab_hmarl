@@ -28,6 +28,7 @@ class RolloutBuffer:
     lam: float = 0.95
     global_state_dim: int = 0
     mask_dim: int = 0
+    hidden_dim: int = 0
 
     # Internal storage (populated by ``add``).
     _obs: np.ndarray = field(init=False, repr=False)
@@ -40,6 +41,7 @@ class RolloutBuffer:
     _returns: np.ndarray = field(init=False, repr=False)
     _global_states: np.ndarray = field(init=False, repr=False)
     _action_masks: np.ndarray = field(init=False, repr=False)
+    _hidden_states: np.ndarray = field(init=False, repr=False)
     _ptr: int = field(init=False, repr=False, default=0)
 
     def __post_init__(self) -> None:
@@ -59,6 +61,8 @@ class RolloutBuffer:
         self._global_states = np.zeros((self.capacity, gs_dim), dtype=np.float32)
         md = max(self.mask_dim, 1)
         self._action_masks = np.ones((self.capacity, md), dtype=np.float32)
+        hd = max(self.hidden_dim, 1)
+        self._hidden_states = np.zeros((self.capacity, hd), dtype=np.float32)
         self._ptr = 0
 
     @property
@@ -81,6 +85,7 @@ class RolloutBuffer:
         value: float = 0.0,
         global_state: np.ndarray | None = None,
         action_mask: np.ndarray | None = None,
+        hidden_state: np.ndarray | None = None,
     ) -> None:
         """Append a single transition.  Raises if buffer is full."""
         if self._ptr >= self.capacity:
@@ -98,6 +103,9 @@ class RolloutBuffer:
         if action_mask is not None and self.mask_dim > 0:
             m = np.asarray(action_mask, dtype=np.float32).ravel()[: self.mask_dim]
             self._action_masks[self._ptr] = m
+        if hidden_state is not None and self.hidden_dim > 0:
+            h = np.asarray(hidden_state, dtype=np.float32).ravel()[: self.hidden_dim]
+            self._hidden_states[self._ptr] = h
         self._ptr += 1
 
     def set_reward(self, index: int, reward: float) -> None:
@@ -117,7 +125,11 @@ class RolloutBuffer:
         self._dones[index] = done
 
     def compute_returns(self, last_value: float = 0.0) -> None:
-        """Compute GAE-Lambda advantages and discounted returns in-place."""
+        """Compute GAE-Lambda advantages and discounted returns in-place.
+
+        NaN/Inf values in rewards or values are treated as zero to prevent
+        silent corruption of the entire advantage buffer.
+        """
         n = self._ptr
         if n == 0:
             return
@@ -129,12 +141,19 @@ class RolloutBuffer:
             else:
                 next_value = self._values[t + 1]
                 next_non_terminal = 1.0 - float(self._dones[t])
-            delta = (
-                self._rewards[t]
-                + self.gamma * next_value * next_non_terminal
-                - self._values[t]
-            )
+            reward_t = float(self._rewards[t])
+            value_t = float(self._values[t])
+            # Guard against NaN/Inf — treat corrupted entries as zero
+            if not np.isfinite(reward_t):
+                reward_t = 0.0
+            if not np.isfinite(value_t):
+                value_t = 0.0
+            if not np.isfinite(next_value):
+                next_value = 0.0
+            delta = reward_t + self.gamma * next_value * next_non_terminal - value_t
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
+            if not np.isfinite(gae):
+                gae = 0.0
             self._advantages[t] = gae
         self._returns[:n] = self._advantages[:n] + self._values[:n]
 
@@ -164,6 +183,10 @@ class RolloutBuffer:
             result["action_masks"] = torch.as_tensor(
                 self._action_masks[:n], dtype=torch.float32, device=device
             ).bool()
+        if self.hidden_dim > 0:
+            result["hidden_states"] = torch.as_tensor(
+                self._hidden_states[:n], dtype=torch.float32, device=device
+            )
         return result
 
     def minibatch_iter(
@@ -171,11 +194,18 @@ class RolloutBuffer:
         batch_size: int,
         device: torch.device | str = "cpu",
         shuffle: bool = True,
+        rng: np.random.Generator | None = None,
     ) -> Any:
         """Yield mini-batch dicts of tensors for PPO updates.
 
         The generator yields ``dict[str, Tensor]`` with keys matching
         ``get_tensors()``.
+
+        Parameters
+        ----------
+        rng:
+            Optional NumPy ``Generator`` for reproducible shuffling.
+            When *None*, a fresh unseeded generator is used.
         """
         n = self._ptr
         if n == 0:
@@ -183,7 +213,7 @@ class RolloutBuffer:
         data = self.get_tensors(device)
         indices = np.arange(n)
         if shuffle:
-            np.random.default_rng().shuffle(indices)
+            (rng or np.random.default_rng()).shuffle(indices)
         for start in range(0, n, batch_size):
             end = min(start + batch_size, n)
             idx = indices[start:end]
@@ -206,6 +236,7 @@ class MultiAgentRolloutBuffer:
     lam: float = 0.95
     global_state_dim: int = 0
     mask_dim: int = 0
+    hidden_dim: int = 0
 
     _buffers: list[RolloutBuffer] = field(init=False, repr=False)
 
@@ -219,6 +250,7 @@ class MultiAgentRolloutBuffer:
                 lam=self.lam,
                 global_state_dim=self.global_state_dim,
                 mask_dim=self.mask_dim,
+                hidden_dim=self.hidden_dim,
             )
             for _ in range(self.num_agents)
         ]

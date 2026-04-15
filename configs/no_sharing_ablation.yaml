@@ -16,6 +16,10 @@ env:
   num_ports: 5
   docks_per_port: 3
   rollout_steps: 69
+  episode_mode: continuous
+  forecast_source: ground_truth
+  weather_enabled: true
+  weather_autocorrelation: 0.7
 
 mappo:
   lr: 0.0003                   # Adam learning rate
@@ -26,9 +30,15 @@ mappo:
   gamma: 0.99                   # discount factor
   gae_lambda: 0.95              # GAE lambda for advantage estimation
   hidden_dims: [64, 64]         # actor-critic MLP hidden layer sizes
+  vessel_hidden_dims: [128, 128] # vessel gets larger network for critic capacity
   normalize_observations: true
   normalize_rewards: true
   parameter_sharing: false      # each agent gets its own network (ablation)
+  entropy_coeff: 0.05           # entropy bonus coefficient (start) — higher for exploration
+  entropy_coeff_end: 0.002      # entropy bonus coefficient (end, linear decay)
+  max_grad_norm: 0.5
+  max_grad_norm_start: 5.0
+  grad_norm_warmup_fraction: 0.1
 
 num_iterations: 200
 num_seeds: 3

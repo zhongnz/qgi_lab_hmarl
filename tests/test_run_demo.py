@@ -46,7 +46,7 @@ def test_demo_does_not_export_duplicate_train_log(monkeypatch: Any, tmp_path: Pa
         "independent": _step_df("independent"),
         "reactive": _step_df("reactive"),
         "forecast": _step_df("forecast"),
-        "oracle": _step_df("oracle"),
+        "noiseless": _step_df("noiseless"),
     }
     horizon_results = {6: _step_df("forecast"), 12: _step_df("forecast")}
     noise_results = {0.0: _step_df("forecast"), 1.0: _step_df("forecast")}
@@ -83,6 +83,7 @@ def test_demo_does_not_export_duplicate_train_log(monkeypatch: Any, tmp_path: Pa
     monkeypatch.setattr(run_demo, "run_sharing_sweep", lambda **_kwargs: sharing_results)
     monkeypatch.setattr(run_demo, "run_mappo_comparison", lambda **_kwargs: mappo_results)
     monkeypatch.setattr(run_demo, "run_mappo_ablation", lambda **_kwargs: ablation_df)
+    monkeypatch.setattr(run_demo, "collect_episode_snapshots", lambda **_kwargs: [])
 
     # Keep test fast: plotting side-effects are not under test here.
     for plot_name in (
@@ -95,6 +96,9 @@ def test_demo_does_not_export_duplicate_train_log(monkeypatch: Any, tmp_path: Pa
         "plot_training_dashboard",
         "plot_timing_breakdown",
         "plot_ablation_bar",
+        "plot_gradient_diagnostics",
+        "plot_explained_variance",
+        "plot_reward_decomposition",
     ):
         monkeypatch.setattr(run_demo, plot_name, lambda *args, **kwargs: None)
 

@@ -8,7 +8,8 @@ shaping terms** that encourage fuel-efficient behaviour in rough seas.
 
 Vessel reward (per step):
     ``r_V(t) = -(fuel_weight * Δfuel_t + delay_weight * Δdelay_t + emission_weight * ΔCO2_t
-                 + transit_time_weight * Δtransit_t) + arrival_reward * 1[arrived_t]``
+                 + transit_time_weight * Δtransit_t + schedule_delay_weight * Δschedule_delay_t)
+                 + arrival_reward * 1[arrived_t] + on_time_arrival_reward * 1[on_time_t]``
     With defaults (1.0, 1.5, 0.7) rewards range from 0 (docked) to ~-20 (fast transit).
 
 Port reward (per step):
@@ -20,10 +21,11 @@ Port reward (per step):
 
 Coordinator reward (per step):
     ``r_C(t) = step_accept_reward_t + step_served_reward_t + utilization_reward_t
-                 - step_reject_penalty_t - (fuel_weight * Δfuel_total_t
-                 + queue_weight * avg_queue_t
+                 - step_reject_penalty_t - (coordinator_fuel_weight * Δfuel_total_t
+                 + coordinator_queue_weight * avg_queue_t
                  + coordinator_idle_dock_weight * avg_idle_docks_t
                  + coordinator_delay_weight * Δdelay_t
+                 + coordinator_schedule_delay_weight * Δschedule_delay_t
                  + coordinator_emission_weight * ΔCO2_total_t)``
     System-level signal; adds direct pressure against waiting/rejection delay
     and a small positive bonus for actual berth service throughput.
@@ -71,6 +73,9 @@ def compute_vessel_reward_breakdown(
     )
     arrival_bonus = config.get("arrival_reward", 0.0) if arrived else 0.0
     on_time_bonus = config.get("on_time_arrival_reward", 0.0) if arrived_on_time else 0.0
+    # weather_shaping_bonus is computed externally by env._compute_rewards()
+    # via weather_vessel_shaping() and injected into this dict post-hoc.
+    # Initialised to 0.0 here as a placeholder for the return schema.
     weather_shaping_bonus = 0.0
     total = arrival_bonus + on_time_bonus - (
         fuel_cost + delay_cost + emission_cost + transit_cost + schedule_delay_cost
@@ -124,6 +129,7 @@ def compute_coordinator_reward_breakdown(
     served_vessels: float = 0.0,
     accepted_requests: float = 0.0,
     rejected_requests: float = 0.0,
+    directive_compliance_rate: float = 0.0,
 ) -> dict[str, float]:
     """Return named coordinator reward components for one step."""
     avg_queue = float(np.mean([p.queue for p in ports])) if ports else 0.0
@@ -140,8 +146,7 @@ def compute_coordinator_reward_breakdown(
         max(schedule_delay_hours, 0.0)
     )
     emission_penalty = config.get(
-        "coordinator_emission_weight",
-        config.get("emission_lambda", 0.0),
+        "coordinator_emission_weight", 0.0
     ) * float(max(co2_emitted, 0.0))
     accept_bonus = config.get("coordinator_accept_reward", 0.0) * float(
         max(accepted_requests, 0.0)
@@ -152,8 +157,22 @@ def compute_coordinator_reward_breakdown(
     throughput_bonus = config.get("coordinator_service_reward", 0.0) * float(
         max(served_vessels, 0.0)
     )
+    # Queue imbalance (anti-herding): penalise std(queue) across ports.
+    # When all ports have similar queue lengths the penalty is near zero;
+    # when vessels cluster at one port the std spikes.
+    queue_imbalance_penalty = 0.0
+    if len(ports) >= 2:
+        queue_std = float(np.std([p.queue for p in ports]))
+        queue_imbalance_penalty = (
+            config.get("coordinator_queue_imbalance_weight", 0.5) * queue_std
+        )
+    # Directive compliance: bonus proportional to the fraction of vessels
+    # that are heading to the coordinator's assigned destination.
+    compliance_bonus = config.get("coordinator_compliance_weight", 0.0) * float(
+        max(directive_compliance_rate, 0.0)
+    )
     weather_shaping_bonus = 0.0
-    total = accept_bonus + throughput_bonus + utilization_bonus - (
+    total = accept_bonus + throughput_bonus + utilization_bonus + compliance_bonus - (
         fuel_penalty
         + queue_penalty
         + idle_penalty
@@ -161,10 +180,12 @@ def compute_coordinator_reward_breakdown(
         + schedule_delay_penalty
         + emission_penalty
         + reject_penalty
+        + queue_imbalance_penalty
     )
     return {
         "fuel_penalty": float(fuel_penalty),
         "queue_penalty": float(queue_penalty),
+        "queue_imbalance_penalty": float(queue_imbalance_penalty),
         "idle_penalty": float(idle_penalty),
         "utilization_bonus": float(utilization_bonus),
         "delay_penalty": float(delay_penalty),
@@ -173,6 +194,7 @@ def compute_coordinator_reward_breakdown(
         "accept_bonus": float(accept_bonus),
         "reject_penalty": float(reject_penalty),
         "throughput_bonus": float(throughput_bonus),
+        "compliance_bonus": float(compliance_bonus),
         "weather_shaping_bonus": float(weather_shaping_bonus),
         "total": float(total),
     }
@@ -248,10 +270,12 @@ def compute_coordinator_reward_step(
     served_vessels: float = 0.0,
     accepted_requests: float = 0.0,
     rejected_requests: float = 0.0,
+    directive_compliance_rate: float = 0.0,
 ) -> float:
     """System-level coordinator reward using step-level deltas.
 
     Returns ``step_accept_reward + step_served_reward + utilization_reward
+    + compliance_bonus
     - step_reject_penalty - (fuel_weight * Δfuel_total + queue_weight * avg_queue
     + coordinator_idle_dock_weight * avg_idle_docks
     + coordinator_delay_weight * Δdelay + coordinator_emission_weight * Δco2_total)``.
@@ -271,6 +295,7 @@ def compute_coordinator_reward_step(
         served_vessels=served_vessels,
         accepted_requests=accepted_requests,
         rejected_requests=rejected_requests,
+        directive_compliance_rate=directive_compliance_rate,
     )["total"]
 
 

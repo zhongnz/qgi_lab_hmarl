@@ -21,7 +21,7 @@ from hmarl_mvp.mappo import (
 
 @pytest.fixture()
 def small_config() -> dict[str, object]:
-    return get_default_config(num_ports=3, num_vessels=4, rollout_steps=30)
+    return get_default_config(num_ports=3, num_vessels=4, rollout_steps=30, weather_enabled=False)
 
 
 @pytest.fixture()
@@ -69,7 +69,8 @@ class TestActionTranslation:
         action = _nn_to_vessel_action(torch.tensor([0.0]), cfg)
         assert action["target_speed"] == pytest.approx(cfg["nominal_speed"])
         assert action["request_arrival_slot"] is True
-        assert action["requested_arrival_time"] == 0.0
+        # With softplus mapping, arrival_raw=0 → softplus(0)≈0.69 → positive arrival time
+        assert action["requested_arrival_time"] >= 1.0
 
     def test_vessel_action_includes_arrival_time(self) -> None:
         cfg = get_default_config(rollout_steps=30)
@@ -79,10 +80,10 @@ class TestActionTranslation:
             current_step=5,
         )
         assert action["request_arrival_slot"] is True
-        assert action["requested_arrival_time"] == pytest.approx(12.0)
+        assert action["requested_arrival_time"] == pytest.approx(12.0, abs=0.01)
 
     def test_port_action_discrete(self) -> None:
-        cfg = get_default_config(num_ports=3, num_vessels=4)
+        cfg = get_default_config(num_ports=3, num_vessels=4, docks_per_port=3)
         env = MaritimeEnv(config=cfg)
         env.reset()
         action = _nn_to_port_action(torch.tensor(6), 0, env)

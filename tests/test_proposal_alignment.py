@@ -62,8 +62,8 @@ class TestVesselDockAvailabilityObs(unittest.TestCase):
             directive={"dest_port": 1, "departure_window_hours": 12, "emission_budget": 50},
             dock_availability=0.67,
         )
-        # 8 local + 6 forecast + 3 directive = 17
-        self.assertEqual(len(obs), 8 + 6 + 3)
+        # 12 local (11 + vessel_id) + 6 forecast + 3 directive = 21
+        self.assertEqual(len(obs), 12 + 6 + 3)
 
     def test_dock_avail_value_in_obs(self) -> None:
         cfg = get_default_config(short_horizon_hours=4)
@@ -75,19 +75,21 @@ class TestVesselDockAvailabilityObs(unittest.TestCase):
             short_forecast_row=np.zeros(4),
             dock_availability=0.75,
         )
-        self.assertAlmostEqual(obs[1], 7.5, places=5)
-        self.assertAlmostEqual(obs[5], 1.0, places=5)
-        self.assertAlmostEqual(obs[6], 0.0, places=5)
-        # dock_availability is the last element (index 7) of the local block
-        self.assertAlmostEqual(obs[7], 0.75, places=5)
+        # Index 0 = vessel_id_norm, rest shifted by +1
+        self.assertAlmostEqual(obs[0], 0.0, places=5)  # vessel_id_norm (id=0)
+        self.assertAlmostEqual(obs[2], 7.5, places=5)  # position_nm
+        self.assertAlmostEqual(obs[6], 1.0, places=5)  # stalled
+        self.assertAlmostEqual(obs[7], 0.0, places=5)  # port_service_state
+        # dock_availability at index 8 of the local block
+        self.assertAlmostEqual(obs[8], 0.75, places=5)
 
     def test_env_passes_dock_avail_to_vessel_obs(self) -> None:
-        cfg = get_default_config(num_ports=3, num_vessels=2, rollout_steps=10)
+        cfg = get_default_config(num_ports=3, num_vessels=2, rollout_steps=10, weather_enabled=False)
         env = MaritimeEnv(config=cfg, seed=42)
         obs = env.reset()
-        # Vessel obs dimension should be 8 + short_h + 3
+        # Vessel obs dimension should be 12 + short_h + 3
         short_h = cfg["short_horizon_hours"]
-        expected_dim = 8 + short_h + 3
+        expected_dim = 12 + short_h + 3
         for v_obs in obs["vessels"]:
             self.assertEqual(len(v_obs), expected_dim)
 

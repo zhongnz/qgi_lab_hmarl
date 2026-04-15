@@ -92,7 +92,7 @@ def main() -> None:
     forecaster.save(str(model_path))
     print(f"  saved model to {model_path}")
 
-    # Quick evaluation against oracle
+    # Quick evaluation against noiseless
     print("\nEvaluation on held-out rollout...")
     eval_traces = collect_queue_traces(
         num_episodes=3,

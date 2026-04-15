@@ -38,7 +38,7 @@ def test_generate_paper_figures_cli_smoke(tmp_path: Path) -> None:
         }
     ).to_csv(full_run / "mappo__train_log.csv", index=False)
 
-    for i, policy in enumerate(["mappo", "independent", "reactive", "forecast", "oracle"]):
+    for i, policy in enumerate(["mappo", "independent", "reactive", "forecast", "noiseless"]):
         _policy_df(1.0 + i * 0.1).to_csv(full_run / f"mappo_{policy}.csv", index=False)
 
     # Multi-seed data

@@ -14,7 +14,7 @@ from .env import MaritimeEnv
 from .forecasts import (
     GroundTruthForecaster,
     MediumTermForecaster,
-    OracleForecaster,
+    NoiselessForecaster,
     ShortTermForecaster,
 )
 from .learned_forecaster import LearnedForecaster
@@ -35,7 +35,7 @@ VALID_POLICIES = {
     "independent",
     "reactive",
     "forecast",
-    "oracle",
+    "noiseless",
     "ground_truth",
     "learned_forecast",
 }
@@ -338,7 +338,7 @@ def run_experiment(
     - independent: no coordination, no forecast usage
     - reactive: coordination using current state only (no forecast)
     - forecast: forecast-informed coordination with noisy forecasts
-    - oracle: forecast-informed coordination with current queue repeated forward
+    - noiseless: forecast-informed coordination with current queue repeated forward
     - ground_truth: forecast-informed coordination with deterministic committed-state rollout
     - learned_forecast: uses a trained ``LearnedForecaster`` for predictions
     """
@@ -365,7 +365,7 @@ def run_experiment(
     port_policy = PortPolicy(config=cfg, mode=effective_mode)
     medium_forecaster = MediumTermForecaster(cfg["medium_horizon_days"])
     short_forecaster = ShortTermForecaster(forecast_horizon)
-    oracle_forecaster = OracleForecaster(
+    noiseless_forecaster = NoiselessForecaster(
         medium_horizon_days=cfg["medium_horizon_days"],
         short_horizon_hours=forecast_horizon,
     )
@@ -383,8 +383,8 @@ def run_experiment(
     for _ in range(steps):
         t = env.t
         step_context = env.peek_step_context()
-        if policy_type == "oracle":
-            medium, short = oracle_forecaster.predict(env.ports)
+        if policy_type == "noiseless":
+            medium, short = noiseless_forecaster.predict(env.ports)
         elif policy_type == "ground_truth":
             medium, short = ground_truth_forecaster.predict(
                 env.ports,
@@ -393,9 +393,21 @@ def run_experiment(
                 weather=getattr(env, "_weather", None) if cfg.get("weather_enabled") else None,
             )
         elif policy_type == "learned_forecast" and learned_forecaster is not None:
-            # Use the trained model for both medium and short forecasts
-            medium = learned_forecaster.predict(env.ports, rng=rng)
-            short = learned_forecaster.predict(env.ports, rng=rng)
+            full_pred = learned_forecaster.predict(env.ports, rng=rng)
+            medium_h = int(cfg["medium_horizon_days"])
+            short_h = int(forecast_horizon)
+            if full_pred.shape[1] >= medium_h:
+                medium = full_pred[:, :medium_h]
+            else:
+                medium = np.pad(
+                    full_pred, ((0, 0), (0, medium_h - full_pred.shape[1])), mode="edge"
+                )
+            if full_pred.shape[1] >= short_h:
+                short = full_pred[:, :short_h]
+            else:
+                short = np.pad(
+                    full_pred, ((0, 0), (0, short_h - full_pred.shape[1])), mode="edge"
+                )
         else:
             medium = medium_forecaster.predict(ports=env.ports, rng=rng)
             short = short_forecaster.predict(ports=env.ports, rng=rng)
@@ -541,7 +553,7 @@ def run_trained_mappo_trace(
                 v_t = torch.as_tensor(
                     v_obs_n, dtype=torch.float32, device=device
                 ).unsqueeze(0)
-                action_t, _, _ = trainer._get_ac("vessel", i).get_action_and_value(
+                action_t, _, _, _ = trainer._get_ac("vessel", i).get_action_and_value(
                     v_t, gs_tensor, deterministic=deterministic
                 )
                 speed_cap = trainer._vessel_weather_speed_cap(i)
@@ -561,7 +573,7 @@ def run_trained_mappo_trace(
                     p_obs_n, dtype=torch.float32, device=device
                 ).unsqueeze(0)
                 p_mask = trainer._port_mask_tensor(i)
-                action_t, _, _ = trainer._get_ac("port", i).get_action_and_value(
+                action_t, _, _, _ = trainer._get_ac("port", i).get_action_and_value(
                     p_t, gs_tensor, deterministic=deterministic, action_mask=p_mask
                 )
                 port_actions.append(_nn_to_port_action(action_t.squeeze(0), i, trainer.env))
@@ -578,7 +590,7 @@ def run_trained_mappo_trace(
                     c_t = torch.as_tensor(
                         c_obs_n, dtype=torch.float32, device=device
                     ).unsqueeze(0)
-                    action_t, _, _ = trainer._get_ac("coordinator", i).get_action_and_value(
+                    action_t, _, _, _ = trainer._get_ac("coordinator", i).get_action_and_value(
                         c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
                     )
                     coord_actions.append(
@@ -642,7 +654,7 @@ def run_policy_sweep(
     config: dict[str, Any] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Run baseline policy comparisons with consistent seed/steps."""
-    policies = policies or ["independent", "reactive", "forecast", "oracle"]
+    policies = policies or ["independent", "reactive", "forecast", "noiseless"]
     return {
         p: run_experiment(policy_type=p, steps=steps, seed=seed, config=config)
         for p in policies
@@ -780,7 +792,7 @@ def run_mappo_comparison(
 
     cfg = get_default_config(**(config or {}))
     eval_steps = eval_steps or rollout_length
-    baselines = baselines or ["independent", "reactive", "forecast", "oracle"]
+    baselines = baselines or ["independent", "reactive", "forecast", "noiseless"]
 
     # --- Train MAPPO ---
     extra = dict(mappo_kwargs or {})

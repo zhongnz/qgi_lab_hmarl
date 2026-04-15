@@ -109,6 +109,56 @@ class TrainingLogger:
         """Shortcut for ``get_metric("mean_reward")``."""
         return self.get_metric("mean_reward")
 
+    # ------------------------------------------------------------------
+    # Convenience logging helpers
+    # ------------------------------------------------------------------
+
+    def log_gradient_stats(
+        self,
+        iteration: int,
+        agent_type: str,
+        grad_norm: float,
+        clip_frac: float,
+        weight_norm: float | None = None,
+    ) -> None:
+        """Log gradient diagnostics for one agent type."""
+        metrics: dict[str, Any] = {
+            f"{agent_type}_grad_norm": grad_norm,
+            f"{agent_type}_clip_frac": clip_frac,
+        }
+        if weight_norm is not None:
+            metrics[f"{agent_type}_weight_norm"] = weight_norm
+        self.log(iteration, metrics)
+
+    def log_critic_stats(
+        self,
+        iteration: int,
+        agent_type: str,
+        value_loss: float,
+        explained_variance: float,
+    ) -> None:
+        """Log critic quality diagnostics for one agent type."""
+        self.log(iteration, {
+            f"{agent_type}_value_loss": value_loss,
+            f"{agent_type}_explained_variance": explained_variance,
+        })
+
+    def log_forecast_accuracy(
+        self,
+        iteration: int,
+        mae: float,
+        rmse: float,
+        horizon: int | None = None,
+    ) -> None:
+        """Log forecast accuracy metrics."""
+        metrics: dict[str, Any] = {
+            "forecast_mae": mae,
+            "forecast_rmse": rmse,
+        }
+        if horizon is not None:
+            metrics["forecast_horizon"] = horizon
+        self.log(iteration, metrics)
+
     @property
     def entries(self) -> list[dict[str, Any]]:
         """Return all logged entries."""
@@ -168,7 +218,7 @@ class TrainingLogger:
             self._file.close()
             self._file = None
 
-    def __enter__(self) -> "TrainingLogger":
+    def __enter__(self) -> TrainingLogger:
         return self
 
     def __exit__(self, *args: Any) -> None:

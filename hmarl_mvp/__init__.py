@@ -31,6 +31,7 @@ from .experiment import (
     run_horizon_sweep,
     run_mappo_ablation,
     run_mappo_comparison,
+    run_mappo_coordinator_ablation,
     run_mappo_hyperparam_sweep,
     run_noise_sweep,
     run_policy_sweep,
@@ -40,7 +41,12 @@ from .experiment import (
     summarize_policy_results,
 )
 from .experiment_config import ExperimentConfig, load_experiment_config, run_from_config
-from .forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+from .forecasts import (
+    GroundTruthForecaster,
+    MediumTermForecaster,
+    NoiselessForecaster,
+    ShortTermForecaster,
+)
 from .gym_wrapper import MaritimeGymEnv
 from .learned_forecaster import (
     ForecastDataset,
@@ -68,14 +74,26 @@ from .metrics import (
     forecast_mae,
     forecast_rmse,
 )
-from .networks import ActorCritic, build_actor_critics, build_per_agent_actor_critics
+from .networks import (
+    ActorCritic,
+    AgentConditionedCritic,
+    AttentionCoordinatorActor,
+    EncodedCritic,
+    RecurrentContinuousActor,
+    build_actor_critics,
+    build_per_agent_actor_critics,
+)
+from .pbt import PBTConfig, PBTTrainer
 from .plotting import (
+    collect_episode_snapshots,
     plot_ablation_bar,
+    plot_animated_replay,
     plot_horizon_sweep,
     plot_mappo_comparison,
     plot_multi_seed_curves,
     plot_noise_sweep,
     plot_policy_comparison,
+    plot_reward_decomposition,
     plot_sharing_sweep,
     plot_sweep_heatmap,
     plot_time_series_diagnostics,
@@ -83,7 +101,7 @@ from .plotting import (
     plot_training_curves,
     plot_training_dashboard,
 )
-from .policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
+from .policies import FleetCoordinatorPolicy, PortPolicy, VALID_POLICY_MODES, VesselPolicy
 from .report import generate_training_report
 from .rewards import (
     compute_coordinator_reward_step,
@@ -174,16 +192,22 @@ __all__ = [
     "weather_coordinator_shaping",
     "weather_vessel_shaping",
     # forecasts
+    "GroundTruthForecaster",
     "MediumTermForecaster",
-    "OracleForecaster",
+    "NoiselessForecaster",
     "ShortTermForecaster",
     # learned forecaster
     "ForecastDataset",
     "LearnedForecaster",
+    "RNNForecastDataset",
+    "RNNForecaster",
     "TrainResult",
     "build_forecast_dataset",
+    "build_rnn_dataset",
+    "collect_expanded_queue_traces",
     "collect_queue_traces",
     "train_forecaster",
+    "train_rnn_forecaster",
     # dynamics
     "compute_fuel_and_emissions",
     "dispatch_vessel",
@@ -206,6 +230,12 @@ __all__ = [
     "plot_timing_breakdown",
     "plot_training_curves",
     "plot_training_dashboard",
+    "collect_episode_snapshots",
+    "plot_animated_replay",
+    "plot_reward_decomposition",
+    # PBT
+    "PBTConfig",
+    "PBTTrainer",
     # infrastructure
     "MessageBus",
     "TrainingLogger",

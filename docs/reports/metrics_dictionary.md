@@ -6,7 +6,7 @@ CSV outputs from `scripts/run_baselines.py`.
 ## Run Metadata
 
 - `t`: simulation step index.
-- `policy`: one of `independent`, `reactive`, `forecast`, `oracle`, `learned_forecast`, `mappo`.
+- `policy`: one of `independent`, `reactive`, `forecast`, `noiseless`, `learned_forecast`, `mappo`.
 - `forecast_horizon`: short-horizon forecast length used in the run.
 - `forecast_noise`: Gaussian noise scale applied to synthetic forecasts.
 - `share_forecasts`: `1` if short forecasts are shared beyond coordinator, else `0`.
@@ -117,7 +117,7 @@ step `info` dict.
 
 ### Weather Config Parameters
 
-- `weather_enabled` (bool, default `False`): enable per-route sea-state effects.
+- `weather_enabled` (bool, default `True`): enable per-route sea-state effects.
 - `sea_state_max` (float, default `3.0`): upper bound for uniformly sampled sea state.
 - `weather_penalty_factor` (float, default `0.15`): multiplier for fuel increase and speed reduction per unit sea state.
 

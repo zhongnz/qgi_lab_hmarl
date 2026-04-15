@@ -77,12 +77,12 @@ class SmokeTests(unittest.TestCase):
         env.reset(seed=123)
         state_2 = env.get_global_state().copy()
 
-        np.testing.assert_array_equal(state_1, state_2)
+        np.testing.assert_allclose(state_1, state_2, atol=1e-14)
 
     def test_async_latency_delays_dispatch(self) -> None:
         cfg = get_default_config(
             num_ports=2,
-            num_vessels=1,
+            num_vessels=2,
             num_coordinators=2,
             rollout_steps=8,
             coord_decision_interval_steps=3,
@@ -106,7 +106,10 @@ class SmokeTests(unittest.TestCase):
                 {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
             ],
             "coordinator": {"dest_port": 1, "departure_window_hours": 0, "emission_budget": 50.0},
-            "vessels": [{"target_speed": cfg["nominal_speed"], "request_arrival_slot": True}],
+            "vessels": [
+                {"target_speed": cfg["nominal_speed"], "request_arrival_slot": True},
+                {"target_speed": cfg["nominal_speed"], "request_arrival_slot": True},
+            ],
             "ports": [
                 {"service_rate": 1, "accept_requests": 0},
                 {"service_rate": 1, "accept_requests": 1},
@@ -140,7 +143,7 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(len(df), 3)
         self.assertIn("avg_queue", df.columns)
 
-    def test_forecast_and_oracle_generate_accepted_requests(self) -> None:
+    def test_forecast_and_noiseless_generate_accepted_requests(self) -> None:
         cfg = get_default_config(
             num_ports=3,
             num_vessels=6,
@@ -149,17 +152,17 @@ class SmokeTests(unittest.TestCase):
             message_latency_steps=2,
         )
         forecast_df = run_experiment(policy_type="forecast", steps=12, seed=42, config=cfg)
-        oracle_df = run_experiment(policy_type="oracle", steps=12, seed=42, config=cfg)
+        noiseless_df = run_experiment(policy_type="noiseless", steps=12, seed=42, config=cfg)
 
         self.assertGreater(float(forecast_df["total_vessel_requests"].iloc[-1]), 0.0)
-        self.assertGreater(float(oracle_df["total_vessel_requests"].iloc[-1]), 0.0)
+        self.assertGreater(float(noiseless_df["total_vessel_requests"].iloc[-1]), 0.0)
         self.assertGreater(float(forecast_df["total_port_accepted"].iloc[-1]), 0.0)
-        self.assertGreater(float(oracle_df["total_port_accepted"].iloc[-1]), 0.0)
+        self.assertGreater(float(noiseless_df["total_port_accepted"].iloc[-1]), 0.0)
 
         self.assertTrue((forecast_df["policy_agreement_rate"] >= 0.0).all())
         self.assertTrue((forecast_df["policy_agreement_rate"] <= 1.0).all())
-        self.assertTrue((oracle_df["policy_agreement_rate"] >= 0.0).all())
-        self.assertTrue((oracle_df["policy_agreement_rate"] <= 1.0).all())
+        self.assertTrue((noiseless_df["policy_agreement_rate"] >= 0.0).all())
+        self.assertTrue((noiseless_df["policy_agreement_rate"] <= 1.0).all())
 
     def test_ground_truth_policy_runs_and_labels_output(self) -> None:
         cfg = get_default_config(

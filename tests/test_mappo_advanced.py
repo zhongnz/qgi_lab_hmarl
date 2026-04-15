@@ -98,11 +98,13 @@ class TestRunningMeanStd:
         rms.update_batch(values)
         assert rms.mean == pytest.approx(3.0, abs=0.1)
 
-    def test_normalize_centers(self) -> None:
+    def test_normalize_scales_by_std(self) -> None:
         rms = RunningMeanStd()
         rms.update_batch([10.0] * 100)
-        # Normalizing the mean should give ~0
-        assert abs(rms.normalize(10.0)) < 0.5
+        # With near-zero variance, normalizing should give x / epsilon
+        # (std is clamped to epsilon=1e-4)
+        result = rms.normalize(10.0)
+        assert result == pytest.approx(10.0 / rms.std, abs=0.1)
 
     def test_std_positive(self) -> None:
         rms = RunningMeanStd()

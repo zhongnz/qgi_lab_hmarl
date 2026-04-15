@@ -27,6 +27,9 @@ class TestLRScheduler:
             lr_end=1e-5,
             total_iterations=10,
             rollout_length=4,
+            vessel_lr=None,
+            port_lr=None,
+            coordinator_lr=None,
         )
         trainer = MAPPOTrainer(mappo_config=cfg, seed=1)
         initial_lr = trainer.current_lr
@@ -51,7 +54,8 @@ class TestLRScheduler:
 
     def test_lr_does_not_anneal_when_total_iterations_zero(self) -> None:
         """When total_iterations=0, LR should stay constant."""
-        cfg = MAPPOConfig(lr=3e-4, total_iterations=0, rollout_length=4)
+        cfg = MAPPOConfig(lr=3e-4, total_iterations=0, rollout_length=4,
+                          vessel_lr=None, port_lr=None, coordinator_lr=None)
         trainer = MAPPOTrainer(mappo_config=cfg, seed=2)
         for _ in range(3):
             trainer.collect_rollout()
@@ -62,6 +66,7 @@ class TestLRScheduler:
         """LR should not go below lr_end even after total_iterations."""
         cfg = MAPPOConfig(
             lr=1e-3, lr_end=1e-4, total_iterations=5, rollout_length=4,
+            vessel_lr=None, port_lr=None, coordinator_lr=None,
         )
         trainer = MAPPOTrainer(mappo_config=cfg, seed=3)
         for _ in range(10):  # 2x total_iterations

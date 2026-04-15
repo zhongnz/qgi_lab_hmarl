@@ -1,0 +1,69 @@
+# Production run — PBT-tuned hyperparams + all architectural improvements.
+# Best known configuration from §9.6 PBT + §9.7 architectural benchmark.
+# Usage: python scripts/run_production.py
+
+name: production
+description: >
+  Full-scale multi-seed production run combining PBT-tuned hyperparameters
+  (lr=4.32e-4, clip_eps=0.139) with all three architectural improvements
+  (attention coordinator, encoded critic, recurrent vessel actor).
+
+tags:
+  - production
+  - final
+  - pbt-tuned
+  - architectural-improvements
+
+env:
+  num_vessels: 8
+  num_ports: 5
+  docks_per_port: 2           # tightened from 3 for real resource contention
+  rollout_steps: 138          # rollout_length + 10 headroom
+  episode_mode: continuous
+  forecast_source: ground_truth
+  weather_enabled: true
+  weather_autocorrelation: 0.7
+  # Reward rebalancing
+  emission_weight: 0.0        # removed double-penalty (fuel_weight covers it)
+  requested_arrival_slack_hours: 0.25  # activates schedule_delay_weight
+  coordinator_compliance_weight: 1.5   # directive compliance bonus
+
+mappo:
+  # PBT-tuned hyperparams (best worker #2)
+  lr: 0.000432
+  lr_end: 0.0001
+  clip_eps: 0.139
+  # Standard PPO
+  rollout_length: 128         # increased from 64 for better multi-step signal
+  num_epochs: 4
+  minibatch_size: 128
+  gamma: 0.99
+  gae_lambda: 0.95
+  # Networks
+  hidden_dims: [64, 64]
+  vessel_hidden_dims: [128, 128]
+  # Normalization
+  normalize_observations: true
+  normalize_rewards: true
+  # Entropy annealing — higher start and floor for better exploration
+  entropy_coeff: 0.08
+  entropy_coeff_end: 0.01
+  # Gradient norm warmup
+  max_grad_norm: 0.5
+  max_grad_norm_start: 5.0
+  grad_norm_warmup_fraction: 0.1
+  # Architectural improvements (now defaults, but explicit for clarity)
+  coordinator_use_attention: true
+  use_encoded_critic: true
+  vessel_use_recurrence: true
+
+num_iterations: 500
+num_seeds: 5
+seeds: [42, 49, 56, 63, 70]
+eval_interval: 20
+early_stopping_patience: 0
+checkpoint_dir: runs/production/checkpoints
+output_dir: runs/production
+tensorboard: false
+console_log: true
+log_every: 10

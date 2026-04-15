@@ -1,6 +1,5 @@
-"""Tests for audit-identified fixes: evaluate division, seed variation,
-dt_hours config, logger serialization, per-agent reward accumulation,
-dispatch current_step."""
+"""Tests for audit-identified fixes: dt_hours config, logger serialization,
+per-agent reward accumulation, dispatch current_step."""
 
 from __future__ import annotations
 
@@ -16,29 +15,6 @@ import pandas as pd
 from hmarl_mvp.config import HMARLConfig, get_default_config
 from hmarl_mvp.dynamics import dispatch_vessel
 from hmarl_mvp.state import VesselState
-
-# -----------------------------------------------------------------------
-# Issue 2.1: evaluate() should divide by actual_steps not num_steps
-# Issue 2.2: evaluate_episodes() should vary seeds
-# (Tested in integration via MAPPOTrainer — unit-testing the logic here)
-# -----------------------------------------------------------------------
-
-
-class TestEvaluateDivision(unittest.TestCase):
-    """Verify evaluation reward averaging uses actual steps completed."""
-
-    def test_early_termination_division(self) -> None:
-        """Simulated: 5 actual steps out of 20 total."""
-        total_vessel_reward = 10.0
-        actual_steps = 5
-        denom = max(actual_steps, 1)
-        mean_vessel = total_vessel_reward / denom
-        self.assertAlmostEqual(mean_vessel, 2.0)
-
-    def test_zero_steps_safe(self) -> None:
-        denom = max(0, 1)
-        self.assertEqual(denom, 1)
-
 
 # -----------------------------------------------------------------------
 # Issue 1.3: dispatch_vessel current_step parameter
@@ -107,7 +83,7 @@ class TestLoggerSerializable(unittest.TestCase):
 
         t = torch.tensor(3.14)
         result = _serializable(t)
-        self.assertAlmostEqual(result, 3.14, places=2)
+        self.assertAlmostEqual(result, 3.14, places=5)
         # Should be JSON serializable
         json.dumps(result)
 

@@ -13,7 +13,7 @@
 |------------|--------|-------------|
 | `MediumTermForecaster` | `forecasts.py` | Queue + linear trend + Gaussian noise |
 | `ShortTermForecaster` | `forecasts.py` | Queue + Gaussian noise |
-| `OracleForecaster` | `forecasts.py` | Perfect current-queue repeat |
+| `NoiselessForecaster` | `forecasts.py` | Perfect current-queue repeat |
 | `LearnedForecaster` | `learned_forecaster.py` | Trainable MLP (see `learned_forecaster.md`) |
 | `RNNForecaster` | `learned_forecaster.py` | Trainable GRU with rolling history buffer (`seq_len=8`, 5 features per port: queue, occupied, docks, wait_delta, served_delta). Used in April forecaster ablation (E9). |
 
