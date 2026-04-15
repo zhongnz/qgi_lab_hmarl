@@ -20,7 +20,7 @@ from .dynamics import (
 from .forecasts import (
     GroundTruthForecaster,
     MediumTermForecaster,
-    OracleForecaster,
+    NoiselessForecaster,
     ShortTermForecaster,
 )
 from .message_bus import MessageBus
@@ -56,6 +56,8 @@ class MaritimeEnv:
         self.cfg = get_default_config(**user_cfg)
         self.seed = int(self.cfg["seed"])
         self.rng = make_rng(self.seed)
+        self._next_reset_seed = self.seed
+        self._last_reset_seed = self.seed
         self.num_ports = self.cfg["num_ports"]
         self.num_vessels = self.cfg["num_vessels"]
         self.num_coordinators = max(1, int(self.cfg.get("num_coordinators", 1)))
@@ -72,7 +74,7 @@ class MaritimeEnv:
         self.short_forecast: np.ndarray | None = None
         self.medium_forecaster = MediumTermForecaster(self.cfg["medium_horizon_days"])
         self.short_forecaster = ShortTermForecaster(self.cfg["short_horizon_hours"])
-        self.oracle_forecaster = OracleForecaster(
+        self.noiseless_forecaster = NoiselessForecaster(
             medium_horizon_days=self.cfg["medium_horizon_days"],
             short_horizon_hours=self.cfg["short_horizon_hours"],
         )
@@ -85,7 +87,7 @@ class MaritimeEnv:
 
         self.bus = MessageBus(self.num_ports)
         self._last_port_actions: list[dict[str, Any]] = []
-        self._weather_enabled = bool(self.cfg.get("weather_enabled", False))
+        self._weather_enabled = bool(self.cfg.get("weather_enabled", True))
         self._weather: np.ndarray | None = None
         self._last_done_reason = "rollout_limit"
 
@@ -111,10 +113,33 @@ class MaritimeEnv:
         vessel.pending_requested_arrival_time = 0.0
         vessel.requested_arrival_time = 0.0
 
-    def reset(self) -> dict[str, Any]:
-        """Reset state and return initial observations."""
+    def reset(self, *, seed: int | None = None) -> dict[str, Any]:
+        """Reset state and return initial observations.
+
+        Reset seeding follows two simple rules:
+
+        - ``reset(seed=123)`` is fully deterministic and replays the exact
+          same initial state whenever the same seed is provided.
+        - ``reset()`` advances to the next reproducible episode seed so that
+          repeated training resets explore different initial states while
+          remaining deterministic for a fixed run seed.
+        """
+        if seed is not None:
+            effective_seed = int(seed)
+            self.seed = effective_seed
+            self._next_reset_seed = effective_seed + 1
+        elif self.seed != self._next_reset_seed - 1:
+            # Respect explicit ``env.seed = ...`` overrides used by older code.
+            effective_seed = int(self.seed)
+            self._next_reset_seed = effective_seed + 1
+        else:
+            effective_seed = int(self._next_reset_seed)
+            self.seed = effective_seed
+            self._next_reset_seed = effective_seed + 1
+
         self.t = 0
-        self.rng = make_rng(self.seed)
+        self._last_reset_seed = effective_seed
+        self.rng = make_rng(effective_seed)
         self.ports = initialize_ports(
             num_ports=self.num_ports,
             docks_per_port=self.cfg["docks_per_port"],
@@ -718,6 +743,26 @@ class MaritimeEnv:
             "mission_failures": float(sum(bool(v.mission_failed) for v in self.vessels)),
             "mission_done": float(sum(bool(v.mission_done) for v in self.vessels)),
             "stalled_vessels": float(sum(bool(v.stalled) for v in self.vessels)),
+            # Fleet utilization diagnostics
+            "active_vessel_count": float(sum(
+                bool(v.at_sea or v.pending_departure) for v in self.vessels
+            )),
+            "vessel_utilization_rate": (
+                float(sum(
+                    bool(v.at_sea or v.pending_departure or int(getattr(v, "port_service_state", 0)) > 0)
+                    for v in self.vessels
+                )) / max(len(self.vessels), 1)
+            ),
+            # Per-port wait diagnostics
+            "mean_wait_by_port": [
+                float(p.cumulative_wait_hours) / max(int(p.vessels_served), 1)
+                for p in self.ports
+            ],
+            # On-time compliance rate
+            "on_time_rate": (
+                float(sum(v.on_time_arrivals for v in self.vessels))
+                / max(float(sum(v.completed_scheduled_arrivals for v in self.vessels)), 1.0)
+            ),
             "weather_enabled": self._weather_enabled,
             "events": step_events,
             "terminated": int(terminated),
@@ -822,8 +867,8 @@ class MaritimeEnv:
     def _refresh_forecasts(self) -> None:
         """Refresh cached forecasts exactly once per environment tick."""
         source = str(self.cfg.get("forecast_source", "heuristic"))
-        if source == "oracle_current":
-            self.medium_forecast, self.short_forecast = self.oracle_forecaster.predict(self.ports)
+        if source == "noiseless_current":
+            self.medium_forecast, self.short_forecast = self.noiseless_forecaster.predict(self.ports)
             return
         if source == "ground_truth":
             self.medium_forecast, self.short_forecast = self.ground_truth_forecaster.predict(
@@ -1122,7 +1167,7 @@ class MaritimeEnv:
         medium_d = int(self.cfg["medium_horizon_days"])
         weather_dim = (
             int(self.cfg["num_ports"]) * int(self.cfg["num_ports"])
-            if bool(self.cfg.get("weather_enabled", False))
+            if bool(self.cfg.get("weather_enabled", True))
             else 0
         )
         pending_requests, booked_arrivals, imminent_arrivals, reservation_pressure = self._port_load_snapshot()
@@ -1189,8 +1234,27 @@ class MaritimeEnv:
             dock_avail = max(dest_port.docks - dest_port.occupied, 0) / max(
                 dest_port.docks, 1
             )
+            # Remaining range to destination (nm)
+            if vessel.at_sea and 0 <= int(vessel.location) < self.num_ports:
+                leg_dist = float(self.distance_nm[int(vessel.location), dest])
+                remaining_range_nm = max(leg_dist - float(vessel.position_nm), 0.0)
+            else:
+                remaining_range_nm = 0.0
+            # Hours until requested arrival deadline (0.0 when no deadline)
+            dt_hours = max(float(self.cfg.get("dt_hours", 1.0)), 1e-6)
+            if float(vessel.requested_arrival_time) > 0.0:
+                deadline_delta_hours = max(
+                    (float(vessel.requested_arrival_time) - float(self.t)) * dt_hours,
+                    0.0,
+                )
+            else:
+                deadline_delta_hours = 0.0
             v_obs = vessel_agent.get_obs(
-                short[dest], directive=directive, dock_availability=dock_avail,
+                short[dest],
+                directive=directive,
+                dock_availability=dock_avail,
+                remaining_range_nm=remaining_range_nm,
+                deadline_delta_hours=deadline_delta_hours,
             )
             # Append weather sea state for the vessel's current route
             if self._weather_enabled and self._weather is not None:
@@ -1212,11 +1276,18 @@ class MaritimeEnv:
             port_obs.append(p_obs)
 
         return {
-            "coordinator": coord_obs,
-            "coordinators": coordinator_obs,
-            "vessels": vessel_obs,
-            "ports": port_obs,
+            "coordinator": self._sanitize_obs(coord_obs),
+            "coordinators": [self._sanitize_obs(o) for o in coordinator_obs],
+            "vessels": [self._sanitize_obs(o) for o in vessel_obs],
+            "ports": [self._sanitize_obs(o) for o in port_obs],
         }
+
+    @staticmethod
+    def _sanitize_obs(obs: np.ndarray) -> np.ndarray:
+        """Replace NaN/Inf with zero to prevent neural-network corruption."""
+        if not np.all(np.isfinite(obs)):
+            return np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
+        return obs
 
     def _compute_rewards(
         self,
@@ -1307,6 +1378,19 @@ class MaritimeEnv:
         step_co2_emitted = float(
             sum(float(stats.get("co2_emitted", 0.0)) for stats in vessel_step_stats.values())
         )
+        # Directive compliance: fraction of vessels heading to assigned dest.
+        # Each vessel's directive contains a per-vessel "dest_port" (set in
+        # phase 1 from per_vessel_dest or the coordinator's primary dest).
+        compliance_count = 0
+        compliance_total = 0
+        for v in self.vessels:
+            d = self.bus.get_latest_directive(v.vessel_id)
+            if d and "dest_port" in d:
+                assigned = d["dest_port"]
+                compliance_total += 1
+                if v.destination == int(assigned):
+                    compliance_count += 1
+        compliance_rate = float(compliance_count) / max(compliance_total, 1)
         coordinator_components = [
             compute_coordinator_reward_breakdown(
                 ports=self.ports,
@@ -1318,6 +1402,7 @@ class MaritimeEnv:
                 served_vessels=float(step_vessels_served),
                 accepted_requests=float(step_requests_accepted),
                 rejected_requests=float(step_requests_rejected),
+                directive_compliance_rate=compliance_rate,
             )
             for _ in self.coordinators
         ]

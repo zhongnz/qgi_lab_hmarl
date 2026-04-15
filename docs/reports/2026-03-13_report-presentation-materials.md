@@ -26,7 +26,7 @@ The core message for the audience is:
 
 Updated framing:
 
-> We now have both a strong continuous baseline (`v3`) and a controlled validation benchmark (`single_mission + ground_truth`) for checking whether the core control logic is working before reintroducing forecast uncertainty.
+> We now have a strong continuous baseline (`v3`), a cleaner final run path using `continuous + ground_truth`, and enough diagnostics to study control quality directly without conflating it with forecast error.
 
 ## 3. Recommended slide deck
 
@@ -113,20 +113,20 @@ How the current baseline is trained and evaluated
   - environment horizon `= 69`
   - `seed = 42`
   - local CPU training for the reported run
-- controlled validation benchmark:
-  - `single_mission`
+- final completion path:
+  - `continuous`
   - `ground_truth` forecasts
-  - each vessel completes at most one trip per episode
+  - one artifact run plus one five-seed run
 - primary evaluation metrics:
   - on-time rate
   - completed arrivals
-  - vessels served
+  - port service events
   - dock utilization
   - total operating cost
 
 **Speaker notes:**
 
-Do not overload this slide with every hyperparameter. The important point now is that the project has two evaluation tracks: the continuous environment as the main task, and the simplified benchmark as a debugging and validation environment.
+Do not overload this slide with every hyperparameter. The important point now is that the final completion path is deliberately simpler: keep the continuous environment, remove forecast error with `ground_truth`, and use one artifact run plus a five-seed run.
 
 ## Slide 6 — System architecture
 
@@ -187,12 +187,12 @@ Simulator realism, rewards, and validation changes
 - departures are checked for fuel feasibility
 - ports track actual vessels through queueing, service, and refueling
 - rewards were redesigned from mostly aggregate penalties to event-driven, role-specific signals
-- added `single_mission` as a finish-state benchmark
-- added `ground_truth` forecasts as a deterministic no-noise benchmark
+- moved the final run plan to `continuous + ground_truth`
+- fixed training resets so episode starts now vary reproducibly across resets
 
 **Speaker notes:**
 
-This is a strong progress slide. It shows that recent work was not only reward tuning. We improved simulator correctness, made the reward signal more informative, and added a controlled benchmark for validating the model before dealing with forecast error.
+This is a strong progress slide. It shows that recent work was not only reward tuning. We improved simulator correctness, made the reward signal more informative, and cleaned up the final training path so it matches the actual project goal.
 
 ## Slide 9 — Why we trust the results more now
 
@@ -226,7 +226,7 @@ Current recommended baseline: transit-rebalanced v3
 - `total_reward = -923.38`
 - `on_time_rate = 0.928`
 - `completed_arrivals = 26.8`
-- `total_vessels_served = 36.2`
+- `port_service_events = 36.2`
 - `dock_utilization = 0.28`
 - `total_ops_cost_usd = $1.330M`
 
@@ -238,26 +238,33 @@ Current recommended baseline: transit-rebalanced v3
 
 This is the “where we are now” slide. Make it clear that `v3` is recommended because it is the best balance, not because it is perfect.
 
-## Slide 11 — Controlled benchmark comparison
+## Slide 11 — Final run plan
 
 **Title:**  
-Continuous task vs. single-mission validation benchmark
+Final full-scale run plan
 
 **Bullets:**
 
-- continuous + ground truth:
-  - better throughput and higher on-time rate
-  - closer to the real target environment
-- single_mission + ground truth:
-  - shorter episodes
-  - `100%` mission success in the benchmark run
-  - cleaner success signal for debugging
+- artifact run:
+  - `continuous + ground_truth`
+  - `100` iterations
+  - seed `42`
+  - full plots, traces, report, and saved model
+- multi-seed run:
+  - same environment and training setup
+  - seeds `42, 49, 56, 63, 70`
+  - used for the final quantitative claim
 - key lesson:
-  - the simplified benchmark helps validate core logic, but it does not replace the continuous scheduler
+  - the project now finishes on one clean task definition instead of mixing a main environment with a separate validation benchmark
+
+**Metric note:**
+
+- `port_service_events` counts berth admissions across the full system, including seeded background port load
+- the artifact run gives the diagnostic trace; the multi-seed run gives the stability summary
 
 **Speaker notes:**
 
-This slide should make the benchmark role very clear. The simplified setup is useful because it makes success and failure easier to interpret, but it is not the final research environment.
+This slide should make the finish line very concrete. We are now using one continuous environment, one reliable forecast source, and two complementary run types: one for artifacts and one for statistical stability.
 
 ## Slide 12 — Limitations and next steps
 
@@ -270,10 +277,10 @@ What is simplified, and what comes next
 - route distances were scaled so multiple trips fit in one rollout
 - current fuel level is generous relative to route length
 - next steps:
-  - keep `v3` as the working continuous baseline
-  - use `single_mission + ground_truth` as a controlled validation benchmark
-  - run short multi-seed comparisons in both settings
-  - reintroduce imperfect forecasts after validating core control behavior
+  - run the final `continuous + ground_truth` local plan
+  - use the artifact run for figures, traces, and narrative examples
+  - use the five-seed run for the final quantitative result
+  - optionally reintroduce imperfect forecasts as follow-on work
   - decide whether to move to real ports and nautical distances
 
 **Speaker notes:**

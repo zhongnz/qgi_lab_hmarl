@@ -104,9 +104,9 @@ class TestLRWarmup:
     """LR warmup phase ramps from 0 to lr before annealing."""
 
     def test_default_no_warmup(self) -> None:
-        """Default lr_warmup_fraction is 0."""
+        """Default lr_warmup_fraction is 0.05 (5% warmup)."""
         cfg = MAPPOConfig()
-        assert cfg.lr_warmup_fraction == 0.0
+        assert cfg.lr_warmup_fraction == 0.05
 
     def test_warmup_ramps_lr(self) -> None:
         """During warmup, LR increases from ~0 toward lr."""
@@ -118,6 +118,9 @@ class TestLRWarmup:
             lr_end=0.0,
             lr_warmup_fraction=0.5,
             total_iterations=10,
+            vessel_lr=None,
+            port_lr=None,
+            coordinator_lr=None,
         )
         trainer = MAPPOTrainer(mappo_config=cfg, seed=42)
 
@@ -146,6 +149,9 @@ class TestLRWarmup:
             lr_end=1e-5,
             lr_warmup_fraction=0.2,
             total_iterations=10,
+            vessel_lr=None,
+            port_lr=None,
+            coordinator_lr=None,
         )
         trainer = MAPPOTrainer(mappo_config=cfg, seed=42)
 

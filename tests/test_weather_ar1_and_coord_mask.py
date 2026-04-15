@@ -108,10 +108,10 @@ class TestUpdateWeatherAR1:
 class TestWeatherAutocorrelationConfig:
     """Config field validation for weather_autocorrelation."""
 
-    def test_default_zero(self) -> None:
-        """Default autocorrelation is 0 (backward compatible)."""
+    def test_default_realistic(self) -> None:
+        """Default autocorrelation is 0.7 (realistic AR(1) persistence)."""
         cfg = HMARLConfig()
-        assert cfg.weather_autocorrelation == 0.0
+        assert cfg.weather_autocorrelation == 0.7
 
     def test_valid_value(self) -> None:
         """Autocorrelation within [0, 1] passes validation."""

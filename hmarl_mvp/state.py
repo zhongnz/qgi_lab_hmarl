@@ -6,7 +6,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .config import SEED
+from .config import SEED, HMARLConfig
+
+_DEFAULT_NOMINAL_SPEED = HMARLConfig.nominal_speed
 
 
 @dataclass
@@ -32,7 +34,7 @@ class VesselState:
     location: int
     destination: int
     position_nm: float = 0.0
-    speed: float = 12.0
+    speed: float = _DEFAULT_NOMINAL_SPEED
     fuel: float = 100.0
     initial_fuel: float = 100.0
     cumulative_fuel_used: float = 0.0

@@ -6,7 +6,7 @@ CSV outputs from `scripts/run_baselines.py`.
 ## Run Metadata
 
 - `t`: simulation step index.
-- `policy`: one of `independent`, `reactive`, `forecast`, `oracle`, `learned_forecast`, `mappo`.
+- `policy`: one of `independent`, `reactive`, `forecast`, `noiseless`, `learned_forecast`, `mappo`.
 - `forecast_horizon`: short-horizon forecast length used in the run.
 - `forecast_noise`: Gaussian noise scale applied to synthetic forecasts.
 - `share_forecasts`: `1` if short forecasts are shared beyond coordinator, else `0`.
@@ -18,8 +18,8 @@ CSV outputs from `scripts/run_baselines.py`.
 - `avg_queue`: mean queue length across ports.
 - `dock_utilization`: mean `occupied / docks` across ports.
 - `total_wait_hours`: cumulative wait-hours across all ports.
-- `total_vessels_served`: cumulative served vessels across all ports.
-- `avg_wait_per_vessel`: `total_wait_hours / total_vessels_served`.
+- `total_vessels_served`: cumulative port service admissions across all ports. This includes any seeded background port workload present at reset, so it is a system-throughput metric rather than a count of unique controllable vessels.
+- `avg_wait_per_vessel`: `total_wait_hours / total_vessels_served` using the same system-throughput denominator.
 - `pending_arrival_requests`: requests waiting in port inbox queues.
 
 ## Vessel / Emissions State
@@ -29,7 +29,7 @@ CSV outputs from `scripts/run_baselines.py`.
 - `total_fuel_used`: cumulative fleet fuel consumption from initial fuel levels.
 - `total_emissions_co2`: cumulative fleet CO2 emissions.
 - `avg_delay_hours`: average vessel delay.
-- `on_time_rate`: share of vessels with delay < 2 hours.
+- `on_time_rate`: share of scheduled arrivals completed within `on_time_tolerance_hours` of their requested arrival time.
 
 ## Coordination Counters
 
@@ -117,7 +117,7 @@ step `info` dict.
 
 ### Weather Config Parameters
 
-- `weather_enabled` (bool, default `False`): enable per-route sea-state effects.
+- `weather_enabled` (bool, default `True`): enable per-route sea-state effects.
 - `sea_state_max` (float, default `3.0`): upper bound for uniformly sampled sea state.
 - `weather_penalty_factor` (float, default `0.15`): multiplier for fuel increase and speed reduction per unit sea state.
 

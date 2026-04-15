@@ -18,6 +18,9 @@ Example:
 
 - `metrics_dictionary.md`: definitions of baseline CSV columns and reward/metric semantics.
 - `experiment_protocol.md`: full experiment design (E1–E9), statistical methodology, execution plan.
+- `2026-04-10_final-results-section.md`: consolidated final-results section combining the continuous main result and single-mission comparison benchmark.
+- `2026-04-10_final-ground-truth-results.md`: final report-ready tables and prose for the completed continuous + ground-truth local run.
+- `2026-04-10_final-single-mission-ground-truth-results.md`: report-ready tables and prose for the completed single-mission + ground-truth comparison run.
 - `2026-02-25_mvp_state-review.md`: 26-item implementation checklist; open items tracked.
 - `supervisor_report_2026-02-28.md`: comprehensive supervisor-facing project report (current state, design, experiments, next steps).
 - `friday_meeting_update_2026-03-13.md`: comprehensive update for the Friday 2026-03-13 discussion, covering all work since the 2026-03-06 Friday meeting.

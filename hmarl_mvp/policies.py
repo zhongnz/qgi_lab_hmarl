@@ -9,11 +9,18 @@ import numpy as np
 from .dynamics import weather_fuel_multiplier
 from .state import PortState, VesselState
 
+VALID_POLICY_MODES = {"independent", "reactive", "forecast", "noiseless", "ground_truth"}
+
 
 class FleetCoordinatorPolicy:
     """Coordinator policy container (heuristic placeholder for PPO actor)."""
 
     def __init__(self, config: dict[str, Any], mode: str = "forecast") -> None:
+        if mode not in VALID_POLICY_MODES:
+            raise ValueError(
+                f"Unknown policy mode {mode!r}. "
+                f"Expected one of {sorted(VALID_POLICY_MODES)}"
+            )
         self.cfg = config
         self.mode = mode
 
@@ -31,7 +38,7 @@ class FleetCoordinatorPolicy:
         ----------
         weather:
             Optional ``(num_ports, num_ports)`` sea-state matrix.
-            When provided and mode is ``"forecast"`` or ``"oracle"``,
+            When provided and mode is ``"forecast"`` or ``"noiseless"``,
             the routing heuristic penalises routes through rough seas.
         """
         if self.mode == "independent":
@@ -93,6 +100,11 @@ class VesselPolicy:
     """Vessel policy container (heuristic placeholder for PPO actor)."""
 
     def __init__(self, config: dict[str, Any], mode: str = "forecast") -> None:
+        if mode not in VALID_POLICY_MODES:
+            raise ValueError(
+                f"Unknown policy mode {mode!r}. "
+                f"Expected one of {sorted(VALID_POLICY_MODES)}"
+            )
         self.cfg = config
         self.mode = mode
 
@@ -153,6 +165,11 @@ class PortPolicy:
     """Port policy container (heuristic placeholder for PPO actor)."""
 
     def __init__(self, config: dict[str, Any], mode: str = "forecast") -> None:
+        if mode not in VALID_POLICY_MODES:
+            raise ValueError(
+                f"Unknown policy mode {mode!r}. "
+                f"Expected one of {sorted(VALID_POLICY_MODES)}"
+            )
         self.cfg = config
         self.mode = mode
 

@@ -136,7 +136,7 @@ class AllPoliciesScenarioTests(unittest.TestCase):
             docks_per_port=4,
             rollout_steps=8,
         )
-        for policy in ["independent", "reactive", "forecast", "oracle", "ground_truth"]:
+        for policy in ["independent", "reactive", "forecast", "noiseless", "ground_truth"]:
             with self.subTest(policy=policy):
                 df = run_experiment(
                     policy_type=policy, steps=8, seed=42, config=cfg

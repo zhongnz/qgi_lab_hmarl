@@ -1,39 +1,51 @@
-# Multi-seed experiment — 5 seeds for statistical evaluation.
+# Multi-seed experiment — final continuous + ground-truth evaluation at the current 8v/5p scale.
 # Usage: python scripts/run_experiment.py configs/multi_seed.yaml
 
-name: multi_seed_evaluation
+name: final_main_ground_truth_multiseed
 description: >
-  Train MAPPO over 5 seeds for reliable comparison and confidence
-  intervals.  Results feed into the statistical evaluation module.
+  Train MAPPO over 5 seeds in the continuous environment with ground-truth
+  forecasts for the final local quantitative result.
 tags:
   - multi-seed
-  - evaluation
+  - final
+  - ground-truth
 
 env:
-  num_vessels: 3
-  num_ports: 2
+  num_vessels: 8
+  num_ports: 5
   docks_per_port: 3
-  rollout_steps: 55
+  rollout_steps: 69
+  episode_mode: continuous
+  mission_success_on: arrival
+  forecast_source: ground_truth
+  weather_enabled: true
+  weather_autocorrelation: 0.7
 
 mappo:
   lr: 0.0003                   # Adam learning rate
-  rollout_length: 50            # steps per rollout before PPO update
+  rollout_length: 64            # steps per rollout before PPO update
   num_epochs: 4                 # PPO epochs per update
   minibatch_size: 128           # samples per PPO minibatch
   clip_eps: 0.2                 # PPO clipping epsilon
   gamma: 0.99                   # discount factor
   gae_lambda: 0.95              # GAE lambda for advantage estimation
   hidden_dims: [64, 64]         # actor-critic MLP hidden layer sizes
+  vessel_hidden_dims: [128, 128] # vessel gets larger network for critic capacity
   normalize_observations: true
   normalize_rewards: true
+  entropy_coeff: 0.05           # entropy bonus coefficient (start) — higher for exploration
+  entropy_coeff_end: 0.002      # entropy bonus coefficient (end, linear decay)
+  max_grad_norm: 0.5
+  max_grad_norm_start: 5.0
+  grad_norm_warmup_fraction: 0.1
 
-num_iterations: 200
+num_iterations: 100
 num_seeds: 5                    # run over 5 seeds for statistical evaluation
 seeds: [42, 49, 56, 63, 70]    # explicit seed list
-eval_interval: 20
+eval_interval: 10
 early_stopping_patience: 30     # stop if no improvement for 30 iterations
-checkpoint_dir: runs/multi_seed/checkpoints
-output_dir: runs/multi_seed
+checkpoint_dir: runs/final_main_ground_truth_multiseed/checkpoints
+output_dir: runs/final_main_ground_truth_multiseed
 tensorboard: false
 console_log: true
 log_every: 10

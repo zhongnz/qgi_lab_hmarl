@@ -125,9 +125,7 @@ class MaritimeGymEnv(gym.Env):
         options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Reset environment and return (observation, info)."""
-        if seed is not None:
-            self._env.seed = seed
-        raw_obs = self._env.reset()
+        raw_obs = self._env.reset(seed=seed)
         flat_obs = self._flatten_obs(raw_obs)
         return flat_obs, {"raw_obs": raw_obs}
 

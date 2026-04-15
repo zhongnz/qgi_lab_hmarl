@@ -1,0 +1,62 @@
+# Congestion pressure sweep — vary docks_per_port from 1 to 5.
+# Maps the capacity-learning curve: how does resource scarcity affect
+# coordination quality and reward landscape shape?
+# Usage: python scripts/run_experiment.py configs/congestion_sweep.yaml
+#
+# Run as 5 separate experiments (one per docks_per_port value).
+# Each sub-experiment uses 3 seeds for statistical comparison.
+
+name: congestion_sweep
+description: >-
+  Sweep docks_per_port from 1 (extreme congestion) to 5 (excess capacity)
+  to characterise how resource scarcity shapes learned coordination.
+tags:
+  - sweep
+  - congestion
+  - docks
+
+# Base environment (docks_per_port overridden per sweep point)
+env:
+  num_vessels: 8
+  num_ports: 5
+  docks_per_port: 2               # overridden by sweep
+  rollout_steps: 138
+  episode_mode: continuous
+  forecast_source: ground_truth
+  weather_enabled: true
+  weather_autocorrelation: 0.7
+
+mappo:
+  lr: 0.0003
+  rollout_length: 128
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  vessel_hidden_dims: [128, 128]
+  normalize_observations: true
+  normalize_rewards: true
+  entropy_coeff: 0.08
+  entropy_coeff_end: 0.01
+  max_grad_norm: 0.5
+  max_grad_norm_start: 5.0
+  grad_norm_warmup_fraction: 0.1
+  coordinator_use_attention: true
+  use_encoded_critic: true
+  vessel_use_recurrence: true
+
+# Sweep definition: run once per docks_per_port value
+sweep:
+  parameter: env.docks_per_port
+  values: [1, 2, 3, 4, 5]
+
+num_iterations: 150
+num_seeds: 3
+seeds: [42, 49, 56]
+eval_interval: 15
+output_dir: runs/congestion_sweep
+tensorboard: false
+console_log: true
+log_every: 10

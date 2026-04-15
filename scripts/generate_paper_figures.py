@@ -33,8 +33,11 @@ if _PROJECT_ROOT not in sys.path:
 
 from hmarl_mvp.plotting import (  # noqa: E402
     plot_ablation_bar,
+    plot_explained_variance,
+    plot_gradient_diagnostics,
     plot_multi_seed_curves,
     plot_policy_comparison,
+    plot_reward_decomposition,
     plot_sweep_heatmap,
     plot_training_curves,
     plot_training_dashboard,
@@ -57,7 +60,7 @@ PAPER_RC = {
     "savefig.pad_inches": 0.05,
 }
 
-_POLICY_NAMES = ("independent", "reactive", "forecast", "oracle", "mappo")
+_POLICY_NAMES = ("independent", "reactive", "forecast", "noiseless", "mappo")
 
 
 def _load_csv(path: str | Path) -> pd.DataFrame | None:
@@ -127,6 +130,7 @@ def _find_policy_results(runs_dir: Path) -> dict[str, pd.DataFrame]:
     search = [
         (runs_dir / "full_run", ("mappo", "policy")),
         (runs_dir / "mappo_compare", ("",)),
+        (runs_dir / "final_baselines", ("policy",)),
         (runs_dir / "baselines", ("policy",)),
         (runs_dir / "baseline_refactor", ("policy",)),
     ]
@@ -164,7 +168,10 @@ def fig_training_curves(runs_dir: Path, out_dir: Path, formats: tuple[str, ...])
             runs_dir / "full_run" / "mappo__train_log.csv",
             runs_dir / "mappo_train" / "train_history.csv",
             runs_dir / "baseline" / "seed_42" / "metrics.csv",
+            runs_dir / "final_baseline" / "seed_42" / "metrics.csv",
             runs_dir / "multi_seed" / "seed_42" / "metrics.csv",
+            runs_dir / "final_main_ground_truth_multiseed" / "seed_42" / "metrics.csv",
+            runs_dir / "final_demo" / "train_log.csv",
         ]
     )
     if path is None:
@@ -200,7 +207,9 @@ def fig_policy_comparison(runs_dir: Path, out_dir: Path, formats: tuple[str, ...
 
 def fig_multi_seed(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
     """Figure 3: Multi-seed learning curve with mean/std band."""
-    ms_dir = runs_dir / "multi_seed"
+    ms_dir = runs_dir / "final_main_ground_truth_multiseed"
+    if not ms_dir.exists():
+        ms_dir = runs_dir / "multi_seed"
     if not ms_dir.exists():
         print("  [skip] no multi_seed directory found")
         return
@@ -239,7 +248,9 @@ def fig_multi_seed(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> N
 
 def fig_parameter_sharing(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
     """Figure 4: Parameter-sharing ablation (shared vs no-sharing)."""
-    shared_path = runs_dir / "multi_seed" / "summary.csv"
+    shared_path = runs_dir / "final_main_ground_truth_multiseed" / "summary.csv"
+    if not shared_path.exists():
+        shared_path = runs_dir / "multi_seed" / "summary.csv"
     no_share_path = runs_dir / "no_sharing" / "summary.csv"
 
     if shared_path.exists() and no_share_path.exists():
@@ -288,6 +299,7 @@ def fig_weather_impact(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) 
         [
             runs_dir / "weather_curriculum" / "metrics.csv",
             runs_dir / "weather_curriculum" / "seed_42" / "metrics.csv",
+            runs_dir / "weather_curriculum" / "summary.csv",
         ]
     )
     if path is None:
@@ -353,6 +365,7 @@ def fig_economic_comparison(runs_dir: Path, out_dir: Path, formats: tuple[str, .
         summary_path = _find_first_existing(
             [
                 runs_dir / "full_run" / "policy_summary.csv",
+                runs_dir / "final_baselines" / "policy_summary.csv",
                 runs_dir / "baselines" / "policy_summary.csv",
                 runs_dir / "baseline_refactor" / "policy_summary.csv",
             ]
@@ -405,6 +418,70 @@ def fig_economic_comparison(runs_dir: Path, out_dir: Path, formats: tuple[str, .
     _save_custom(fig, out_dir, "fig7_economic_comparison", formats)
 
 
+def fig_gradient_diagnostics(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 8: Gradient norms and clip fractions over training."""
+    path = _find_first_existing(
+        [
+            runs_dir / "final_baseline" / "seed_42" / "metrics.csv",
+            runs_dir / "baseline" / "seed_42" / "metrics.csv",
+            runs_dir / "final_demo" / "train_log.csv",
+            runs_dir / "full_run" / "mappo__train_log.csv",
+        ]
+    )
+    if path is None:
+        print("  [skip] no training metrics found for gradient diagnostics")
+        return
+    df = pd.read_csv(path)
+    _call_plotter_multi(
+        plot_gradient_diagnostics,
+        df,
+        out_dir=out_dir,
+        name="fig8_gradient_diagnostics",
+        formats=formats,
+    )
+
+
+def fig_explained_variance(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 9: Explained variance (critic quality) over training."""
+    path = _find_first_existing(
+        [
+            runs_dir / "final_baseline" / "seed_42" / "metrics.csv",
+            runs_dir / "baseline" / "seed_42" / "metrics.csv",
+            runs_dir / "final_demo" / "train_log.csv",
+            runs_dir / "full_run" / "mappo__train_log.csv",
+        ]
+    )
+    if path is None:
+        print("  [skip] no training metrics found for explained variance")
+        return
+    df = pd.read_csv(path)
+    _call_plotter_multi(
+        plot_explained_variance,
+        df,
+        out_dir=out_dir,
+        name="fig9_explained_variance",
+        formats=formats,
+    )
+
+
+def fig_reward_decomposition(runs_dir: Path, out_dir: Path, formats: tuple[str, ...]) -> None:
+    """Figure 10: Reward component decomposition (stacked area)."""
+    from hmarl_mvp.plotting import collect_episode_snapshots
+    snapshots = collect_episode_snapshots(
+        policy_type="reactive", steps=30, seed=42,
+    )
+    if not snapshots:
+        print("  [skip] could not collect episode snapshots")
+        return
+    _call_plotter_multi(
+        plot_reward_decomposition,
+        snapshots,
+        out_dir=out_dir,
+        name="fig10_reward_decomposition",
+        formats=formats,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -418,6 +495,9 @@ FIGURE_GENERATORS = [
     ("Fig 5: Weather impact", fig_weather_impact),
     ("Fig 6: Hyperparam heatmap", fig_hyperparam_heatmap),
     ("Fig 7: Economic comparison", fig_economic_comparison),
+    ("Fig 8: Gradient diagnostics", fig_gradient_diagnostics),
+    ("Fig 9: Explained variance", fig_explained_variance),
+    ("Fig 10: Reward decomposition", fig_reward_decomposition),
 ]
 
 

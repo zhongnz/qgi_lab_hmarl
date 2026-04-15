@@ -19,7 +19,6 @@ RUNS = ROOT / "runs"
 
 OUT = REPORTS / "2026-03-31_hmarl_project_update_preview.pdf"
 V3_RUN = RUNS / "local_full_train_2026-03-11_transit_rebalanced_v3"
-BENCHMARK_CSV = RUNS / "single_mission_ground_truth_benchmark_2026-03-31.csv"
 EVAL_TRACE_CSV = V3_RUN / "eval_trace.csv"
 ROLE_DIAG_IMG = REPORTS / "2026-03-31_role_reward_diagnostics.png"
 
@@ -71,11 +70,6 @@ def _read_v3_metrics() -> dict[str, float]:
         "dock_utilization": float(data["dock_utilization"]),
         "total_ops_cost_usd": float(data["total_ops_cost_usd"]),
     }
-
-
-def _read_benchmark_rows() -> list[dict[str, str]]:
-    with BENCHMARK_CSV.open() as fh:
-        return list(csv.DictReader(fh))
 
 
 def _ensure_role_reward_plot() -> Path:
@@ -182,17 +176,17 @@ def slide_1():
     _rr(d, (1040, 90, 1450, 310), (229, 238, 245), None)
     _rr(d, (1100, 395, 1400, 555), ORANGE_SOFT, None)
     _text(d, (84, 102), "Hierarchical Multi-Agent Reinforcement Learning for Congestion-Aware Maritime Scheduling", FONT_H1, INK, max_width=930)
-    _text(d, (88, 300), "Project update: simulator background, reward redesign, controlled validation benchmark, current progress, and next steps.", FONT_BODY, MUTED, max_width=860)
+    _text(d, (88, 300), "Project update: simulator background, reward redesign, continuous + ground_truth final run path, current progress, and next steps.", FONT_BODY, MUTED, max_width=860)
     _rr(d, (84, 410, 1020, 560), NAVY, None)
-    _text(d, (112, 450), "We now have both a strong continuous baseline and a controlled benchmark for validating the core control logic before reintroducing forecast uncertainty.", FONT_BODY, PAPER, max_width=870)
+    _text(d, (112, 450), "We now have a clean final path for the project: continuous scheduling, reliable forecasts, strong diagnostics, and a reproducible local run plan.", FONT_BODY, PAPER, max_width=870)
     _text(d, (1075, 122), "SPRING 2026", FONT_LABEL, MUTED)
     _text(d, (1075, 156), "Independent study", FONT_H3, NAVY)
     _text(d, (1075, 212), "Supervisor:\nProf. Amine Aboussalah", FONT_BODY_SM, INK, max_width=300)
     _text(d, (1130, 418), "MARCH 31 UPDATE", FONT_LABEL, MUTED)
-    _text(d, (1130, 452), "Baseline:\nv3 + GT benchmark", FONT_BODY_SM, NAVY, max_width=210)
+    _text(d, (1130, 452), "Final path:\ncontinuous + GT", FONT_BODY_SM, NAVY, max_width=210)
     cards = [
         (84, 635, 465, 800, "RESEARCH FOCUS", "HMARL", "Coordinator, vessel, and port agents"),
-        (565, 635, 995, 800, "CURRENT SETUP", "v3 + GT", "Operating baseline plus validation benchmark"),
+        (565, 635, 995, 800, "CURRENT SETUP", "Cont. + GT", "Continuous environment with reliable forecasts"),
         (1015, 635, 1420, 800, "FORMAT", "12 slides", "Presentation-ready update deck"),
     ]
     for x1, y1, x2, y2, label, value, note in cards:
@@ -301,19 +295,19 @@ def slide_5():
         "Local CPU run for the reported baseline",
     ], font=FONT_BODY_SM)
     _rr(d, (795, 145, 1522, 420), ORANGE_SOFT)
-    _text(d, (823, 175), "Controlled validation benchmark", FONT_H3, NAVY)
+    _text(d, (823, 175), "Final completion path", FONT_H3, NAVY)
     _bullets(d, 829, 235, 620, [
-        "single_mission episodes",
+        "continuous episodes",
         "ground_truth forecasts",
-        "Each vessel completes at most one trip per episode",
-        "Used to validate control logic before reintroducing forecast error",
+        "one artifact run plus one five-seed run",
+        "designed to isolate control quality while finishing the project",
     ], font=FONT_BODY_SM)
     _rr(d, (795, 460, 1522, 780), TEAL_SOFT)
     _text(d, (823, 490), "Primary evaluation metrics", FONT_H3, NAVY)
     _bullets(d, 829, 550, 620, [
         "On-time rate",
         "Completed arrivals",
-        "Vessels served",
+        "Port service events",
         "Dock utilization",
         "Total operating cost",
     ], font=FONT_BODY_SM)
@@ -417,7 +411,7 @@ def slide_10():
         ("Fuel and stalling", "Fuel exhaustion now causes true mid-route stalling.\nDepartures are checked for fuel feasibility.", WHITE),
         ("Port service realism", "Ports track actual vessel IDs.\nRefueling happens after real service completion.", ORANGE_SOFT),
         ("Reward redesign", "Rewards moved from mostly aggregate penalties to event-driven, role-specific signals.", WHITE),
-        ("Validation variants", "Added single_mission and ground_truth as controlled debugging modes.", TEAL_SOFT),
+        ("Final run cleanup", "Moved the finish line to continuous + ground_truth and fixed training resets to vary reproducibly.", TEAL_SOFT),
         ("Visibility", "Action logs, event logs, reward components, and confidence diagnostics were added.", WHITE),
     ]
     coords = [(78, 150), (542, 150), (1006, 150), (78, 470), (542, 470), (1006, 470)]
@@ -463,7 +457,7 @@ def slide_12(v3):
         ("TOTAL REWARD", f"{v3['total_reward']:.2f}"),
         ("ON-TIME RATE", f"{v3['on_time_rate']:.3f}"),
         ("COMPLETED ARRIVALS", f"{v3['completed_arrivals']:.1f}"),
-        ("VESSELS SERVED", f"{v3['total_vessels_served']:.1f}"),
+        ("PORT SERVICE EVENTS", f"{v3['total_vessels_served']:.1f}"),
         ("DOCK UTILIZATION", f"{v3['dock_utilization']:.2f}"),
         ("OPS COST", f"${v3['total_ops_cost_usd']/1_000_000:.3f}M"),
     ]
@@ -477,36 +471,40 @@ def slide_12(v3):
     return img
 
 
-def slide_13(rows):
+def slide_13():
     img, d = _new_slide()
-    _top_band(d, "Continuous task vs. single-mission validation benchmark", "Benchmark", "13")
-    continuous = next(row for row in rows if row["run"] == "continuous_gt")
-    single = next(row for row in rows if row["run"] == "single_mission_gt")
+    _top_band(d, "Final full-scale run plan", "Run plan", "13")
     panels = [
-        ("Continuous + ground truth", continuous, 78, (245, 250, 252)),
-        ("Single mission + ground truth", single, 840, ORANGE_SOFT),
+        ("Artifact run", 78, (245, 250, 252), [
+            ("ENVIRONMENT", "Continuous"),
+            ("FORECAST", "Ground truth"),
+            ("ITERATIONS", "100"),
+            ("SEED", "42"),
+            ("PURPOSE", "Figures, traces, report, and saved model"),
+            ("OUTPUTS", "report.md + trace CSVs + plots"),
+        ]),
+        ("Multi-seed run", 840, ORANGE_SOFT, [
+            ("ENVIRONMENT", "Continuous"),
+            ("FORECAST", "Ground truth"),
+            ("ITERATIONS", "100"),
+            ("SEEDS", "42, 49, 56, 63, 70"),
+            ("PURPOSE", "Final quantitative stability claim"),
+            ("OUTPUTS", "summary.csv + experiment_summary.json"),
+        ]),
     ]
-    for title, row, x, fill in panels:
+    for title, x, fill, stats in panels:
         _rr(d, (x, 150, x + 680, 620), fill)
         _text(d, (x + 24, 178), title, FONT_H3, NAVY)
-        stats = [
-            ("EVAL TOTAL REWARD", f"{float(row['eval_total_reward']):.2f}"),
-            ("ON-TIME RATE", f"{float(row['eval_on_time_rate']):.3f}"),
-            ("COMPLETED ARRIVALS", f"{float(row['eval_completed_arrivals']):.1f}"),
-            ("VESSELS SERVED", f"{float(row['eval_total_vessels_served']):.1f}"),
-            ("MISSION SUCCESS", f"{float(row['eval_mission_success_rate']):.1f}"),
-            ("TRACE STEPS", row["trace_steps"]),
-        ]
         y = 240
         for idx, (label, value) in enumerate(stats):
             fill_row = WHITE if idx % 2 == 0 else (250, 248, 244)
             _rr(d, (x + 24, y, x + 656, y + 52), fill_row)
             _text(d, (x + 40, y + 15), label, FONT_LABEL, MUTED)
-            val_color = TEAL if title.startswith("Single") and label in {"EVAL TOTAL REWARD", "MISSION SUCCESS", "TRACE STEPS"} else NAVY
+            val_color = TEAL if title.startswith("Multi") and label in {"SEEDS", "OUTPUTS"} else NAVY
             _text(d, (x + 610, y + 15), value, FONT_BODY_SM, val_color, anchor="ra")
             y += 62
     _rr(d, (110, 680, 1490, 785), ORANGE_SOFT, None)
-    _text(d, (142, 720), "Takeaway: the simplified benchmark is easier to complete and gives a cleaner success signal, but the continuous setting still has higher throughput and remains the real target environment.", FONT_BODY, INK, max_width=1290)
+    _text(d, (142, 720), "Takeaway: the project now finishes on one clean task definition: continuous scheduling with reliable forecasts, using one representative artifact run and one five-seed stability run.", FONT_BODY, INK, max_width=1290)
     return img
 
 
@@ -514,11 +512,11 @@ def slide_14():
     img, d = _new_slide()
     _top_band(d, "What is simplified, and what comes next", "Next steps", "14")
     steps = [
-        ("1. Keep v3", "Use transit-rebalanced v3 as the working continuous baseline."),
-        ("2. Use the benchmark", "Use single_mission + ground_truth as the controlled validation benchmark."),
-        ("3. Compare across seeds", "Run short multi-seed comparisons in both settings."),
-        ("4. Reintroduce uncertainty", "Bring back imperfect forecasting after validating control behavior."),
-        ("5. Decide on realism", "Then decide whether to move to real ports and nautical distances."),
+        ("1. Run the artifact seed", "Generate the final figures, traces, report, and saved model from seed 42."),
+        ("2. Run five seeds", "Use the same continuous + ground_truth setting for the final stability claim."),
+        ("3. Write the result", "Use the artifact run for examples and the multi-seed run for the main numbers."),
+        ("4. Keep scope honest", "Frame the result as control quality under reliable forecasts."),
+        ("5. Future work", "Reintroduce imperfect forecasts and real-port geography afterward."),
     ]
     xs = [70, 380, 690, 1000, 1310]
     widths = [280, 280, 280, 280, 220]
@@ -527,13 +525,12 @@ def slide_14():
         _rr(d, (x, 245, x + w, 585), fill)
         _text(d, (x + 18, 270), title, FONT_H3, NAVY)
         _text(d, (x + 18, 335), text, FONT_BODY_SM, INK, max_width=w - 36)
-    _text(d, (800, 700), "The short-term goal is not to replace the continuous environment, but to validate the control logic under cleaner conditions.", FONT_BODY, MUTED, anchor="ma")
+    _text(d, (800, 700), "This finish line is intentionally narrow: complete the project cleanly on the continuous environment, then expand realism afterward.", FONT_BODY, MUTED, anchor="ma")
     return img
 
 
 def build_pdf() -> Path:
     v3 = _read_v3_metrics()
-    rows = _read_benchmark_rows()
     slides = [
         slide_1(),
         slide_2(),
@@ -547,7 +544,7 @@ def build_pdf() -> Path:
         slide_10(),
         slide_11(),
         slide_12(v3),
-        slide_13(rows),
+        slide_13(),
         slide_14(),
     ]
     slides[0].save(OUT, "PDF", resolution=150.0, save_all=True, append_images=slides[1:])

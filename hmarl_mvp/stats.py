@@ -304,6 +304,13 @@ def _t_cdf_two_sided(t_abs: float, df: float) -> float:
 
     # Normal approximation: for df>30 this is very close; for smaller df
     # it underestimates p-values (anti-conservative — more likely to reject H0).
+    import warnings
     from math import erfc, sqrt
 
+    if df < 30:
+        warnings.warn(
+            f"Using normal approximation for t-distribution with df={df:.1f}. "
+            f"Install scipy for exact p-values (important when df < 30).",
+            stacklevel=2,
+        )
     return float(erfc(t_abs / sqrt(2)))

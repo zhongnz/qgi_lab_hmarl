@@ -84,7 +84,7 @@ class ActorCriticTests(unittest.TestCase):
         ac = ActorCritic(obs_dim=8, global_state_dim=20, act_dim=2, discrete=False)
         obs = torch.randn(3, 8)
         gs = torch.randn(3, 20)
-        action, log_prob, value = ac.get_action_and_value(obs, gs)
+        action, log_prob, value, _ = ac.get_action_and_value(obs, gs)
         self.assertEqual(action.shape, (3, 2))
         self.assertEqual(log_prob.shape, (3,))
         self.assertEqual(value.shape, (3,))
@@ -93,7 +93,7 @@ class ActorCriticTests(unittest.TestCase):
         ac = ActorCritic(obs_dim=8, global_state_dim=20, act_dim=5, discrete=True)
         obs = torch.randn(3, 8)
         gs = torch.randn(3, 20)
-        action, log_prob, value = ac.get_action_and_value(obs, gs)
+        action, log_prob, value, _ = ac.get_action_and_value(obs, gs)
         self.assertEqual(action.shape, (3,))
         self.assertEqual(log_prob.shape, (3,))
         self.assertEqual(value.shape, (3,))
@@ -112,11 +112,12 @@ class ActorCriticTests(unittest.TestCase):
 class FactoryTests(unittest.TestCase):
     def test_obs_dim_from_env(self) -> None:
         cfg = get_default_config(
-            num_ports=5, num_vessels=8, short_horizon_hours=12, medium_horizon_days=5
+            num_ports=5, num_vessels=8, short_horizon_hours=12, medium_horizon_days=5,
+            weather_enabled=False,
         )
         dims = obs_dim_from_env(cfg)
-        self.assertEqual(dims["vessel"], 8 + 12 + 3)
-        self.assertEqual(dims["port"], 5 + 12 + 1)  # local + forecast + incoming
+        self.assertEqual(dims["vessel"], 12 + 12 + 3)  # 12 = 11 local + vessel_id
+        self.assertEqual(dims["port"], 6 + 12 + 1)  # local + forecast + incoming
         self.assertEqual(dims["coordinator"], 5 * 5 + 5 * 5 + 8 * 7 + 1)
 
     def test_obs_dim_from_env_with_weather(self) -> None:
@@ -128,8 +129,8 @@ class FactoryTests(unittest.TestCase):
             weather_enabled=True,
         )
         dims = obs_dim_from_env(cfg)
-        self.assertEqual(dims["vessel"], 8 + 12 + 3 + 1)
-        self.assertEqual(dims["port"], 5 + 12 + 1 + 3)
+        self.assertEqual(dims["vessel"], 12 + 12 + 3 + 1)  # 12 = 11 local + vessel_id
+        self.assertEqual(dims["port"], 6 + 12 + 1 + 3)
         self.assertEqual(dims["coordinator"], 5 * 5 + 5 * 5 + 8 * 7 + 1 + 5 * 5)
 
     def test_build_actor_critics(self) -> None:
@@ -150,7 +151,7 @@ class FactoryTests(unittest.TestCase):
         # Verify they can forward pass
         obs_v = torch.randn(1, dims["vessel"])
         gs = torch.randn(1, global_dim)
-        action, lp, val = ac_dict["vessel"].get_action_and_value(obs_v, gs)
+        action, lp, val, _ = ac_dict["vessel"].get_action_and_value(obs_v, gs)
         self.assertEqual(action.shape[0], 1)
 
 

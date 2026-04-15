@@ -50,10 +50,10 @@ def update_weather_ar1(
     autocorrelation = float(np.clip(autocorrelation, 0.0, 1.0))
     noise = generate_weather(prev.shape[0], rng, sea_state_max)
     updated = autocorrelation * prev + (1.0 - autocorrelation) * noise
-    updated = np.clip(updated, 0.0, sea_state_max)
-    # Re-symmetrise and zero diagonal
+    # Symmetrise before clipping to avoid asymmetry artifacts from clipping.
     updated = (updated + updated.T) / 2.0
     np.fill_diagonal(updated, 0.0)
+    updated = np.clip(updated, 0.0, sea_state_max)
     return updated
 
 
@@ -96,10 +96,15 @@ def compute_fuel_and_emissions(
     fuel consumption is multiplied by ``1 + penalty_factor * sea_state``
     to model increased resistance in rough seas.
     """
+    speed = max(float(speed), 0.0)
+    hours = max(float(hours), 0.0)
+    sea_state = max(float(sea_state), 0.0)
     penalty = float(config.get("weather_penalty_factor", 0.15))
     multiplier = weather_fuel_multiplier(sea_state, penalty)
     fuel = config["fuel_rate_coeff"] * (speed**3) * hours * multiplier
     co2 = fuel * config["emission_factor"]
+    if not (np.isfinite(fuel) and np.isfinite(co2)):
+        return 0.0, 0.0
     return fuel, co2
 
 
@@ -234,6 +239,11 @@ def step_vessels(
                 stall_hours = max(float(dt_hours) - travel_hours, 0.0)
 
         stalled = bool(vessel.stalled)
+        # Final NaN/Inf guard: ensure step stats are always finite
+        fuel_used = fuel_used if np.isfinite(fuel_used) else 0.0
+        co2 = co2 if np.isfinite(co2) else 0.0
+        travel_hours = travel_hours if np.isfinite(travel_hours) else 0.0
+        stall_hours = stall_hours if np.isfinite(stall_hours) else 0.0
         step_stats[vessel.vessel_id] = {
             "fuel_used": float(fuel_used),
             "co2_emitted": float(co2),

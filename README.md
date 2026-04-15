@@ -27,9 +27,9 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── env.py          # Gym-style multi-agent environment
 │   ├── rewards.py      # Reward functions for all agent types
 │   ├── metrics.py      # Operational, forecast, and economic metrics
-│   ├── forecasts.py    # Medium-term, short-term, oracle forecasters
+│   ├── forecasts.py    # Medium-term, short-term, noiseless forecasters
 │   ├── message_bus.py  # Asynchronous inter-agent message queues
-│   ├── policies.py     # Heuristic policy baselines (independent/reactive/forecast/oracle)
+│   ├── policies.py     # Heuristic policy baselines (independent/reactive/forecast/noiseless)
 │   ├── networks.py     # Actor-critic neural networks (MAPPO/CTDE)
 │   ├── buffer.py       # Rollout buffer for on-policy RL training
 │   ├── mappo.py        # MAPPO trainer (PPO + CTDE multi-agent training)
@@ -47,14 +47,16 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── baseline.yaml         # Standard MAPPO baseline experiment
 │   ├── multi_seed.yaml       # 5-seed statistical evaluation
 │   ├── weather_curriculum.yaml # Weather curriculum progressive training
-│   └── no_sharing_ablation.yaml # Per-agent (no sharing) ablation
+│   ├── no_sharing_ablation.yaml # Per-agent (no sharing) ablation
+│   └── production.yaml       # Full-scale production run (PBT-tuned + all arch improvements)
 ├── scripts/
 │   ├── run_baselines.py      # CLI: run heuristic baseline experiments
 │   ├── run_experiment.py     # CLI: run experiments from YAML configs
 │   ├── run_mappo.py          # CLI: MAPPO compare / sweep / ablate / train
 │   ├── train_forecaster.py   # CLI: train the learned forecaster
-│   └── generate_paper_figures.py  # CLI: generate publication-ready figures
-├── tests/                    # 644 tests (pytest)
+│   ├── generate_paper_figures.py  # CLI: generate publication-ready figures
+│   └── run_production.py     # CLI: full-scale production run (5 seeds × 500 iters)
+├── tests/                    # 853 tests (pytest)
 │   ├── test_smoke.py
 │   ├── test_components.py
 │   ├── test_config_schema.py
@@ -69,6 +71,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_mappo_advanced.py
 │   ├── test_action_masking.py
 │   ├── test_scenarios.py
+│   ├── test_run_demo.py
 │   ├── test_learned_forecaster.py
 │   ├── test_learned_forecast_integration.py
 │   ├── test_training_infra.py
@@ -77,6 +80,7 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_new_modules.py
 │   ├── test_sweep_ablation.py
 │   ├── test_report_plotting.py
+│   ├── test_research_robustness.py
 │   ├── test_plotting.py
 │   ├── test_eval_metrics.py
 │   ├── test_proposal_alignment.py
@@ -89,6 +93,9 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   ├── test_experiment_config.py
 │   ├── test_stats.py
 │   ├── test_parameter_sharing.py
+│   ├── test_visualization.py
+│   ├── test_improvements.py
+│   ├── test_pbt.py
 │   └── test_generate_paper_figures.py
 ├── .github/workflows/ci.yml
 ├── Makefile
@@ -105,6 +112,8 @@ The codebase now follows a module-first layout. The notebook remains for explora
 │   └── templates/
 └── colab_mvp_hmarl_maritime.ipynb
 ```
+
+A full-experiment Colab notebook (`colab_full_experiment_hmarl_maritime.ipynb`) is also provided for GPU-accelerated training.
 
 ## Documentation
 
@@ -205,8 +214,22 @@ python scripts/run_experiment.py configs/baseline.yaml --smoke
 
 Experiment configs specify environment, MAPPO hyper-parameters, curriculum
 stages, seed counts, and output paths in a single reproducible YAML file.
+The shipped YAML configs now target the current 8-vessel / 5-port simulator
+scale with `rollout_steps: 69` and `rollout_length: 64`.
 
-### 7) Run MAPPO comparison vs baselines
+### 7) Run full-scale production experiment
+
+```bash
+cd qgi_lab_hmarl
+python scripts/run_production.py
+```
+
+Runs 5 seeds × 500 iterations with PBT-tuned hyperparameters and all three
+architectural improvements (attention coordinator, encoded critic, recurrent
+vessels). Generates Figures 15–16 and a comprehensive summary JSON.
+Best result: **−15.52** (seed 63), mean last-20: **−22.47 ± 2.35**.
+
+### 8) Run MAPPO comparison vs baselines
 
 ```python
 from hmarl_mvp.experiment import run_mappo_comparison
@@ -214,7 +237,7 @@ results = run_mappo_comparison(train_iterations=50, rollout_length=64, eval_step
 # results contains per-policy DataFrames + training log
 ```
 
-### 8) Use notebook for analysis
+### 9) Use notebook for analysis
 
 Use `colab_mvp_hmarl_maritime.ipynb` for presentation and visual inspection. Prefer module imports for any new logic.
 
@@ -228,10 +251,10 @@ Project config is now validated through a typed schema (`HMARLConfig`) in
 
 ## Research Questions
 
-1. RQ1: How can heterogeneous agents coordinate using shared congestion forecasts?
-2. RQ2: Does proactive coordination with forecasts improve over independent/reactive baselines?
-3. RQ3: Which forecast horizons and sharing strategies maximize decision quality?
-4. RQ4: How do coordination improvements affect economics (price/reliability)?
+1. **RQ1 (Coordination effectiveness)**: Can hierarchical MARL with shared congestion forecasts learn vessel-scheduling policies that reduce system-wide operational costs relative to rule-based heuristic coordination?
+2. **RQ2 (Value of predictive information)**: To what extent does forecast quality affect coordination performance, and how does forecast-induced herding limit the benefit of better predictions?
+3. **RQ3 (Parameter sharing)**: Does sharing actor-critic parameters across homogeneous agents improve sample efficiency and asymptotic performance compared to per-agent networks?
+4. **RQ4 (Economic implications)**: What are the operational cost differentials (fuel, delay penalties, carbon cost) between MAPPO-trained and heuristic scheduling policies?
 
 ## Timeline
 

@@ -99,7 +99,7 @@ class TestActorCriticMasking:
         # Only action 3 is valid
         mask = torch.tensor([[False, False, False, True, False]])
         for _ in range(20):
-            a, lp, v = ac.get_action_and_value(obs, gs, action_mask=mask)
+            a, lp, v, _ = ac.get_action_and_value(obs, gs, action_mask=mask)
             assert a.item() == 3
 
     def test_discrete_ac_evaluate_with_mask(self) -> None:
@@ -120,7 +120,7 @@ class TestActorCriticMasking:
         gs = torch.randn(1, 8)
         mask = torch.ones(1, 1, dtype=torch.bool)
         # Should not raise
-        a, lp, v = ac.get_action_and_value(obs, gs, action_mask=mask)
+        a, lp, v, _ = ac.get_action_and_value(obs, gs, action_mask=mask)
         assert torch.isfinite(a).all()
 
 

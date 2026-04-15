@@ -1,0 +1,61 @@
+# Communication latency sweep — vary message_latency_steps from 0 to 6.
+# Tests robustness of async coordination under increasing delay.
+# Usage: python scripts/run_experiment.py configs/latency_sweep.yaml
+#
+# The message bus delays coordinator directives by N steps. Higher latency
+# means vessels act on staler information, testing whether the learned
+# policies degrade gracefully or catastrophically.
+
+name: latency_sweep
+description: >-
+  Sweep message_latency_steps from 0 (instant) to 6 (half a coordinator
+  interval) to test coordination robustness under communication delay.
+tags:
+  - sweep
+  - latency
+  - communication
+
+env:
+  num_vessels: 8
+  num_ports: 5
+  docks_per_port: 2
+  rollout_steps: 138
+  episode_mode: continuous
+  forecast_source: ground_truth
+  weather_enabled: true
+  weather_autocorrelation: 0.7
+
+mappo:
+  lr: 0.0003
+  rollout_length: 128
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  vessel_hidden_dims: [128, 128]
+  normalize_observations: true
+  normalize_rewards: true
+  entropy_coeff: 0.08
+  entropy_coeff_end: 0.01
+  max_grad_norm: 0.5
+  max_grad_norm_start: 5.0
+  grad_norm_warmup_fraction: 0.1
+  coordinator_use_attention: true
+  use_encoded_critic: true
+  vessel_use_recurrence: true
+
+# Sweep definition
+sweep:
+  parameter: env.message_latency_steps
+  values: [0, 1, 2, 3, 4, 6]
+
+num_iterations: 150
+num_seeds: 3
+seeds: [42, 49, 56]
+eval_interval: 15
+output_dir: runs/latency_sweep
+tensorboard: false
+console_log: true
+log_every: 10

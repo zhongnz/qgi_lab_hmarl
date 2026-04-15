@@ -102,6 +102,7 @@ class ModelCorrectnessTests(unittest.TestCase):
             emission_weight=0.0,
             transit_time_weight=5.0,
             dt_hours=1.0,
+            weather_enabled=False,
         )
         env = MaritimeEnv(config=cfg, seed=42)
         env.reset()
@@ -224,6 +225,7 @@ class ModelCorrectnessTests(unittest.TestCase):
             on_time_arrival_reward=0.0,
             schedule_delay_weight=4.0,
             dt_hours=1.0,
+            weather_enabled=False,
         )
         env = MaritimeEnv(
             config=cfg,
@@ -261,6 +263,7 @@ class ModelCorrectnessTests(unittest.TestCase):
             arrival_reward=0.0,
             on_time_arrival_reward=5.0,
             dt_hours=1.0,
+            weather_enabled=False,
         )
         env = MaritimeEnv(
             config=cfg,

@@ -432,7 +432,7 @@ If the coordinator is not due to act, those directive values remain unchanged.
 
 ### Heuristic coordinator rule currently used in baselines
 
-For the heuristic `forecast` / `oracle` coordinator, the emission-budget directive is:
+For the heuristic `forecast` / `noiseless` coordinator, the emission-budget directive is:
 
 `Be_star^(t) = max(50.0 - 0.1 * Etot^(t), 10.0)`
 
@@ -542,7 +542,7 @@ Important point:
 
 For the coordinator at step `t`:
 
-`Rc^(t) = -( fleet_fuel_used^(t) + avg_queue^(t) + emission_lambda * fleet_co2^(t) ) + weather_shaping_coord^(t)`
+`Rc^(t) = -( fleet_fuel_used^(t) + avg_queue^(t) + coordinator_emission_weight * fleet_co2^(t) ) + weather_shaping_coord^(t)`
 
 Important point:
 
@@ -634,7 +634,7 @@ Specifically:
 
 - `ShortTermForecaster` provides heuristic short-horizon congestion predictions
 - `MediumTermForecaster` provides heuristic medium-horizon congestion predictions
-- `OracleForecaster` is an analysis-only upper bound with privileged future knowledge
+- `NoiselessForecaster` is an analysis-only upper bound with perfect current-state knowledge (no noise)
 
 What is **not** being presented as part of the Friday results:
 
@@ -787,7 +787,7 @@ Final summary values:
   - avg queue `0.073`
   - emissions `2960`
   - total cost `$999,696`
-- oracle:
+- noiseless:
   - avg queue `0.073`
   - emissions `3184`
   - total cost `$1,029,989`

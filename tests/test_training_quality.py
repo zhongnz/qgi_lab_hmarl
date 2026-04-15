@@ -28,7 +28,7 @@ class TestSaveLoadNormalizerState(unittest.TestCase):
     def test_normalizer_state_roundtrip(self) -> None:
         """Saving and loading should produce identical eval results."""
         cfg = MAPPOConfig(rollout_length=4, normalize_observations=True)
-        env_cfg: dict[str, Any] = {"num_vessels": 2, "num_ports": 2, "rollout_steps": 10}
+        env_cfg: dict[str, Any] = {"num_vessels": 2, "num_ports": 2, "rollout_steps": 10, "weather_enabled": False}
         trainer = MAPPOTrainer(env_config=env_cfg, mappo_config=cfg, seed=42)
         trainer.collect_rollout()
         trainer.update()

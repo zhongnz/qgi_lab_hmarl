@@ -1,0 +1,59 @@
+# Flat-MAPPO baseline — heuristic coordinator, trained vessels + ports only.
+# Tests the value of learned hierarchical coordination (RQ1 ablation).
+# Usage: python scripts/run_experiment.py configs/flat_mappo.yaml
+#
+# The coordinator uses the reactive heuristic (argmin queue) while vessel
+# and port agents learn via MAPPO.  Compare total reward against the full
+# MAPPO baseline to quantify the hierarchy's contribution.
+
+name: flat_mappo
+description: >-
+  Flat MAPPO with heuristic coordinator — isolates the value of learned
+  hierarchical coordination vs. reactive rule-based routing.
+tags:
+  - ablation
+  - flat
+  - heuristic-coordinator
+
+env:
+  num_vessels: 8
+  num_ports: 5
+  docks_per_port: 2
+  rollout_steps: 138
+  episode_mode: continuous
+  forecast_source: ground_truth
+  weather_enabled: true
+  weather_autocorrelation: 0.7
+
+mappo:
+  lr: 0.0003
+  rollout_length: 128
+  num_epochs: 4
+  minibatch_size: 128
+  clip_eps: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  hidden_dims: [64, 64]
+  vessel_hidden_dims: [128, 128]
+  normalize_observations: true
+  normalize_rewards: true
+  entropy_coeff: 0.08
+  entropy_coeff_end: 0.01
+  max_grad_norm: 0.5
+  max_grad_norm_start: 5.0
+  grad_norm_warmup_fraction: 0.1
+  coordinator_use_attention: false   # not used — coordinator is heuristic
+  use_encoded_critic: true
+  vessel_use_recurrence: true
+
+# Training uses heuristic coordinator during rollout collection
+heuristic_coordinator: true
+
+num_iterations: 200
+num_seeds: 3
+seeds: [42, 49, 56]
+eval_interval: 20
+output_dir: runs/flat_mappo
+tensorboard: false
+console_log: true
+log_every: 10

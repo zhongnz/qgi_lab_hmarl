@@ -14,7 +14,7 @@ from hmarl_mvp.config import DecisionCadence, get_default_config, should_update
 from hmarl_mvp.forecasts import (
     GroundTruthForecaster,
     MediumTermForecaster,
-    OracleForecaster,
+    NoiselessForecaster,
     ShortTermForecaster,
 )
 from hmarl_mvp.policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
@@ -70,7 +70,7 @@ class AgentInterfaceTests(unittest.TestCase):
             short_forecast_row=np.ones(cfg["short_horizon_hours"]),
             directive={"dest_port": 2, "departure_window_hours": 12, "emission_budget": 42.0},
         )
-        self.assertEqual(len(obs), 8 + cfg["short_horizon_hours"] + 3)
+        self.assertEqual(len(obs), 12 + cfg["short_horizon_hours"] + 3)  # 12 = 11 local + vessel_id
 
         action = vessel.apply_action({"target_speed": 100.0, "request_arrival_slot": True})
         self.assertEqual(action["target_speed"], cfg["speed_max"])
@@ -113,12 +113,12 @@ class AgentInterfaceTests(unittest.TestCase):
         self.assertEqual(medium.shape, (cfg["num_ports"], cfg["medium_horizon_days"]))
         self.assertEqual(short.shape, (cfg["num_ports"], cfg["short_horizon_hours"]))
 
-        oracle_medium, oracle_short = OracleForecaster(
+        noiseless_medium, noiseless_short = NoiselessForecaster(
             medium_horizon_days=cfg["medium_horizon_days"],
             short_horizon_hours=cfg["short_horizon_hours"],
         ).predict(ports)
-        self.assertEqual(oracle_medium.shape, medium.shape)
-        self.assertEqual(oracle_short.shape, short.shape)
+        self.assertEqual(noiseless_medium.shape, medium.shape)
+        self.assertEqual(noiseless_short.shape, short.shape)
 
     def test_ground_truth_forecaster_projects_committed_arrivals(self) -> None:
         cfg = get_default_config(
@@ -151,7 +151,7 @@ class AgentInterfaceTests(unittest.TestCase):
             )
         ]
 
-        oracle_medium, oracle_short = OracleForecaster(
+        noiseless_medium, noiseless_short = NoiselessForecaster(
             medium_horizon_days=cfg["medium_horizon_days"],
             short_horizon_hours=cfg["short_horizon_hours"],
         ).predict(ports)
@@ -162,9 +162,9 @@ class AgentInterfaceTests(unittest.TestCase):
             distance_nm=distance_nm,
         ).predict(ports, vessels, current_step=0)
 
-        self.assertEqual(gt_medium.shape, oracle_medium.shape)
-        self.assertEqual(gt_short.shape, oracle_short.shape)
-        self.assertEqual(float(oracle_short[1, 0]), 0.0)
+        self.assertEqual(gt_medium.shape, noiseless_medium.shape)
+        self.assertEqual(gt_short.shape, noiseless_short.shape)
+        self.assertEqual(float(noiseless_short[1, 0]), 0.0)
         self.assertEqual(float(gt_short[1, 0]), 1.0)
 
 

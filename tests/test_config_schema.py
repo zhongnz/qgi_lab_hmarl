@@ -16,7 +16,7 @@ class ConfigSchemaTests(unittest.TestCase):
     def test_default_schema_round_trip(self) -> None:
         cfg = HMARLConfig().to_dict()
         self.assertEqual(cfg["num_ports"], 5)
-        self.assertEqual(cfg["rollout_steps"], 20)
+        self.assertEqual(cfg["rollout_steps"], 138)
 
     def test_get_default_config_with_valid_overrides(self) -> None:
         cfg = get_default_config(
@@ -50,7 +50,7 @@ class ConfigSchemaTests(unittest.TestCase):
         cfg = get_default_config(episode_mode="single_mission", mission_success_on="arrival")
         self.assertEqual(cfg["episode_mode"], "single_mission")
         self.assertEqual(cfg["mission_success_on"], "arrival")
-        self.assertEqual(cfg["forecast_source"], "heuristic")
+        self.assertEqual(cfg["forecast_source"], "ground_truth")
 
     def test_ground_truth_forecast_source_validates(self) -> None:
         cfg = get_default_config(forecast_source="ground_truth")

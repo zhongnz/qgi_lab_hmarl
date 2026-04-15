@@ -23,7 +23,6 @@ RUNS = ROOT / "runs"
 OUT = REPORTS / "2026-03-31_hmarl_project_update_google_slides_import.pptx"
 
 V3_RUN = RUNS / "local_full_train_2026-03-11_transit_rebalanced_v3"
-BENCHMARK_CSV = RUNS / "single_mission_ground_truth_benchmark_2026-03-31.csv"
 EVAL_TRACE_CSV = V3_RUN / "eval_trace.csv"
 ROLE_DIAG_IMG = REPORTS / "2026-03-31_role_reward_diagnostics.png"
 
@@ -149,11 +148,6 @@ def _read_v3_metrics() -> dict[str, float]:
     }
 
 
-def _read_benchmark_rows() -> list[dict[str, str]]:
-    with BENCHMARK_CSV.open() as fh:
-        return list(csv.DictReader(fh))
-
-
 def _ensure_role_reward_plot() -> Path:
     if ROLE_DIAG_IMG.exists() and ROLE_DIAG_IMG.stat().st_mtime >= EVAL_TRACE_CSV.stat().st_mtime:
         return ROLE_DIAG_IMG
@@ -214,7 +208,7 @@ def _title_slide(prs: Presentation) -> None:
         2.55,
         7.5,
         0.75,
-        "Project update: simulator background, reward redesign, controlled validation benchmark, current progress, and next steps.",
+        "Project update: simulator background, reward redesign, continuous + ground_truth final run path, current progress, and next steps.",
         font_size=16,
         color=MUTED,
     )
@@ -227,7 +221,7 @@ def _title_slide(prs: Presentation) -> None:
         3.8,
         7.15,
         0.8,
-        "We now have both a strong continuous baseline and a controlled benchmark for validating the core control logic before reintroducing forecast uncertainty.",
+        "We now have a clean final path for the project: continuous scheduling, reliable forecasts, strong diagnostics, and a reproducible local run plan.",
         font_size=17,
         color=PAPER,
     )
@@ -237,10 +231,10 @@ def _title_slide(prs: Presentation) -> None:
     _add_textbox(slide, 9.3, 1.84, 2.55, 0.42, "Supervisor:\nProf. Amine Aboussalah", font_size=13, color=INK)
 
     _add_textbox(slide, 9.7, 3.68, 2.0, 0.14, "MARCH 31 UPDATE", font_size=9, color=MUTED, bold=True)
-    _add_textbox(slide, 9.7, 4.0, 2.0, 0.25, "Baseline:\nv3 + GT benchmark", font_size=13, color=NAVY, bold=True)
+    _add_textbox(slide, 9.7, 4.0, 2.0, 0.25, "Final path:\ncontinuous + GT", font_size=13, color=NAVY, bold=True)
 
     _add_metric_card(slide, 0.75, 5.55, 3.1, 1.35, "Research focus", "HMARL", "Coordinator, vessel, and port agents")
-    _add_metric_card(slide, 4.05, 5.55, 3.35, 1.35, "Current setup", "v3 + GT", "Operating baseline plus validation benchmark")
+    _add_metric_card(slide, 4.05, 5.55, 3.35, 1.35, "Current setup", "Cont. + GT", "Continuous environment with reliable forecasts")
     _add_metric_card(slide, 7.65, 5.55, 2.95, 1.35, "Format", "12 slides", "Presentation-ready update deck")
 
 
@@ -392,15 +386,15 @@ def _experiment_slide(prs: Presentation) -> None:
         font_size=17,
     )
 
-    _add_card(slide, 6.8, 1.45, 5.85, 2.75, fill=ORANGE_SOFT, title="Controlled validation benchmark")
+    _add_card(slide, 6.8, 1.45, 5.85, 2.75, fill=ORANGE_SOFT, title="Final completion path")
     right_top = _add_textbox(slide, 7.1, 1.95, 5.2, 1.8, "", font_size=1)
     _add_bullets(
         right_top,
         [
-            "single_mission episodes",
+            "continuous episodes",
             "ground_truth forecasts",
-            "Each vessel completes at most one trip per episode",
-            "Used to validate control logic before reintroducing forecast error",
+            "one artifact run plus one five-seed run",
+            "designed to isolate control quality while finishing the project",
         ],
         font_size=15,
     )
@@ -412,7 +406,7 @@ def _experiment_slide(prs: Presentation) -> None:
         [
             "On-time rate",
             "Completed arrivals",
-            "Vessels served",
+            "Port service events",
             "Dock utilization",
             "Total operating cost",
         ],
@@ -575,7 +569,7 @@ def _changes_slide(prs: Presentation) -> None:
         ("Fuel and stalling", "Fuel exhaustion now causes true mid-route stalling.\nDepartures are checked for fuel feasibility."),
         ("Port service realism", "Ports track actual vessel IDs.\nRefueling happens after real service completion."),
         ("Reward redesign", "Rewards moved from mostly aggregate penalties to event-driven, role-specific signals."),
-        ("Validation variants", "Added single_mission and ground_truth as controlled debugging modes."),
+        ("Final run cleanup", "Moved the finish line to continuous + ground_truth and fixed training resets to vary reproducibly."),
         ("Visibility", "Action logs, event logs, reward components, and confidence diagnostics were added."),
     ]
     positions = [(0.65, 1.45), (4.35, 1.45), (8.05, 1.45), (0.65, 4.15), (4.35, 4.15), (8.05, 4.15)]
@@ -633,7 +627,7 @@ def _baseline_slide(prs: Presentation, v3: dict[str, float]) -> None:
         ("Total reward", f"{v3['total_reward']:.2f}"),
         ("On-time rate", f"{v3['on_time_rate']:.3f}"),
         ("Completed arrivals", f"{v3['completed_arrivals']:.1f}"),
-        ("Vessels served", f"{v3['total_vessels_served']:.1f}"),
+        ("Port service events", f"{v3['total_vessels_served']:.1f}"),
         ("Dock utilization", f"{v3['dock_utilization']:.2f}"),
         ("Ops cost", f"${v3['total_ops_cost_usd']/1_000_000:.3f}M"),
     ]
@@ -651,32 +645,36 @@ def _baseline_slide(prs: Presentation, v3: dict[str, float]) -> None:
         _add_card(slide, 5.75, 1.55, 6.7, 5.75, fill=RGBColor(245, 242, 236), title="Missing training curves image")
 
 
-def _benchmark_slide(prs: Presentation, rows: list[dict[str, str]]) -> None:
+def _benchmark_slide(prs: Presentation) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_slide_bg(slide)
-    _add_title_band(slide, "Continuous task vs. single-mission validation benchmark", "Benchmark", "13")
-    continuous = next(row for row in rows if row["run"] == "continuous_gt")
-    single = next(row for row in rows if row["run"] == "single_mission_gt")
+    _add_title_band(slide, "Final full-scale run plan", "Run plan", "13")
     panels = [
-        ("Continuous + ground truth", continuous, 0.75, RGBColor(245, 250, 252)),
-        ("Single mission + ground truth", single, 6.7, ORANGE_SOFT),
+        ("Artifact run", 0.75, RGBColor(245, 250, 252), [
+            ("Environment", "Continuous"),
+            ("Forecast", "Ground truth"),
+            ("Iterations", "100"),
+            ("Seed", "42"),
+            ("Purpose", "Figures, traces, report, and saved model"),
+            ("Outputs", "report.md + trace CSVs + plots"),
+        ]),
+        ("Multi-seed run", 6.7, ORANGE_SOFT, [
+            ("Environment", "Continuous"),
+            ("Forecast", "Ground truth"),
+            ("Iterations", "100"),
+            ("Seeds", "42, 49, 56, 63, 70"),
+            ("Purpose", "Final quantitative stability claim"),
+            ("Outputs", "summary.csv + experiment_summary.json"),
+        ]),
     ]
-    for title, row, x, fill in panels:
+    for title, x, fill, stats in panels:
         _add_card(slide, x, 1.5, 5.85, 4.85, fill=fill, title=title)
-        stats = [
-            ("Eval total reward", f"{float(row['eval_total_reward']):.2f}"),
-            ("On-time rate", f"{float(row['eval_on_time_rate']):.3f}"),
-            ("Completed arrivals", f"{float(row['eval_completed_arrivals']):.1f}"),
-            ("Vessels served", f"{float(row['eval_total_vessels_served']):.1f}"),
-            ("Mission success", f"{float(row['eval_mission_success_rate']):.1f}"),
-            ("Trace steps", row["trace_steps"]),
-        ]
         y = 2.05
         for idx, (label, value) in enumerate(stats):
             box_fill = WHITE if idx % 2 == 0 else RGBColor(250, 248, 244)
             _add_card(slide, x + 0.22, y, 5.4, 0.54, fill=box_fill)
             _add_textbox(slide, x + 0.36, y + 0.16, 3.75, 0.14, label.upper(), font_size=9, color=MUTED, bold=True)
-            value_color = TEAL if (title.startswith("Single") and label in {"Eval total reward", "Mission success", "Trace steps"}) else NAVY
+            value_color = TEAL if title.startswith("Multi") and label in {"Seeds", "Outputs"} else NAVY
             _add_textbox(slide, x + 4.22, y + 0.14, 1.0, 0.16, value, font_size=14, color=value_color, bold=True, align=PP_ALIGN.RIGHT)
             y += 0.62
 
@@ -687,7 +685,7 @@ def _benchmark_slide(prs: Presentation, rows: list[dict[str, str]]) -> None:
         6.94,
         11.45,
         0.28,
-        "The simplified benchmark is easier to complete and gives a cleaner success signal, but the continuous setting still has higher throughput and remains the real target environment.",
+        "The project now finishes on one clean task definition: continuous scheduling with reliable forecasts, using one representative artifact run and one five-seed stability run.",
         font_size=15,
         color=INK,
     )
@@ -699,11 +697,11 @@ def _next_steps_slide(prs: Presentation) -> None:
     _add_title_band(slide, "What is simplified, and what comes next", "Next steps", "14")
 
     steps = [
-        ("1. Keep v3", "Use transit-rebalanced v3 as the working continuous baseline."),
-        ("2. Use the benchmark", "Use single_mission + ground_truth as the controlled validation benchmark."),
-        ("3. Compare across seeds", "Run short multi-seed comparisons in both settings."),
-        ("4. Reintroduce uncertainty", "Bring back imperfect forecasting after validating control behavior."),
-        ("5. Decide on realism", "Then decide whether to move to real ports and nautical distances."),
+        ("1. Run the artifact seed", "Generate the final figures, traces, report, and saved model from seed 42."),
+        ("2. Run five seeds", "Use the same continuous + ground_truth setting for the final stability claim."),
+        ("3. Write the result", "Use the artifact run for examples and the multi-seed run for the main numbers."),
+        ("4. Keep scope honest", "Frame the result as control quality under reliable forecasts."),
+        ("5. Future work", "Reintroduce imperfect forecasts and real-port geography afterward."),
     ]
     x = 0.75
     widths = [2.3, 2.3, 2.3, 2.3, 2.3]
@@ -712,7 +710,7 @@ def _next_steps_slide(prs: Presentation) -> None:
         _add_card(slide, x, 2.0, w, 3.0, fill=fill, title=title)
         _add_textbox(slide, x + 0.18, 2.6, w - 0.35, 1.7, text, font_size=14, color=INK)
         x += w + 0.18
-    _add_textbox(slide, 0.95, 5.65, 11.4, 0.5, "The short-term goal is not to replace the continuous environment, but to validate the control logic under cleaner conditions.", font_size=15, color=MUTED, align=PP_ALIGN.CENTER)
+    _add_textbox(slide, 0.95, 5.65, 11.4, 0.5, "This finish line is intentionally narrow: complete the project cleanly on the continuous environment, then expand realism afterward.", font_size=15, color=MUTED, align=PP_ALIGN.CENTER)
 
 
 def build_presentation() -> Path:
@@ -721,8 +719,6 @@ def build_presentation() -> Path:
     prs.slide_height = SLIDE_H
 
     v3 = _read_v3_metrics()
-    benchmark_rows = _read_benchmark_rows()
-
     _title_slide(prs)
     _context_slide(prs)
     _rq_slide(prs)
@@ -735,7 +731,7 @@ def build_presentation() -> Path:
     _changes_slide(prs)
     _diagnostics_slide(prs)
     _baseline_slide(prs, v3)
-    _benchmark_slide(prs, benchmark_rows)
+    _benchmark_slide(prs)
     _next_steps_slide(prs)
 
     prs.save(OUT)

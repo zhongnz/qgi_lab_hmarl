@@ -8,7 +8,7 @@ import numpy as np
 
 from hmarl_mvp.config import get_default_config
 from hmarl_mvp.experiment import run_mappo_ablation, run_mappo_hyperparam_sweep
-from hmarl_mvp.forecasts import MediumTermForecaster, OracleForecaster, ShortTermForecaster
+from hmarl_mvp.forecasts import MediumTermForecaster, NoiselessForecaster, ShortTermForecaster
 from hmarl_mvp.policies import FleetCoordinatorPolicy, PortPolicy, VesselPolicy
 from hmarl_mvp.state import PortState, VesselState, make_rng
 
@@ -434,37 +434,37 @@ class ShortTermForecasterTests(unittest.TestCase):
             self.assertEqual(result.shape, (5, h))
 
 
-class OracleForecasterTests(unittest.TestCase):
-    """Tests for OracleForecaster."""
+class NoiselessForecasterTests(unittest.TestCase):
+    """Tests for NoiselessForecaster."""
 
     def setUp(self) -> None:
         self.ports = [PortState(port_id=i, queue=i * 3, docks=3, occupied=0)
                       for i in range(4)]
 
     def test_output_shapes(self) -> None:
-        f = OracleForecaster(medium_horizon_days=7, short_horizon_hours=12)
+        f = NoiselessForecaster(medium_horizon_days=7, short_horizon_hours=12)
         medium, short = f.predict(self.ports)
         self.assertEqual(medium.shape, (4, 7))
         self.assertEqual(short.shape, (4, 12))
 
-    def test_oracle_repeats_current_queue(self) -> None:
-        """Oracle forecast is a constant repeat of current queue."""
-        f = OracleForecaster(medium_horizon_days=5, short_horizon_hours=6)
+    def test_noiseless_repeats_current_queue(self) -> None:
+        """Noiseless forecast is a constant repeat of current queue."""
+        f = NoiselessForecaster(medium_horizon_days=5, short_horizon_hours=6)
         medium, short = f.predict(self.ports)
         for i, p in enumerate(self.ports):
             np.testing.assert_array_equal(medium[i], p.queue)
             np.testing.assert_array_equal(short[i], p.queue)
 
     def test_no_rng_required(self) -> None:
-        """Oracle does not need an rng argument."""
-        f = OracleForecaster(medium_horizon_days=7, short_horizon_hours=12)
+        """Noiseless forecaster does not need an rng argument."""
+        f = NoiselessForecaster(medium_horizon_days=7, short_horizon_hours=12)
         # Should accept no rng
         medium, short = f.predict(self.ports)
         self.assertIsInstance(medium, np.ndarray)
 
     def test_different_api_from_heuristic(self) -> None:
-        """Oracle returns a tuple, unlike the other forecasters."""
-        f = OracleForecaster(medium_horizon_days=7, short_horizon_hours=12)
+        """Noiseless forecaster returns a tuple, unlike the other forecasters."""
+        f = NoiselessForecaster(medium_horizon_days=7, short_horizon_hours=12)
         result = f.predict(self.ports)
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 2)

@@ -41,7 +41,7 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
     """Direct tests for FleetCoordinatorAgent."""
 
     def setUp(self) -> None:
-        self.cfg = get_default_config(num_ports=5, num_vessels=3)
+        self.cfg = get_default_config(num_ports=5, num_vessels=3, weather_enabled=False)
         self.rng = make_rng(42)
 
     def test_state_initialises_correctly(self) -> None:
@@ -78,13 +78,17 @@ class FleetCoordinatorAgentTests(unittest.TestCase):
         start = medium.size
         np.testing.assert_allclose(obs[start : start + port_load.size], port_load)
 
-    def test_get_obs_updates_cumulative_emissions(self) -> None:
+    def test_get_obs_includes_total_emissions(self) -> None:
         agent = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
         v1 = VesselState(vessel_id=0, location=0, destination=1, emissions=3.5)
         v2 = VesselState(vessel_id=1, location=1, destination=2, emissions=1.5)
         medium = np.zeros((5, self.cfg["medium_horizon_days"]))
-        agent.get_obs(medium, [v1, v2])
-        self.assertAlmostEqual(agent.state.cumulative_emissions, 5.0)
+        obs = agent.get_obs(medium, [v1, v2])
+        num_ports = self.cfg["num_ports"]
+        port_summary_len = num_ports * 5
+        vessel_summary_len = 2 * 7  # 2 vessels * 7 features each
+        emissions_idx = medium.size + port_summary_len + vessel_summary_len
+        self.assertAlmostEqual(obs[emissions_idx], 5.0)
 
     def test_apply_action_normalises_and_updates_state(self) -> None:
         agent = FleetCoordinatorAgent(config=self.cfg, coordinator_id=0)
@@ -118,7 +122,7 @@ class PortAgentTests(unittest.TestCase):
         agent = PortAgent(state, self.cfg)
         forecast_row = np.ones(self.cfg["short_horizon_hours"])
         obs = agent.get_obs(forecast_row, incoming_requests=3)
-        expected = 5 + self.cfg["short_horizon_hours"] + 1
+        expected = 6 + self.cfg["short_horizon_hours"] + 1
         self.assertEqual(obs.shape, (expected,))
 
     def test_obs_values_are_correct(self) -> None:

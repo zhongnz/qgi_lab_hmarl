@@ -153,11 +153,11 @@ class TestStepVesselsWithWeather(unittest.TestCase):
 class TestEnvWeatherIntegration(unittest.TestCase):
     """Test weather effects in the full environment."""
 
-    def test_weather_disabled_by_default(self) -> None:
+    def test_weather_enabled_by_default(self) -> None:
         env = MaritimeEnv(config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 5})
         env.reset()
-        self.assertFalse(env._weather_enabled)
-        self.assertIsNone(env._weather)
+        self.assertTrue(env._weather_enabled)
+        self.assertIsNotNone(env._weather)
 
     def test_weather_enabled_produces_matrix(self) -> None:
         env = MaritimeEnv(
@@ -170,7 +170,7 @@ class TestEnvWeatherIntegration(unittest.TestCase):
         self.assertEqual(env._weather.shape, (3, 3))
 
     def test_weather_obs_dim_increases(self) -> None:
-        cfg_no_weather = get_default_config(num_vessels=2, num_ports=2)
+        cfg_no_weather = get_default_config(num_vessels=2, num_ports=2, weather_enabled=False)
         cfg_weather = get_default_config(num_vessels=2, num_ports=2, weather_enabled=True)
         cfg_weather_no_port = get_default_config(
             num_vessels=2,
@@ -199,7 +199,7 @@ class TestEnvWeatherIntegration(unittest.TestCase):
         self.assertGreaterEqual(info["mean_sea_state"], 0)
 
     def test_weather_vessel_obs_has_extra_dim(self) -> None:
-        env_no = MaritimeEnv(config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 5})
+        env_no = MaritimeEnv(config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 5, "weather_enabled": False})
         env_w = MaritimeEnv(
             config={"num_vessels": 2, "num_ports": 2, "rollout_steps": 5, "weather_enabled": True},
         )

@@ -12,8 +12,8 @@ This note clarifies how emissions couple agent rewards.
    Queue penalty is time-weighted (queue-length × time-step) to measure
    waiting-time accumulation per proposal §4.2.
 3. Coordinator reward:
-   `R_C^(t) = -(ΔF_total^(t) + avg_queue^(t) + lambda * ΔE_total^(t))`
-   (default lambda=2.0, amplifies CO2 signal at the strategic level)
+   `R_C^(t) = -(ΔF_total^(t) + avg_queue^(t) + coordinator_emission_weight * ΔE_total^(t))`
+   (default coordinator_emission_weight=0.2, amplifies CO2 signal at the strategic level)
 
 `ΔE_k^(t)` and `ΔE_total^(t)` are the **incremental** CO₂ emissions generated
 during the current environment step, not the cumulative state variables

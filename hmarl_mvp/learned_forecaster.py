@@ -258,8 +258,15 @@ def train_forecaster(
     lr: float = 1e-3,
     val_fraction: float = 0.1,
     verbose: bool = False,
+    early_stopping_patience: int = 10,
 ) -> TrainResult:
     """Train the forecaster MLP on a supervised dataset.
+
+    Parameters
+    ----------
+    early_stopping_patience:
+        Stop training if validation loss does not improve for this many
+        consecutive epochs.  Set to 0 to disable.
 
     Returns
     -------
@@ -285,6 +292,8 @@ def train_forecaster(
     loss_fn = nn.MSELoss()
 
     epoch_losses: list[float] = []
+    best_val_loss = float("inf")
+    patience_counter = 0
     for epoch in range(epochs):
         net.train()
         perm = np.random.default_rng(epoch).permutation(n_train)
@@ -312,6 +321,17 @@ def train_forecaster(
         if verbose and (epoch % 10 == 0 or epoch == epochs - 1):
             avg_train = epoch_train_loss / max(n_batches, 1)
             print(f"  epoch {epoch:4d}  train_loss={avg_train:.4f}  val_loss={val_loss:.4f}")
+
+        # Early stopping on validation loss
+        if val_loss < best_val_loss - 1e-6:
+            best_val_loss = val_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+        if early_stopping_patience > 0 and patience_counter >= early_stopping_patience:
+            if verbose:
+                print(f"  early stopping at epoch {epoch} (patience={early_stopping_patience})")
+            break
 
     return TrainResult(
         epoch_losses=epoch_losses,

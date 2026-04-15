@@ -61,11 +61,15 @@ from hmarl_mvp.experiment import (
     summarize_policy_results,
 )
 from hmarl_mvp.plotting import (
+    collect_episode_snapshots,
     plot_ablation_bar,
+    plot_explained_variance,
+    plot_gradient_diagnostics,
     plot_horizon_sweep,
     plot_mappo_comparison,
     plot_noise_sweep,
     plot_policy_comparison,
+    plot_reward_decomposition,
     plot_sharing_sweep,
     plot_timing_breakdown,
     plot_training_curves,
@@ -104,6 +108,8 @@ def main() -> None:
         num_vessels=8,
         docks_per_port=3,
         rollout_steps=30,
+        episode_mode="continuous",
+        forecast_source="ground_truth",
         weather_enabled=True,
         weather_autocorrelation=0.7,
         sea_state_max=3.0,
@@ -112,9 +118,9 @@ def main() -> None:
     steps = cfg["rollout_steps"]
 
     # ── 1. Heuristic baseline comparison ─────────────────────────────────
-    _banner("1/6  Heuristic baselines (4 policies × 30 steps)")
+    _banner("1/7  Heuristic baselines (4 policies × 30 steps)")
     policy_results = run_policy_sweep(
-        policies=["independent", "reactive", "forecast", "oracle"],
+        policies=["independent", "reactive", "forecast", "noiseless"],
         steps=steps, seed=seed, config=cfg,
     )
     summary = summarize_policy_results(policy_results)
@@ -126,7 +132,7 @@ def main() -> None:
     print(f"  → saved 01_policy_comparison.png  ({time.time()-t0:.1f}s elapsed)")
 
     # ── 2. Forecast ablations (horizon, noise, sharing) ──────────────────
-    _banner("2/6  Forecast ablations")
+    _banner("2/7  Forecast ablations")
     horizon_results = run_horizon_sweep(
         horizons=[6, 12, 24], steps=steps, seed=seed, config=cfg,
     )
@@ -145,7 +151,7 @@ def main() -> None:
     print(f"  → saved 02–04 sweep plots  ({time.time()-t0:.1f}s elapsed)")
 
     # ── 3. MAPPO training + comparison ───────────────────────────────────
-    _banner("3/6  MAPPO training (30 iterations × 32-step rollouts)")
+    _banner("3/7  MAPPO training (30 iterations × 32-step rollouts)")
     mappo_results = run_mappo_comparison(
         train_iterations=30,
         rollout_length=32,
@@ -178,18 +184,20 @@ def main() -> None:
     print(f"  → saved 05–06 MAPPO plots  ({time.time()-t0:.1f}s elapsed)")
 
     # ── 4. Training dashboard (reuse same training run as step 3) ────────
-    _banner("4/6  Training dashboard")
+    _banner("4/7  Training dashboard + diagnostics")
     if not train_log_df.empty:
         dashboard_history = train_log_df.to_dict("records")
         pd.DataFrame(dashboard_history).to_csv(out / "dashboard_log.csv", index=False)
         plot_training_dashboard(dashboard_history, out_path=str(out / "07_training_dashboard.png"))
         plot_timing_breakdown(dashboard_history, out_path=str(out / "08_timing_breakdown.png"))
-        print(f"  → saved 07–08 dashboard + timing  ({time.time()-t0:.1f}s elapsed)")
+        plot_gradient_diagnostics(train_log_df, out_path=str(out / "10_gradient_diagnostics.png"))
+        plot_explained_variance(train_log_df, out_path=str(out / "11_explained_variance.png"))
+        print(f"  → saved 07–08, 10–11 dashboard + diagnostics  ({time.time()-t0:.1f}s elapsed)")
     else:
-        print("  → skipped 07–08 (empty training log)")
+        print("  → skipped 07–08, 10–11 (empty training log)")
 
     # ── 5. Ablation study ────────────────────────────────────────────────
-    _banner("5/6  Ablation study (3 variants × 20 iterations)")
+    _banner("5/7  Ablation study (3 variants × 20 iterations)")
     ablation_df = run_mappo_ablation(
         ablations={
             "full_model": {},
@@ -206,8 +214,19 @@ def main() -> None:
     plot_ablation_bar(ablation_df, out_path=str(out / "09_ablation_bar.png"))
     print(f"  → saved 09_ablation_bar.png  ({time.time()-t0:.1f}s elapsed)")
 
-    # ── 6. Summary ───────────────────────────────────────────────────────
-    _banner("6/6  Done!")
+    # ── 6. Reward decomposition ──────────────────────────────────────────
+    _banner("6/7  Reward decomposition")
+    snapshots = collect_episode_snapshots(
+        policy_type="reactive", steps=steps, seed=seed, config=cfg,
+    )
+    if snapshots:
+        plot_reward_decomposition(snapshots, out_path=str(out / "12_reward_decomposition.png"))
+        print(f"  → saved 12_reward_decomposition.png  ({time.time()-t0:.1f}s elapsed)")
+    else:
+        print("  → skipped 12 (no snapshots collected)")
+
+    # ── 7. Summary ───────────────────────────────────────────────────────
+    _banner("7/7  Done!")
     elapsed = time.time() - t0
     print(f"  Total time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
     print(f"  All outputs saved to: {out.resolve()}")

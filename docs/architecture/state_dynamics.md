@@ -139,7 +139,7 @@ $$\mathbf{S}^{(t+1)} = \alpha \cdot \mathbf{S}^{(t)} + (1 - \alpha) \cdot \bolds
 
 where $\boldsymbol{\varepsilon}^{(t)} \sim U(0, s_{\max})$ (symmetric,
 zero diagonal). The coefficient $\alpha$ is the config value
-`weather_autocorrelation` (default 0.0 → i.i.d. each step; typical use: 0.7).
+`weather_autocorrelation` (default 0.7 for persistent, temporally-correlated weather).
 
 All entries are clipped to $[0, s_{\max}]$ and the matrix is re-symmetrised.
 When weather is disabled (`weather_enabled = False`) the multiplier $\mu(s) = 1$
@@ -191,7 +191,7 @@ delivered after `message_latency_steps` steps.
 
 ### Heuristic coordinator directive rule
 
-For the current heuristic `forecast` / `oracle` coordinator, the emission
+For the current heuristic `forecast` / `noiseless` coordinator, the emission
 budget is set directly from current fleet emissions:
 
 $$B_e^{\star (t)} = \max(50.0 - 0.1\,E_{\text{total}}^{(t)},\; 10.0)$$

@@ -33,7 +33,6 @@ _RAMPABLE_INT_KEYS = {
 
 # Parameters that support curriculum ramping (float-valued, ramped up)
 _RAMPABLE_FLOAT_KEYS = {
-    "emission_lambda",
     "sea_state_max",
     "weather_penalty_factor",
     "weather_shaping_weight",
