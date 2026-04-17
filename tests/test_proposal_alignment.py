@@ -38,10 +38,10 @@ class TestCadenceDefaults(unittest.TestCase):
         self.assertGreaterEqual(cfg.vessel_decision_interval_steps, 1)
         self.assertLessEqual(cfg.vessel_decision_interval_steps, 4)
 
-    def test_coordinator_cadence_default_within_proposal_range(self) -> None:
-        """Proposal says coordinator decisions every 12-24h."""
+    def test_coordinator_cadence_default_within_range(self) -> None:
+        """Coordinator cadence reduced to 4 for 3× more training samples."""
         cfg = HMARLConfig()
-        self.assertGreaterEqual(cfg.coord_decision_interval_steps, 12)
+        self.assertGreaterEqual(cfg.coord_decision_interval_steps, 1)
         self.assertLessEqual(cfg.coord_decision_interval_steps, 24)
 
 
@@ -137,11 +137,21 @@ class TestPortRewardWaitTime(unittest.TestCase):
         """With dt=1.0, queue=5 → penalty = 5*1.0 = 5.0 (not just queue count)."""
         port = PortState(port_id=0, queue=5, docks=3, occupied=1)
         cfg = get_default_config()
-        r = compute_port_reward(port, cfg)
+        # Pass rejected_requests so idle penalty fires (action-conditional gate).
+        r = compute_port_reward(port, cfg, rejected_requests=1.0)
         # wait_penalty = queue * dt_hours = 5 * 1.0 = 5.0
-        # idle = 3 - 1 = 2, idle_penalty = 0.5 * 2 = 1.0
-        expected = -(5.0 + 1.0)
+        # idle = 3 - 1 = 2, idle_penalty = dock_idle_weight(5.0) * 2 = 10.0
+        # reject_penalty = port_reject_penalty(3.0) * 1 = 3.0
+        expected = -(5.0 + 10.0 + 3.0)
         self.assertAlmostEqual(r, expected, places=5)
+
+    def test_idle_penalty_zero_without_demand(self) -> None:
+        """Idle penalty is zero when no vessels arrived (action-conditional)."""
+        port = PortState(port_id=0, queue=0, docks=3, occupied=1)
+        cfg = get_default_config()
+        r = compute_port_reward(port, cfg)
+        # wait_penalty = 0, idle_penalty = 0 (no demand), bonuses = 0
+        self.assertAlmostEqual(r, 0.0, places=5)
 
     def test_custom_dt_affects_reward(self) -> None:
         """If dt_hours is set, wait penalty scales accordingly."""

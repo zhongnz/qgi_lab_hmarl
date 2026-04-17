@@ -223,28 +223,15 @@ def _nn_to_vessel_action(
     else:
         speed = nominal_speed + speed_delta * (nominal_speed - min_speed)
 
-    horizon = (
-        int(arrival_horizon_steps)
-        if arrival_horizon_steps is not None
-        else int(config.get("rollout_steps", 20))
-    )
-    horizon = max(horizon, 1)
-
-    # Apply softplus so the zero-centred Gaussian policy starts with positive
-    # arrival offsets, activating schedule-delay rewards from the beginning.
-    # softplus(0) ≈ 0.69 → initial offset ≈ 0.69 steps (well within horizon).
-    # The policy can learn to push offsets near zero if "no deadline" is optimal.
-    arrival_offset = float(np.log1p(np.exp(arrival_raw)))  # softplus
-    if arrival_offset < 0.1:
-        requested_arrival_time = 0.0
-    else:
-        offset = max(1.0, min(arrival_offset, float(horizon)))
-        requested_arrival_time = float(current_step) + offset
-
+    # Deadline is computed by the environment from distance and speed via
+    # _resolve_requested_arrival_time() when requested_arrival_time == 0.
+    # Letting the vessel set its own deadline allowed it to game on_time_rate
+    # by choosing generous deadlines.  The second network output (arrival_raw)
+    # is kept in the action space for backward compatibility but not used.
     return {
         "target_speed": speed,
         "request_arrival_slot": True,
-        "requested_arrival_time": requested_arrival_time,
+        "requested_arrival_time": 0.0,
     }
 
 
@@ -301,41 +288,55 @@ def _nn_to_coordinator_action(
     coordinator_idx: int,
     env: MaritimeEnv,
     assignments: dict[int, list[int]],
+    *,
+    per_vessel: bool = False,
 ) -> dict[str, Any]:
-    """Convert a discrete NN output to a coordinator action dict.
+    """Convert NN output to a coordinator action dict.
 
-    **Limitation**: The coordinator's action space is a single discrete index
-    encoding (departure_window, primary_destination_port).  This is NOT true
-    per-vessel routing — the network selects one port, and a post-hoc
-    heuristic distributes vessels across ports by proximity to the selected
-    port.  The learned policy therefore controls port *preference* and
-    departure timing, not individual vessel assignments.
+    When ``per_vessel=True`` (attention actor), ``raw`` is a tensor of
+    shape ``(num_vessels,)`` where each element is a port index for the
+    corresponding vessel in ``assignments[coordinator_idx]``.
 
-    Expanding the action space to per-vessel routing (e.g., via
-    attention-based token generation) is listed as future work.
-
-    Action layout:
-    ``index = window_idx * num_ports + dest_port``.
+    When ``per_vessel=False`` (legacy discrete actor), ``raw`` is a
+    single scalar index encoding ``(departure_window, dest_port)``.
     """
-    raw_idx = int(raw.detach().cpu().view(-1)[0].item())
     local_ids = assignments.get(coordinator_idx, [])
     num_ports = env.num_ports
     window_options = _coordinator_departure_window_options(env.cfg)
-    num_windows = len(window_options)
-    total_actions = max(num_ports * num_windows, 1)
+    departure_window_hours = int(window_options[0])
 
-    action_idx = max(0, min(raw_idx, total_actions - 1))
-    window_idx = action_idx // num_ports
-    dest_port = action_idx % num_ports
-    departure_window_hours = int(window_options[window_idx])
-
-    # Build port ordering: primary first, then by ascending distance
-    distances = env.distance_nm[dest_port]
-    port_order = sorted(range(num_ports), key=lambda p: (distances[p], p))
-
-    per_vessel_dest: dict[int, int] = {}
-    for i, vid in enumerate(local_ids):
-        per_vessel_dest[vid] = port_order[i % len(port_order)] if port_order else dest_port
+    if per_vessel:
+        raw_np = raw.detach().cpu().view(-1).numpy()
+        per_vessel_dest: dict[int, int] = {}
+        for i, vid in enumerate(local_ids):
+            if i < len(raw_np):
+                port_idx = int(raw_np[i]) % num_ports
+            else:
+                port_idx = 0
+            # Safety: remap same-port assignments even if the network mask
+            # already prevents them (e.g. direct calls without masking).
+            vessel = env.vessels[vid] if vid < len(env.vessels) else None
+            if vessel is not None and not vessel.at_sea and port_idx == vessel.location:
+                port_idx = (port_idx + 1) % num_ports
+            per_vessel_dest[vid] = port_idx
+        # dest_port = mode of per-vessel assignments (for backward compat)
+        if per_vessel_dest:
+            dest_port = max(set(per_vessel_dest.values()), key=list(per_vessel_dest.values()).count)
+        else:
+            dest_port = 0
+    else:
+        raw_idx = int(raw.detach().cpu().view(-1)[0].item())
+        num_windows = len(window_options)
+        total_actions = max(num_ports * num_windows, 1)
+        action_idx = max(0, min(raw_idx, total_actions - 1))
+        window_idx = action_idx // num_ports
+        dest_port = action_idx % num_ports
+        departure_window_hours = int(window_options[window_idx])
+        distances = env.distance_nm[dest_port]
+        port_order = sorted(range(num_ports), key=lambda p: (distances[p], p))
+        per_vessel_dest = {}
+        for i, vid in enumerate(local_ids):
+            per_vessel_dest[vid] = port_order[i % len(port_order)] if port_order else dest_port
 
     total_emissions = sum(v.emissions for v in env.vessels)
     return {
@@ -358,7 +359,7 @@ class MAPPOConfig:
     # Rollout / environment
     rollout_length: int = 128
     num_epochs: int = 4
-    minibatch_size: int = 32
+    minibatch_size: int = 64
     # PPO
     clip_eps: float = 0.2
     # Value function clip radius.  The old default of 0.2 was too tight
@@ -385,14 +386,14 @@ class MAPPOConfig:
     port_max_grad_norm: float | None = None
     coordinator_max_grad_norm: float | None = 10.0
     # Optimiser — per-agent-type LR overrides (None → use global lr).
-    # The coordinator attention network benefits from a lower LR to
-    # avoid gradient instability; vessels benefit from a slightly higher
-    # LR to escape the initial near-random policy.
+    # Coordinator LR matches vessels — the attention network needs a
+    # strong learning signal to overcome sparse data (cadence=4 yields
+    # only ~128 transitions per rollout with 2 coordinators).
     lr: float = 3e-4
     lr_end: float = 2e-4
     vessel_lr: float | None = 5e-4
     port_lr: float | None = None
-    coordinator_lr: float | None = 1e-4
+    coordinator_lr: float | None = 5e-4
     weight_decay: float = 0.0
     gamma: float = 0.99
     gae_lambda: float = 0.95
@@ -400,6 +401,13 @@ class MAPPOConfig:
     target_kl: float = 0.02
     # Entropy scheduling (linear decay from entropy_coeff → entropy_coeff_end)
     entropy_coeff_end: float | None = 0.01
+    # Per-agent-type entropy coefficient overrides (None → use global).
+    # Continuous actors (vessels) benefit from lower entropy pressure since
+    # their Gaussian entropy is unbounded, unlike discrete actors which
+    # naturally cap at log(|A|).
+    vessel_entropy_coeff: float | None = 0.01
+    port_entropy_coeff: float | None = None
+    coordinator_entropy_coeff: float | None = None
     # LR warmup (fraction of total_iterations for linear warmup)
     lr_warmup_fraction: float = 0.05
     # Gradient accumulation (effective batch = minibatch_size * grad_accum_steps)
@@ -524,6 +532,13 @@ class MAPPOTrainer:
         for ac in self.actor_critics.values():
             ac.to(self.device)
 
+        # Per-vessel action heads are used when the attention coordinator is active
+        # AND parameter sharing is enabled (per-agent mode uses DiscreteActor).
+        self._use_per_vessel_coordinator = bool(
+            self.mappo_cfg.coordinator_use_attention
+            and self.mappo_cfg.parameter_sharing
+        )
+
         # Optimisers (one per agent type, with per-type LR overrides)
         _lr_overrides = {
             "vessel": self.mappo_cfg.vessel_lr,
@@ -622,12 +637,13 @@ class MAPPOTrainer:
 
     @property
     def current_entropy_coeff(self) -> float:
-        """Return the current entropy coefficient after linear decay.
+        """Return the current *global* entropy coefficient after linear decay.
 
-        If ``entropy_coeff_end`` is *None* (default) the entropy
-        coefficient stays constant.  Otherwise it linearly decays
-        from ``entropy_coeff`` to ``entropy_coeff_end`` over
-        ``total_iterations``.
+        If ``entropy_coeff_end`` is *None* the entropy coefficient stays
+        constant.  Otherwise it linearly decays from ``entropy_coeff``
+        to ``entropy_coeff_end`` over ``total_iterations``.
+
+        For per-agent coefficients use :meth:`get_entropy_coeff`.
         """
         cfg = self.mappo_cfg
         if cfg.entropy_coeff_end is None:
@@ -637,6 +653,21 @@ class MAPPOTrainer:
             return cfg.entropy_coeff
         frac = max(1.0 - self._iteration / total, 0.0)
         return cfg.entropy_coeff_end + frac * (cfg.entropy_coeff - cfg.entropy_coeff_end)
+
+    def get_entropy_coeff(self, agent_type: str) -> float:
+        """Return the entropy coefficient for *agent_type*.
+
+        Per-agent overrides take precedence over the global schedule.
+        """
+        cfg = self.mappo_cfg
+        override = {
+            "vessel": cfg.vessel_entropy_coeff,
+            "port": cfg.port_entropy_coeff,
+            "coordinator": cfg.coordinator_entropy_coeff,
+        }.get(agent_type)
+        if override is not None:
+            return override
+        return self.current_entropy_coeff
 
     # ------------------------------------------------------------------
     # Gradient norm scheduling
@@ -747,20 +778,13 @@ class MAPPOTrainer:
         """Build a boolean mask for the joint discrete port action space.
 
         Port actions encode ``(service_rate, accept_requests)``.
-        ``service_rate`` spans ``[0 .. docks]``. ``accept_requests`` is masked
-        to ``[0 .. min(current_backlog, docks)]`` so the policy can grant
-        advance reservations rather than being hard-capped by current
-        occupancy, while still respecting the finite discrete action space.
+        All actions are valid — the env caps ``accept_requests`` at the
+        actual backlog in Phase 4.  With intra-step delivery, requests
+        arrive and are processed within the same step, so the pre-step
+        backlog is always 0.  Masking based on pre-step backlog would
+        permanently lock the port to accept=0.
         """
-        backlog = len(self.env.bus.get_pending_requests(port_idx))
-        levels = _port_action_levels(self.cfg)
-        max_accept = min(int(backlog), levels - 1)
-        mask = np.zeros(_num_port_actions(self.cfg), dtype=np.float32)
-        for accept_requests in range(max_accept + 1):
-            start = accept_requests * levels
-            mask[start : start + levels] = 1.0
-        if mask.sum() == 0:
-            mask[:levels] = 1.0
+        mask = np.ones(_num_port_actions(self.cfg), dtype=np.float32)
         return mask
 
     def _port_mask_tensor(self, port_idx: int) -> torch.Tensor:
@@ -796,16 +820,17 @@ class MAPPOTrainer:
         return None
 
     def _build_coordinator_mask(self) -> np.ndarray:
-        """Build an action mask for coordinator composite actions.
+        """Build an action mask for coordinator actions.
 
         A port is masked out when its docks are fully occupied *and* its
-        queue already exceeds available capacity — sending more vessels
-        there would guarantee delays.
+        queue already exceeds available capacity.
 
-        The same per-port validity is replicated across all departure-window
-        bins: ``len(mask) = num_ports * num_windows``.
-        At least one action is always valid; if all ports are congested the
-        mask allows all actions.
+        For per-vessel heads: returns ``(num_vessels, num_ports)`` — each
+        vessel also has its current location masked out to prevent
+        zero-distance dispatch (which is a no-op in ``dispatch_vessel``).
+
+        For legacy single-action: returns ``(num_ports * num_windows,)``
+        with per-port validity tiled across departure-window bins.
         """
         num_ports = self.env.num_ports
         base_mask = np.ones(num_ports, dtype=np.float32)
@@ -816,15 +841,31 @@ class MAPPOTrainer:
         # Safety: ensure at least one port is valid.
         if base_mask.sum() == 0:
             base_mask[:] = 1.0
+        if self._use_per_vessel_coordinator:
+            # Per-vessel mask: exclude each vessel's current port to
+            # prevent same-port dispatch (zero-distance no-ops).
+            num_v = len(self.env.vessels)
+            pv_mask = np.tile(base_mask, (num_v, 1))  # (V, P)
+            for i, v in enumerate(self.env.vessels):
+                if not v.at_sea:
+                    pv_mask[i, v.location] = 0.0
+                # Safety: ensure at least one port is valid per vessel.
+                if pv_mask[i].sum() == 0:
+                    pv_mask[i] = base_mask.copy()
+            return pv_mask
         num_windows = len(_coordinator_departure_window_options(self.cfg))
         mask = np.tile(base_mask, max(num_windows, 1))
         return mask
 
     def _coordinator_mask_tensor(self) -> torch.Tensor:
         """Return coordinator mask as a boolean tensor on the trainer device."""
-        return torch.as_tensor(
-            self._build_coordinator_mask(), dtype=torch.bool, device=self.device
-        ).unsqueeze(0)
+        mask_np = self._build_coordinator_mask()
+        mask_t = torch.as_tensor(mask_np, dtype=torch.bool, device=self.device)
+        if mask_t.ndim == 1:
+            mask_t = mask_t.unsqueeze(0)  # (1, P) for legacy
+        else:
+            mask_t = mask_t.unsqueeze(0)  # (1, V, P) for per-vessel
+        return mask_t
 
     # ------------------------------------------------------------------
     # Buffer setup
@@ -877,15 +918,23 @@ class MAPPOTrainer:
             global_state_dim=self.global_dim,
             mask_dim=_num_port_actions(self.cfg),
         )
+        # Per-vessel action heads: act_dim = num_vessels (one port index per vessel).
+        # Mask = num_ports (same port mask applied to each vessel independently).
+        coord_act_dim = self.env.num_vessels if self._use_per_vessel_coordinator else 1
+        coord_mask_dim = (
+            self.env.num_vessels * self.env.num_ports
+            if self._use_per_vessel_coordinator
+            else self.env.num_ports * len(_coordinator_departure_window_options(self.cfg))
+        )
         self.coordinator_buf = MultiAgentRolloutBuffer(
             num_agents=self.env.num_coordinators,
             capacity=coord_capacity,
             obs_dim=self.obs_dims["coordinator"],
-            act_dim=1,  # store discrete as scalar
+            act_dim=coord_act_dim,
             gamma=g_coord,
             lam=lam,
             global_state_dim=self.global_dim,
-            mask_dim=self.env.num_ports * len(_coordinator_departure_window_options(self.cfg)),
+            mask_dim=coord_mask_dim,
         )
 
     # ------------------------------------------------------------------
@@ -948,60 +997,93 @@ class MAPPOTrainer:
 
             # --- Vessel actions (every step, cadence=1) ---
             vessel_actions_list: list[dict[str, Any]] = []
+            num_v = len(obs["vessels"])
             with torch.no_grad():
-                for i, v_obs in enumerate(obs["vessels"]):
-                    v_obs_n = self._normalize_obs(v_obs, "vessel")
-                    v_obs_t = torch.as_tensor(
-                        v_obs_n, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    v_ac = self._get_ac("vessel", i)
-                    h_in = vessel_hidden.get(i)
-                    action_t, log_prob_t, value_t, h_out = v_ac.get_action_and_value(
-                        v_obs_t, gs_tensor, hidden=h_in
+                # Batched forward pass: stack all vessel observations and
+                # hidden states into a single tensor to avoid per-agent
+                # Python/torch dispatch overhead (~17x faster on CPU).
+                v_obs_normed = [
+                    self._normalize_obs(v_obs, "vessel")
+                    for v_obs in obs["vessels"]
+                ]
+                v_obs_batch = torch.as_tensor(
+                    np.stack(v_obs_normed), dtype=torch.float32, device=self.device
+                )  # (V, obs_dim)
+                gs_v_batch = gs_tensor.expand(num_v, -1)  # (V, gs_dim)
+
+                # Build batched hidden state for recurrent vessels.
+                h_in_batch: torch.Tensor | None = None
+                if vessel_hidden:
+                    h_in_batch = torch.cat(
+                        [vessel_hidden[i] for i in range(num_v)], dim=1
+                    )  # (1, V, hidden_size)
+
+                v_ac = self._get_ac("vessel", 0)
+                actions_batch, log_probs_batch, values_batch, h_out_batch = (
+                    v_ac.get_action_and_value(
+                        v_obs_batch, gs_v_batch, hidden=h_in_batch
                     )
-                    if h_out is not None:
-                        vessel_hidden[i] = h_out
+                )  # actions: (V, act_dim), log_probs: (V,), values: (V, 1)
+
+                # Update per-vessel hidden states.
+                if h_out_batch is not None:
+                    for i in range(num_v):
+                        vessel_hidden[i] = h_out_batch[:, i : i + 1, :]
+
+                # Unbatch into per-vessel actions and buffer entries.
+                actions_cpu = actions_batch.cpu()
+                for i in range(num_v):
                     speed_cap = self._vessel_weather_speed_cap(i)
                     action_dict = _nn_to_vessel_action(
-                        action_t.squeeze(0),
+                        actions_cpu[i],
                         self.cfg,
                         speed_cap=speed_cap,
                         current_step=self.env.t,
                     )
                     vessel_actions_list.append(action_dict)
-                    # Store the input hidden state for PPO update replay.
                     h_np: np.ndarray | None = None
-                    if h_in is not None:
-                        h_np = h_in.squeeze(0).squeeze(0).cpu().numpy()
+                    if h_in_batch is not None:
+                        h_np = h_in_batch[:, i, :].squeeze(0).cpu().numpy()
                     self.vessel_buf[i].add(
-                        obs=v_obs_n,
-                        action=action_t.squeeze(0).cpu().numpy(),
-                        reward=0.0,  # filled after step
+                        obs=v_obs_normed[i],
+                        action=actions_cpu[i].numpy(),
+                        reward=0.0,
                         done=False,
-                        log_prob=log_prob_t.item(),
-                        value=value_t.item(),
+                        log_prob=log_probs_batch[i].item(),
+                        value=values_batch[i].item(),
                         global_state=gs_np,
                         hidden_state=h_np,
                     )
 
-            # --- Port actions (cadence-aware) ---
+            # --- Port actions (cadence-aware, batched) ---
             port_actions_list: list[dict[str, Any]] = []
+            num_p = len(obs["ports"])
             with torch.no_grad():
-                for i, p_obs in enumerate(obs["ports"]):
-                    p_obs_n = self._normalize_obs(p_obs, "port")
-                    p_obs_t = torch.as_tensor(
-                        p_obs_n, dtype=torch.float32, device=self.device
-                    ).unsqueeze(0)
-                    p_mask = self._port_mask_tensor(i)
-                    p_ac = self._get_ac("port", i)
-                    action_t, log_prob_t, value_t, _ = p_ac.get_action_and_value(
-                        p_obs_t, gs_tensor, action_mask=p_mask
+                p_obs_normed = [
+                    self._normalize_obs(p_obs, "port")
+                    for p_obs in obs["ports"]
+                ]
+                p_obs_batch = torch.as_tensor(
+                    np.stack(p_obs_normed), dtype=torch.float32, device=self.device
+                )  # (P, obs_dim)
+                gs_p_batch = gs_tensor.expand(num_p, -1)  # (P, gs_dim)
+                p_mask_batch = torch.stack([
+                    torch.as_tensor(
+                        self._build_port_mask(i), dtype=torch.bool, device=self.device
                     )
-                    action_dict = _nn_to_port_action(action_t.squeeze(0), i, self.env)
+                    for i in range(num_p)
+                ])  # (P, mask_dim)
+                p_ac = self._get_ac("port", 0)
+                p_actions_batch, p_log_probs_batch, p_values_batch, _ = (
+                    p_ac.get_action_and_value(
+                        p_obs_batch, gs_p_batch, action_mask=p_mask_batch
+                    )
+                )
+                p_actions_cpu = p_actions_batch.cpu()
+                for i in range(num_p):
+                    action_dict = _nn_to_port_action(p_actions_cpu[i], i, self.env)
                     port_actions_list.append(action_dict)
-                    # Only add to buffer on decision steps.
                     if due["port"]:
-                        # Flush accumulated reward to previous entry.
                         if port_has_entry[i] and port_pending_reward[i] != 0.0:
                             prev_r = self.port_buf[i]._rewards[self.port_buf[i]._ptr - 1]
                             self.port_buf[i]._rewards[self.port_buf[i]._ptr - 1] = (
@@ -1009,40 +1091,59 @@ class MAPPOTrainer:
                             )
                             port_pending_reward[i] = 0.0
                         self.port_buf[i].add(
-                            obs=p_obs_n,
-                            action=np.array([action_t.squeeze(0).cpu().item()]),
+                            obs=p_obs_normed[i],
+                            action=np.array([p_actions_cpu[i].item()]),
                             reward=0.0,
                             done=False,
-                            log_prob=log_prob_t.item(),
-                            value=value_t.item(),
+                            log_prob=p_log_probs_batch[i].item(),
+                            value=p_values_batch[i].item(),
                             global_state=gs_np,
                             action_mask=self._build_port_mask(i),
                         )
                         port_has_entry[i] = True
 
-            # --- Coordinator actions (cadence-aware) ---
+            # --- Coordinator actions (cadence-aware, batched) ---
             coordinator_actions_list: list[dict[str, Any]] = []
             if heuristic_coordinator:
                 heuristic_actions = self.env.sample_stub_actions()
                 coordinator_actions_list = list(heuristic_actions.get("coordinators", []))
             elif due["coordinator"]:
                 assignments = self.env._build_assignments()
-                coord_mask = self._coordinator_mask_tensor()
+                num_c = len(obs["coordinators"])
                 with torch.no_grad():
-                    for i, c_obs in enumerate(obs["coordinators"]):
-                        c_obs_n = self._normalize_obs(c_obs, "coordinator")
-                        c_obs_t = torch.as_tensor(
-                            c_obs_n, dtype=torch.float32, device=self.device
-                        ).unsqueeze(0)
-                        c_ac = self._get_ac("coordinator", i)
-                        action_t, log_prob_t, value_t, _ = c_ac.get_action_and_value(
-                            c_obs_t, gs_tensor, action_mask=coord_mask
+                    c_obs_normed = [
+                        self._normalize_obs(c_obs, "coordinator")
+                        for c_obs in obs["coordinators"]
+                    ]
+                    c_obs_batch = torch.as_tensor(
+                        np.stack(c_obs_normed), dtype=torch.float32, device=self.device
+                    )  # (C, obs_dim)
+                    gs_c_batch = gs_tensor.expand(num_c, -1)  # (C, gs_dim)
+                    c_mask_np = self._build_coordinator_mask()
+                    c_mask_t = torch.as_tensor(
+                        c_mask_np, dtype=torch.bool, device=self.device
+                    )
+                    if c_mask_t.ndim == 1:
+                        c_mask_batch = c_mask_t.unsqueeze(0).expand(num_c, -1)
+                    else:
+                        # Per-vessel mask: (V, P) → (C, V, P)
+                        c_mask_batch = c_mask_t.unsqueeze(0).expand(num_c, -1, -1)
+                    c_ac = self._get_ac("coordinator", 0)
+                    c_actions_batch, c_log_probs_batch, c_values_batch, _ = (
+                        c_ac.get_action_and_value(
+                            c_obs_batch, gs_c_batch, action_mask=c_mask_batch
                         )
+                    )
+                    c_actions_cpu = c_actions_batch.cpu()
+                    coord_mask_np = self._build_coordinator_mask()
+                    # Flatten for buffer storage (buffer expects 1D mask).
+                    coord_mask_flat = coord_mask_np.ravel()
+                    for i in range(num_c):
                         action_dict = _nn_to_coordinator_action(
-                            action_t.squeeze(0), i, self.env, assignments
+                            c_actions_cpu[i], i, self.env, assignments,
+                            per_vessel=self._use_per_vessel_coordinator,
                         )
                         coordinator_actions_list.append(action_dict)
-                        # Flush accumulated reward to previous entry.
                         if coord_has_entry[i] and coord_pending_reward[i] != 0.0:
                             prev_r = self.coordinator_buf[i]._rewards[
                                 self.coordinator_buf[i]._ptr - 1
@@ -1051,15 +1152,19 @@ class MAPPOTrainer:
                                 self.coordinator_buf[i]._ptr - 1
                             ] = prev_r + coord_pending_reward[i]
                             coord_pending_reward[i] = 0.0
+                        if self._use_per_vessel_coordinator:
+                            action_np = c_actions_cpu[i].numpy()
+                        else:
+                            action_np = np.array([c_actions_cpu[i].item()])
                         self.coordinator_buf[i].add(
-                            obs=c_obs_n,
-                            action=np.array([action_t.squeeze(0).cpu().item()]),
+                            obs=c_obs_normed[i],
+                            action=action_np,
                             reward=0.0,
                             done=False,
-                            log_prob=log_prob_t.item(),
-                            value=value_t.item(),
+                            log_prob=c_log_probs_batch[i].item(),
+                            value=c_values_batch[i].item(),
                             global_state=gs_np,
-                            action_mask=self._build_coordinator_mask(),
+                            action_mask=coord_mask_flat,
                         )
                         coord_has_entry[i] = True
                 last_coord_actions = coordinator_actions_list
@@ -1152,7 +1257,7 @@ class MAPPOTrainer:
                 if ptr > 0:
                     self.coordinator_buf[i]._rewards[ptr - 1] += coord_pending_reward[i]
 
-        # --- Compute last values for GAE ---
+        # --- Compute last values for GAE (batched) ---
         with torch.no_grad():
             global_state = self.env.get_global_state()
             gs_np_last = self._eval_normalize_global_state(
@@ -1162,27 +1267,36 @@ class MAPPOTrainer:
                 gs_np_last, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
 
-            vessel_last = []
-            for i, _v_obs in enumerate(obs["vessels"]):
-                v_ac = self._get_ac("vessel", i)
-                v_obs_n = self._eval_normalize_obs(_v_obs, "vessel")
-                v_obs_t = torch.as_tensor(
-                    v_obs_n, dtype=torch.float32, device=self.device
-                ).unsqueeze(0)
-                if isinstance(v_ac.critic, AgentConditionedCritic):
-                    vessel_last.append(v_ac.critic(gs_tensor, v_obs_t).item())
-                else:
-                    vessel_last.append(v_ac.critic(gs_tensor).item())
+            # Vessel last values (batched).
+            v_ac = self._get_ac("vessel", 0)
+            v_obs_last = torch.as_tensor(
+                np.stack([
+                    self._eval_normalize_obs(obs["vessels"][i], "vessel")
+                    for i in range(len(obs["vessels"]))
+                ]),
+                dtype=torch.float32, device=self.device,
+            )  # (V, obs_dim)
+            gs_v_last = gs_tensor.expand(v_obs_last.shape[0], -1)
+            if isinstance(v_ac.critic, AgentConditionedCritic):
+                vessel_last_raw = v_ac.critic(gs_v_last, v_obs_last).squeeze(-1).tolist()
+            else:
+                vessel_last_raw = v_ac.critic(gs_v_last).squeeze(-1).tolist()
+            vessel_last = vessel_last_raw if isinstance(vessel_last_raw, list) else [vessel_last_raw]
             self.vessel_buf.compute_returns(vessel_last)
 
-            port_last = []
-            for i, _p_obs in enumerate(obs["ports"]):
-                port_last.append(self._get_ac("port", i).critic(gs_tensor).item())
+            # Port last values (batched).
+            p_ac = self._get_ac("port", 0)
+            gs_p_last = gs_tensor.expand(len(obs["ports"]), -1)
+            port_last_raw = p_ac.critic(gs_p_last).squeeze(-1).tolist()
+            port_last = port_last_raw if isinstance(port_last_raw, list) else [port_last_raw]
             self.port_buf.compute_returns(port_last)
 
-            coord_last = []
-            for i, _c_obs in enumerate(obs["coordinators"]):
-                coord_last.append(self._get_ac("coordinator", i).critic(gs_tensor).item())
+            # Coordinator last values (batched).
+            c_ac = self._get_ac("coordinator", 0)
+            gs_c_last = gs_tensor.expand(len(obs["coordinators"]), -1)
+            coord_last_raw = c_ac.critic(gs_c_last).squeeze(-1).tolist()
+            # .tolist() returns a scalar when there is 1 coordinator.
+            coord_last = coord_last_raw if isinstance(coord_last_raw, list) else [coord_last_raw]
             self.coordinator_buf.compute_returns(coord_last)
 
         mean_reward = legacy_total_reward / self.mappo_cfg.rollout_length
@@ -1348,7 +1462,7 @@ class MAPPOTrainer:
         num_updates = 0
         kl_early_stopped = False
 
-        ent_coeff = self.current_entropy_coeff
+        ent_coeff = self.get_entropy_coeff(agent_type)
         grad_accum = max(cfg.grad_accumulation_steps, 1)
 
         # For recurrent agents, use sequential (non-shuffled) chunks so
@@ -1390,6 +1504,15 @@ class MAPPOTrainer:
                 mb_adv = advantages_t[idx]
                 mb_ret = returns_t[idx]
                 mb_mask = masks_t[idx] if masks_t is not None else None
+                # Per-vessel coordinator mask: reshape flat (B, V*P) → (B, V, P)
+                if (
+                    mb_mask is not None
+                    and agent_type == "coordinator"
+                    and self._use_per_vessel_coordinator
+                ):
+                    num_v = len(self.env.vessels)
+                    num_p = self.env.num_ports
+                    mb_mask = mb_mask.view(-1, num_v, num_p)
                 # Reconstruct hidden state for recurrent actors: reshape
                 # (batch, hidden_dim) → (1, batch, hidden_dim) for GRU.
                 mb_hidden: torch.Tensor | None = None
@@ -1705,6 +1828,9 @@ class MAPPOTrainer:
 
         if dims_changed:
             # Must rebuild networks — old weights are incompatible
+            _vessel_hd = self.mappo_cfg.vessel_hidden_dims
+            _port_hd = self.mappo_cfg.port_hidden_dims
+            _coord_hd = self.mappo_cfg.coordinator_hidden_dims
             if self.mappo_cfg.parameter_sharing:
                 self.actor_critics = build_actor_critics(
                     config=self.cfg,
@@ -1713,6 +1839,12 @@ class MAPPOTrainer:
                     coordinator_obs_dim=self.obs_dims["coordinator"],
                     global_state_dim=self.global_dim,
                     hidden_dims=self.mappo_cfg.hidden_dims,
+                    vessel_hidden_dims=_vessel_hd,
+                    port_hidden_dims=_port_hd,
+                    coordinator_hidden_dims=_coord_hd,
+                    coordinator_use_attention=self.mappo_cfg.coordinator_use_attention,
+                    use_encoded_critic=self.mappo_cfg.use_encoded_critic,
+                    vessel_use_recurrence=self.mappo_cfg.vessel_use_recurrence,
                 )
             else:
                 from .networks import build_per_agent_actor_critics
@@ -1724,6 +1856,9 @@ class MAPPOTrainer:
                     coordinator_obs_dim=self.obs_dims["coordinator"],
                     global_state_dim=self.global_dim,
                     hidden_dims=self.mappo_cfg.hidden_dims,
+                    vessel_hidden_dims=_vessel_hd,
+                    port_hidden_dims=_port_hd,
+                    coordinator_hidden_dims=_coord_hd,
                 )
             for ac in self.actor_critics.values():
                 ac.to(self.device)
@@ -1842,7 +1977,10 @@ class MAPPOTrainer:
                                 c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
                             )
                             coord_actions.append(
-                                _nn_to_coordinator_action(a.squeeze(0), i, self.env, assignments)
+                                _nn_to_coordinator_action(
+                                    a.squeeze(0), i, self.env, assignments,
+                                    per_vessel=self._use_per_vessel_coordinator,
+                                )
                             )
 
                 actions_dict: dict[str, Any] = {
@@ -1965,9 +2103,12 @@ class MAPPOTrainer:
         self.coordinator_buf.reset()
 
     def save_models(self, path_prefix: str) -> None:
-        """Save actor-critic state dicts and normaliser state."""
+        """Save actor-critic state dicts, optimiser state, and normaliser state."""
         for name, ac in self.actor_critics.items():
             torch.save(ac.state_dict(), f"{path_prefix}_{name}.pt")
+        # Save optimiser state dicts for seamless resume
+        for name, opt in self.optimizers.items():
+            torch.save(opt.state_dict(), f"{path_prefix}_opt_{name}.pt")
         # Persist normaliser state for reproducible evaluation
         import json
         norm_state: dict[str, Any] = {}
@@ -1992,7 +2133,8 @@ class MAPPOTrainer:
             json.dump(norm_state, f)
 
     def load_models(self, path_prefix: str) -> None:
-        """Load actor-critic state dicts and normaliser state."""
+        """Load actor-critic state dicts, optimiser state, and normaliser state."""
+        import os
         for name, ac in self.actor_critics.items():
             state_dict = torch.load(
                 f"{path_prefix}_{name}.pt",
@@ -2000,9 +2142,14 @@ class MAPPOTrainer:
                 weights_only=True,
             )
             ac.load_state_dict(state_dict)
+        # Restore optimiser state if available
+        for name, opt in self.optimizers.items():
+            opt_path = f"{path_prefix}_opt_{name}.pt"
+            if os.path.exists(opt_path):
+                opt_state = torch.load(opt_path, map_location=self.device, weights_only=True)
+                opt.load_state_dict(opt_state)
         # Restore normaliser state if available
         import json
-        import os
         norm_path = f"{path_prefix}_normalizers.json"
         if os.path.exists(norm_path):
             with open(norm_path) as f:

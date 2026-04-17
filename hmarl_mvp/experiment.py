@@ -594,7 +594,10 @@ def run_trained_mappo_trace(
                         c_t, gs_tensor, deterministic=deterministic, action_mask=c_mask
                     )
                     coord_actions.append(
-                        _nn_to_coordinator_action(action_t.squeeze(0), i, trainer.env, assignments)
+                        _nn_to_coordinator_action(
+                            action_t.squeeze(0), i, trainer.env, assignments,
+                            per_vessel=trainer._use_per_vessel_coordinator,
+                        )
                     )
 
         env_actions = {

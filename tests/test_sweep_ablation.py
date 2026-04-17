@@ -295,11 +295,13 @@ class PortPolicyTests(unittest.TestCase):
         self.cfg = get_default_config()
         self.forecast_row = np.ones(12)
 
-    def test_independent_accepts_all_incoming_requests(self) -> None:
+    def test_independent_accepts_up_to_dock_capacity(self) -> None:
+        """Independent policy expresses willingness up to dock capacity;
+        env caps at actual backlog via intra-step delivery."""
         port = PortState(port_id=0, queue=3, docks=4, occupied=2)
         policy = PortPolicy(self.cfg, mode="independent")
         action = policy.propose_action(port, incoming_requests=5, short_forecast_row=self.forecast_row)
-        self.assertEqual(action["accept_requests"], 5)
+        self.assertEqual(action["accept_requests"], port.docks)
 
     def test_independent_service_rate_one(self) -> None:
         port = PortState(port_id=0, queue=3, docks=4, occupied=2)

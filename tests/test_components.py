@@ -124,6 +124,7 @@ class AgentInterfaceTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             medium_horizon_days=3,
             short_horizon_hours=4,
             service_time_hours=6.0,

@@ -266,6 +266,10 @@ class FleetCoordinatorAgent:
             ),
             "emission_budget": float(action.get("emission_budget", self.state.emission_budget)),
         }
+        # Preserve per-vessel destinations so the fallback directive can
+        # provide vessel-specific routing before bus delivery completes.
+        if "per_vessel_dest" in action:
+            normalized["per_vessel_dest"] = dict(action["per_vessel_dest"])
         self.state.last_dest_port = int(normalized["dest_port"])
         self.state.departure_window_hours = int(normalized["departure_window_hours"])
         self.state.emission_budget = float(normalized["emission_budget"])

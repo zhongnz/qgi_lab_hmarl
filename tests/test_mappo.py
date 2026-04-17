@@ -21,7 +21,7 @@ from hmarl_mvp.mappo import (
 
 @pytest.fixture()
 def small_config() -> dict[str, object]:
-    return get_default_config(num_ports=3, num_vessels=4, rollout_steps=30, weather_enabled=False)
+    return get_default_config(num_ports=3, num_vessels=4, num_coordinators=2, docks_per_port=2, rollout_steps=30, weather_enabled=False)
 
 
 @pytest.fixture()
@@ -69,10 +69,11 @@ class TestActionTranslation:
         action = _nn_to_vessel_action(torch.tensor([0.0]), cfg)
         assert action["target_speed"] == pytest.approx(cfg["nominal_speed"])
         assert action["request_arrival_slot"] is True
-        # With softplus mapping, arrival_raw=0 → softplus(0)≈0.69 → positive arrival time
-        assert action["requested_arrival_time"] >= 1.0
+        # Vessel no longer sets its own deadline; env computes it from distance/speed.
+        assert action["requested_arrival_time"] == 0.0
 
-    def test_vessel_action_includes_arrival_time(self) -> None:
+    def test_vessel_action_always_zero_arrival_time(self) -> None:
+        """Arrival time is always 0 — env computes the deadline externally."""
         cfg = get_default_config(rollout_steps=30)
         action = _nn_to_vessel_action(
             torch.tensor([12.0, 7.0]),
@@ -80,7 +81,7 @@ class TestActionTranslation:
             current_step=5,
         )
         assert action["request_arrival_slot"] is True
-        assert action["requested_arrival_time"] == pytest.approx(12.0, abs=0.01)
+        assert action["requested_arrival_time"] == 0.0
 
     def test_port_action_discrete(self) -> None:
         cfg = get_default_config(num_ports=3, num_vessels=4, docks_per_port=3)
@@ -100,6 +101,25 @@ class TestActionTranslation:
         assert "per_vessel_dest" in action
         assert "emission_budget" in action
         assert action["departure_window_hours"] in tuple(cfg["coordinator_departure_window_options"])
+
+    def test_coordinator_action_per_vessel(self) -> None:
+        cfg = get_default_config(num_ports=3, num_vessels=4)
+        env = MaritimeEnv(config=cfg)
+        env.reset()
+        assignments = {0: [0, 1, 2, 3]}
+        raw = torch.tensor([2, 0, 1, 2])  # per-vessel port assignments
+        action = _nn_to_coordinator_action(raw, 0, env, assignments, per_vessel=True)
+        pvd = action["per_vessel_dest"]
+        assert set(pvd.keys()) == {0, 1, 2, 3}
+        # Same-port dispatch prevention: no idle vessel assigned to its location
+        for vid, dest in pvd.items():
+            v = env.vessels[vid]
+            if not v.at_sea:
+                assert dest != v.location, (
+                    f"V{vid} at port {v.location} assigned to same port"
+                )
+        assert "dest_port" in action
+        assert "emission_budget" in action
 
 
 class TestMAPPOTrainer:

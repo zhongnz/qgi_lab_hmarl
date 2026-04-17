@@ -18,6 +18,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             message_latency_steps=1,
         )
@@ -77,6 +78,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=3,
             message_latency_steps=2,
             dt_hours=0.5,
@@ -97,6 +99,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             fuel_weight=0.0,
             emission_weight=0.0,
@@ -154,6 +157,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             fuel_weight=0.0,
             emission_weight=0.0,
@@ -190,6 +194,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             message_latency_steps=1,
         )
@@ -216,6 +221,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             fuel_weight=0.0,
             emission_weight=0.0,
@@ -255,6 +261,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             fuel_weight=0.0,
             emission_weight=0.0,
@@ -297,6 +304,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             message_latency_steps=1,
         )
@@ -326,6 +334,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             message_latency_steps=1,
             dt_hours=1.0,
@@ -355,6 +364,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             service_time_hours=1.0,
         )
@@ -385,6 +395,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             message_latency_steps=1,
         )
@@ -413,6 +424,7 @@ class ModelCorrectnessTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             rollout_steps=2,
             message_latency_steps=1,
         )
