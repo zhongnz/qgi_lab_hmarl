@@ -280,8 +280,8 @@ class MaritimeEnv:
 
         # ── Phase 1: coordinator action ──────────────────────────────────────
         # Each active coordinator converts its action into per-vessel directives
-        # and enqueues them with message_latency_steps delay.  Vessels will read
-        # these directives only after they are delivered in a future phase 0.
+        # and enqueues them for immediate intra-step delivery.  Vessels read
+        # these directives in Phase 2 of the same step.
         coordinator_actions = self._normalize_coordinator_actions(actions)
         if due["coordinator"]:
             for coordinator_id, coordinator in enumerate(self.coordinators):
@@ -298,7 +298,7 @@ class MaritimeEnv:
                     if vessel_id in per_vessel_dest:
                         vessel_directive["dest_port"] = int(per_vessel_dest[vessel_id])
                     self.bus.enqueue_directive(
-                        self.t + self.cadence.message_latency_steps,
+                        self.t,
                         vessel_id,
                         vessel_directive,
                     )
@@ -308,12 +308,16 @@ class MaritimeEnv:
                         coordinator_id=int(coordinator_id),
                         vessel_id=int(vessel_id),
                         port_id=int(vessel_directive.get("dest_port", -1)),
-                        deliver_step=int(self.t + self.cadence.message_latency_steps),
+                        deliver_step=int(self.t),
                         departure_window_hours=int(
                             vessel_directive.get("departure_window_hours", 0)
                         ),
                         emission_budget=float(vessel_directive.get("emission_budget", 0.0)),
                     )
+
+        # Intra-step delivery: directives available to vessels in Phase 2.
+        self.bus.deliver_due(self.t)
+        step_events.extend(self.bus.last_delivery_events)
 
         # ── Phase 2: vessel action + slot negotiation ────────────────────────
         # Each vessel reads its latest directive, decides speed and whether to
@@ -355,7 +359,7 @@ class MaritimeEnv:
                     )
                     vessel.pending_requested_arrival_time = resolved_arrival_time
                     self.bus.enqueue_arrival_request(
-                        self.t + self.cadence.message_latency_steps,
+                        self.t,
                         vessel_id,
                         destination,
                         requested_arrival_time=resolved_arrival_time,
@@ -365,7 +369,7 @@ class MaritimeEnv:
                         "phase2",
                         vessel_id=int(vessel_id),
                         port_id=int(destination),
-                        deliver_step=int(self.t + self.cadence.message_latency_steps),
+                        deliver_step=int(self.t),
                         requested_arrival_time=float(resolved_arrival_time),
                         requested_speed=float(normalized.get("target_speed", vessel.speed)),
                     )
@@ -449,6 +453,10 @@ class MaritimeEnv:
                 vessel.delay_hours += dt_hours
                 step_delay_by_vessel[vessel_id] += dt_hours
             normalized_vessel_actions.append(normalized)
+
+        # Intra-step delivery: arrival requests available to ports in Phase 4.
+        self.bus.deliver_due(self.t)
+        step_events.extend(self.bus.last_delivery_events)
 
         # ── Phase 3: physics tick ────────────────────────────────────────────
         # Advance all in-transit vessels using weather W_t (current tick).
@@ -585,7 +593,7 @@ class MaritimeEnv:
                 step_requests_accepted += len(accepted)
                 step_requests_rejected += len(rejected)
                 self.bus.clear_pending_requests(port_id)
-                response_step = self.t + self.cadence.message_latency_steps
+                response_step = self.t + 1  # delivered at start of next step
                 for vessel_id in accepted:
                     self.bus.enqueue_slot_response(response_step, vessel_id, True, port_id)
                     log_event(
@@ -607,6 +615,13 @@ class MaritimeEnv:
                         deliver_step=int(response_step),
                     )
             self._last_port_actions = normalized_port_actions
+
+        # Record requests processed this step for port observations (which are
+        # built after Phase 4 clears the pending queue).
+        self._last_step_requests_by_port = [
+            step_accepted_by_port[i] + step_rejected_by_port[i]
+            for i in range(len(self.ports))
+        ]
 
         service_rates = [
             int(action.get("service_rate", 1))
@@ -1060,7 +1075,12 @@ class MaritimeEnv:
         destination: int,
         departure_window_hours: int = 0,
     ) -> float:
-        """Return a feasible default arrival target in absolute step units."""
+        """Return a feasible default arrival target in absolute step units.
+
+        When weather is enabled, the current sea-state on the route is used
+        to inflate the expected travel time so that the deadline remains
+        achievable despite weather-induced speed reduction.
+        """
         dt_hours = float(self.cfg.get("dt_hours", 1.0))
         if dt_hours <= 0.0:
             dt_hours = 1.0
@@ -1070,7 +1090,17 @@ class MaritimeEnv:
             leg_distance = float(self.distance_nm[int(vessel.location), destination])
         else:
             leg_distance = 0.0
-        travel_hours = leg_distance / nominal_speed if leg_distance > 0.0 else dt_hours
+        # Factor in current weather: rough seas reduce effective speed.
+        effective_speed = nominal_speed
+        if self._weather_enabled and self._weather is not None:
+            src = int(vessel.location)
+            dst = int(destination)
+            if 0 <= src < self._weather.shape[0] and 0 <= dst < self._weather.shape[1]:
+                sea_state = float(self._weather[src, dst])
+                penalty = float(self.cfg.get("weather_penalty_factor", 0.15))
+                effective_speed = nominal_speed * weather_speed_factor(sea_state, penalty)
+        effective_speed = max(effective_speed, 1e-6)
+        travel_hours = leg_distance / effective_speed if leg_distance > 0.0 else dt_hours
         slack_hours = float(
             self.cfg.get(
                 "requested_arrival_slack_hours",
@@ -1264,11 +1294,14 @@ class MaritimeEnv:
             vessel_obs.append(v_obs)
 
         port_obs = []
+        # Use last step's processed request count instead of pending_requests
+        # (which is always 0 after intra-step delivery clears the queue).
+        last_requests = getattr(self, "_last_step_requests_by_port", [0.0] * self.num_ports)
         for i, port_agent in enumerate(self.port_agents):
             weather_features = self._port_weather_features(i)
             p_obs = port_agent.get_obs(
                 short[i],
-                incoming_requests=int(pending_requests[i]),
+                incoming_requests=int(last_requests[i]),
                 booked_arrivals=float(booked_arrivals[i]),
                 imminent_arrivals=float(imminent_arrivals[i]),
                 weather_features=weather_features,
@@ -1349,9 +1382,16 @@ class MaritimeEnv:
         vessel_rewards = [float(parts["total"]) for parts in vessel_components]
         # Apply weather shaping bonus for vessels that slow in rough seas.
         # Only at-sea vessels receive shaping — docked vessels make no routing decisions.
+        # Gated on schedule slack: the bonus is only awarded when the vessel
+        # is ahead of its deadline, so the fuel-efficiency signal never
+        # conflicts with the on-time arrival objective.
         if self._weather_enabled and self._weather is not None:
             for i, v in enumerate(self.vessels):
                 if not v.at_sea or bool(v.stalled):
+                    continue
+                # Skip shaping if vessel is behind or at its deadline.
+                deadline = float(v.requested_arrival_time)
+                if deadline > 0.0 and float(self.t) >= deadline:
                     continue
                 speed = float(v.speed)
                 src, dst = v.location, v.destination
@@ -1372,54 +1412,96 @@ class MaritimeEnv:
             for idx, p in enumerate(self.ports)
         ]
         port_rewards = [float(parts["total"]) for parts in port_components]
-        step_fuel_used = float(
-            sum(float(stats.get("fuel_used", 0.0)) for stats in vessel_step_stats.values())
-        )
-        step_co2_emitted = float(
-            sum(float(stats.get("co2_emitted", 0.0)) for stats in vessel_step_stats.values())
-        )
-        # Directive compliance: fraction of vessels heading to assigned dest.
-        # Each vessel's directive contains a per-vessel "dest_port" (set in
-        # phase 1 from per_vessel_dest or the coordinator's primary dest).
-        compliance_count = 0
-        compliance_total = 0
-        for v in self.vessels:
-            d = self.bus.get_latest_directive(v.vessel_id)
-            if d and "dest_port" in d:
-                assigned = d["dest_port"]
-                compliance_total += 1
-                if v.destination == int(assigned):
-                    compliance_count += 1
-        compliance_rate = float(compliance_count) / max(compliance_total, 1)
-        coordinator_components = [
-            compute_coordinator_reward_breakdown(
+        # ── Per-coordinator reward with per-assignment attribution ──
+        # Each coordinator is rewarded based on the outcomes of *its own*
+        # assigned vessels, not fleet-wide averages.  This gives the
+        # coordinator direct feedback on whether its assignments were good.
+        assignments = self._build_assignments()
+        coordinator_components: list[dict[str, float]] = []
+        coordinator_rewards: list[float] = []
+        for coord_id, _coord in enumerate(self.coordinators):
+            assigned_ids = assignments.get(coord_id, [])
+            n_assigned = max(len(assigned_ids), 1)
+            # Per-assignment fuel/emissions/delay averaged over assigned vessels
+            # so that coordinator reward magnitude is fleet-size invariant.
+            coord_fuel = sum(
+                float(vessel_step_stats.get(vid, {}).get("fuel_used", 0.0))
+                for vid in assigned_ids
+            ) / n_assigned
+            coord_co2 = sum(
+                float(vessel_step_stats.get(vid, {}).get("co2_emitted", 0.0))
+                for vid in assigned_ids
+            ) / n_assigned
+            coord_delay = sum(
+                float(step_delay_by_vessel.get(vid, 0.0))
+                for vid in assigned_ids
+            ) / n_assigned
+            coord_sched_delay = sum(
+                float(step_schedule_delay_by_vessel.get(vid, 0.0))
+                for vid in assigned_ids
+            ) / n_assigned
+            # Per-assignment compliance for this coordinator's vessels
+            comp_count = 0
+            comp_total = 0
+            for vid in assigned_ids:
+                d = self.bus.get_latest_directive(vid)
+                if d and "dest_port" in d:
+                    comp_total += 1
+                    v = next((v for v in self.vessels if v.vessel_id == vid), None)
+                    if v and v.destination == int(d["dest_port"]):
+                        comp_count += 1
+            coord_compliance = float(comp_count) / max(comp_total, 1)
+            # Per-assignment arrivals/service: count events for assigned vessels
+            # at their destination ports, averaged by fleet size for consistency
+            # with the averaged penalty terms above.
+            coord_served = 0.0
+            coord_accepted = 0.0
+            coord_rejected = 0.0
+            for vid in assigned_ids:
+                v = next((v for v in self.vessels if v.vessel_id == vid), None)
+                if v is None:
+                    continue
+                dest = v.destination
+                if 0 <= dest < len(self.ports):
+                    stats = vessel_step_stats.get(vid, {})
+                    if stats.get("arrived", False):
+                        coord_served += 1.0
+                    if stats.get("accepted", False):
+                        coord_accepted += 1.0
+                    if stats.get("rejected", False):
+                        coord_rejected += 1.0
+            coord_served /= n_assigned
+            coord_accepted /= n_assigned
+            coord_rejected /= n_assigned
+            parts = compute_coordinator_reward_breakdown(
                 ports=self.ports,
                 config=self.cfg,
-                fuel_used=step_fuel_used,
-                co2_emitted=step_co2_emitted,
-                delay_hours=float(sum(step_delay_by_vessel.values())),
-                schedule_delay_hours=float(sum(step_schedule_delay_by_vessel.values())),
-                served_vessels=float(step_vessels_served),
-                accepted_requests=float(step_requests_accepted),
-                rejected_requests=float(step_requests_rejected),
-                directive_compliance_rate=compliance_rate,
+                fuel_used=coord_fuel,
+                co2_emitted=coord_co2,
+                delay_hours=coord_delay,
+                schedule_delay_hours=coord_sched_delay,
+                served_vessels=coord_served,
+                accepted_requests=coord_accepted,
+                rejected_requests=coord_rejected,
+                directive_compliance_rate=coord_compliance,
             )
-            for _ in self.coordinators
-        ]
-        coordinator_rewards = [float(parts["total"]) for parts in coordinator_components]
-        # Apply weather shaping bonus for coordinators routing through calm seas.
+            coordinator_components.append(parts)
+            coordinator_rewards.append(float(parts["total"]))
+        # Apply weather shaping bonus per coordinator based on its own routes.
         if self._weather_enabled and self._weather is not None:
-            routes: list[tuple[int, int]] = []
-            for v in self.vessels:
-                d = self.bus.get_latest_directive(v.vessel_id)
-                if d:
-                    routes.append((v.location, int(d.get("dest_port", v.destination))))
-            if routes:
-                bonus = float(weather_coordinator_shaping(self._weather, routes, self.cfg))
-                for i in range(len(coordinator_rewards)):
-                    coordinator_components[i]["weather_shaping_bonus"] += bonus
-                    coordinator_components[i]["total"] += bonus
-                    coordinator_rewards[i] += bonus
+            for coord_id in range(len(self.coordinators)):
+                assigned_ids = assignments.get(coord_id, [])
+                routes: list[tuple[int, int]] = []
+                for vid in assigned_ids:
+                    d = self.bus.get_latest_directive(vid)
+                    v = next((v for v in self.vessels if v.vessel_id == vid), None)
+                    if d and v:
+                        routes.append((v.location, int(d.get("dest_port", v.destination))))
+                if routes:
+                    bonus = float(weather_coordinator_shaping(self._weather, routes, self.cfg))
+                    coordinator_components[coord_id]["weather_shaping_bonus"] += bonus
+                    coordinator_components[coord_id]["total"] += bonus
+                    coordinator_rewards[coord_id] += bonus
         return {
             "coordinator": coordinator_rewards[0],
             "coordinators": coordinator_rewards,
@@ -1473,6 +1555,10 @@ class MaritimeEnv:
         """Clear message bus and cache initial port actions."""
         self.bus.reset(self.num_ports)
         self._last_port_actions = [dict(port_agent.last_action) for port_agent in self.port_agents]
+        # Track arrival requests processed per port in the previous step so the
+        # port observation can include them (intra-step delivery clears pending
+        # queues before observations are built).
+        self._last_step_requests_by_port = [0.0] * self.num_ports
 
     def get_directive_for_vessel(
         self,
@@ -1522,10 +1608,19 @@ class MaritimeEnv:
         for coordinator_id, local_ids in assignments.items():
             if vessel_id in local_ids:
                 action = dict(self.coordinators[coordinator_id].last_action)
+                # Extract per-vessel destination if available (per-vessel
+                # coordinator heads).  Without this, the fallback uses the
+                # global dest_port=0 default and all vessels pile onto one port.
+                pvd = action.get("per_vessel_dest", {})
+                if vessel_id in pvd:
+                    action["dest_port"] = int(pvd[vessel_id])
                 action["coordinator_id"] = coordinator_id
                 action["assigned_vessel_ids"] = list(local_ids)
                 return action
         action = dict(self.coordinators[0].last_action)
+        pvd = action.get("per_vessel_dest", {})
+        if vessel_id in pvd:
+            action["dest_port"] = int(pvd[vessel_id])
         action["coordinator_id"] = 0
         action["assigned_vessel_ids"] = []
         return action

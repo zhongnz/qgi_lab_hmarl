@@ -199,16 +199,22 @@ class TestCoordinatorActionMasking:
     """Tests for coordinator destination masking in MAPPO."""
 
     def test_build_coordinator_mask_all_open(self) -> None:
-        """When no port is congested, all destinations are valid."""
+        """When no port is congested, per-vessel mask excludes current port."""
         trainer = MAPPOTrainer(
             env_config={"num_vessels": 2, "num_ports": 3, "docks_per_port": 3, "rollout_steps": 10},
             mappo_config=MAPPOConfig(rollout_length=5, num_epochs=1),
         )
         trainer.env.reset()
         mask = trainer._build_coordinator_mask()
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
-        assert mask.shape == (3 * num_windows,)
-        assert mask.sum() == float(3 * num_windows)  # all ports valid across all windows
+        num_v = len(trainer.env.vessels)
+        num_p = trainer.env.num_ports
+        # Per-vessel mask: (V, P) — each vessel has current port masked
+        assert mask.shape == (num_v, num_p)
+        for i, v in enumerate(trainer.env.vessels):
+            if not v.at_sea:
+                assert mask[i, v.location] == 0.0, "Current port should be masked"
+            # At least one port available per vessel
+            assert mask[i].sum() >= 1.0
 
     def test_mask_blocks_congested_port(self) -> None:
         """A port with full docks and full queue should be masked out."""
@@ -224,16 +230,12 @@ class TestCoordinatorActionMasking:
         port.service_times = [6.0] * port.docks
 
         mask = trainer._build_coordinator_mask()
-        num_ports = trainer.env.num_ports
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
-        for w in range(num_windows):
-            off = w * num_ports
-            assert mask[off + 1] == 0.0, "Congested port should be masked"
-            assert mask[off + 0] == 1.0
-            assert mask[off + 2] == 1.0
+        # Congested port should be masked for all vessels
+        for i in range(len(trainer.env.vessels)):
+            assert mask[i, 1] == 0.0, "Congested port should be masked"
 
     def test_mask_safety_all_congested(self) -> None:
-        """If ALL ports are congested, all are allowed (safety fallback)."""
+        """If ALL ports are congested, safety fallback still leaves options."""
         trainer = MAPPOTrainer(
             env_config={"num_vessels": 2, "num_ports": 2, "docks_per_port": 1, "rollout_steps": 10},
             mappo_config=MAPPOConfig(rollout_length=5, num_epochs=1),
@@ -246,8 +248,9 @@ class TestCoordinatorActionMasking:
             port.service_times = [6.0] * port.docks
 
         mask = trainer._build_coordinator_mask()
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
-        assert mask.sum() == float(2 * num_windows), "All congested -> safety fallback: all allowed"
+        # Each vessel should still have at least one valid port
+        for i in range(len(trainer.env.vessels)):
+            assert mask[i].sum() >= 1.0, "All congested -> safety fallback: at least one allowed"
 
     def test_coordinator_mask_tensor_shape(self) -> None:
         """Tensor mask has correct shape and dtype."""
@@ -257,12 +260,14 @@ class TestCoordinatorActionMasking:
         )
         trainer.env.reset()
         mask_t = trainer._coordinator_mask_tensor()
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
-        assert mask_t.shape == (1, 4 * num_windows)
+        num_v = len(trainer.env.vessels)
+        num_p = trainer.env.num_ports
+        # Per-vessel coordinator: (1, V, P)
+        assert mask_t.shape == (1, num_v, num_p)
         assert mask_t.dtype == torch.bool
 
     def test_coordinator_buffer_has_mask_dim(self) -> None:
-        """Coordinator rollout buffer is allocated with mask_dim=num_ports*num_windows."""
+        """Coordinator rollout buffer mask_dim = num_vessels * num_ports."""
         trainer = MAPPOTrainer(
             env_config={"num_vessels": 2, "num_ports": 3, "docks_per_port": 2, "rollout_steps": 10},
             mappo_config=MAPPOConfig(rollout_length=5, num_epochs=1),
@@ -271,8 +276,9 @@ class TestCoordinatorActionMasking:
         # Check that coordinator buffer has mask storage
         coord_buf = trainer.coordinator_buf[0]
         assert coord_buf.mask_dim is not None
-        num_windows = len(trainer.cfg.get("coordinator_departure_window_options", (0,)))
-        assert coord_buf.mask_dim == 3 * num_windows
+        num_v = len(trainer.env.vessels)
+        num_p = trainer.env.num_ports
+        assert coord_buf.mask_dim == num_v * num_p
 
     def test_collect_rollout_with_coordinator_mask(self) -> None:
         """Full rollout collection works with coordinator masking enabled."""

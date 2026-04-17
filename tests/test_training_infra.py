@@ -142,7 +142,7 @@ class TestCheckpointing:
 
             # Verify best model files exist
             best_files = list(Path(tmp).glob("best_model_*.pt"))
-            assert len(best_files) == 3  # vessel, port, coordinator
+            assert len(best_files) == 6  # vessel, port, coordinator + 3 optimizer states
 
     def test_periodic_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,8 +156,8 @@ class TestCheckpointing:
             # Should have periodic checkpoints at 5 and 10
             ckpt_5 = list(Path(tmp).glob("ckpt_000005_*.pt"))
             ckpt_10 = list(Path(tmp).glob("ckpt_000010_*.pt"))
-            assert len(ckpt_5) == 3
-            assert len(ckpt_10) == 3
+            assert len(ckpt_5) == 6  # 3 models + 3 optimizer states
+            assert len(ckpt_10) == 6
 
     def test_save_and_load_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -200,13 +200,13 @@ class TestCheckpointing:
 
             # Before cleanup: 4 periodic checkpoints (5, 10, 15, 20)
             all_periodic = list(Path(tmp).glob("ckpt_*_*.pt"))
-            assert len(all_periodic) == 12  # 4 iterations × 3 agent types
+            assert len(all_periodic) == 24  # 4 iterations × 6 files (3 models + 3 optimizers)
 
             ckpt.cleanup_old_checkpoints(keep_last=2)
 
             # After cleanup: only 15 and 20 should remain
             remaining = list(Path(tmp).glob("ckpt_*_*.pt"))
-            assert len(remaining) == 6  # 2 iterations × 3 agent types
+            assert len(remaining) == 12  # 2 iterations × 6 files
 
 
 # =====================================================================

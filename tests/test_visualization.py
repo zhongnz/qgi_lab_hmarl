@@ -80,11 +80,11 @@ class CollectEpisodeSnapshotsTests(unittest.TestCase):
         self.assertIn("departure_window_hours", actions["coordinator"])
         self.assertIn("emission_budget", actions["coordinator"])
         # Vessels
-        self.assertEqual(len(actions["vessels"]), 8)
+        self.assertEqual(len(actions["vessels"]), 10)
         self.assertIn("target_speed", actions["vessels"][0])
         self.assertIn("request_arrival_slot", actions["vessels"][0])
         # Ports
-        self.assertEqual(len(actions["ports"]), 5)
+        self.assertEqual(len(actions["ports"]), 3)
         self.assertIn("service_rate", actions["ports"][0])
 
     def test_fleet_kpis_present(self) -> None:
@@ -111,7 +111,7 @@ class CollectEpisodeSnapshotsTests(unittest.TestCase):
             config={"weather_enabled": True, "weather_autocorrelation": 0.7},
         )
         self.assertIsNotNone(snaps[0]["weather"])
-        self.assertEqual(snaps[0]["weather"].shape, (5, 5))
+        self.assertEqual(snaps[0]["weather"].shape, (3, 3))
 
     def test_deterministic_with_seed(self) -> None:
         s1 = collect_episode_snapshots(steps=5, seed=123)
@@ -126,8 +126,8 @@ class CollectEpisodeSnapshotsTests(unittest.TestCase):
 
     def test_correct_agent_counts(self) -> None:
         snaps = collect_episode_snapshots(steps=3, seed=42)
-        self.assertEqual(len(snaps[0]["vessels"]), 8)
-        self.assertEqual(len(snaps[0]["ports"]), 5)
+        self.assertEqual(len(snaps[0]["vessels"]), 10)
+        self.assertEqual(len(snaps[0]["ports"]), 3)
 
     def test_custom_config(self) -> None:
         snaps = collect_episode_snapshots(

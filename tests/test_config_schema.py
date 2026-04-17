@@ -15,7 +15,7 @@ from hmarl_mvp.config import (
 class ConfigSchemaTests(unittest.TestCase):
     def test_default_schema_round_trip(self) -> None:
         cfg = HMARLConfig().to_dict()
-        self.assertEqual(cfg["num_ports"], 5)
+        self.assertEqual(cfg["num_ports"], 3)
         self.assertEqual(cfg["rollout_steps"], 138)
 
     def test_get_default_config_with_valid_overrides(self) -> None:

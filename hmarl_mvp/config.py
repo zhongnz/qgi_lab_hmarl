@@ -15,20 +15,19 @@ class HMARLConfig:
     """Typed project configuration with built-in validation."""
 
     # Fleet topology
-    num_ports: int = 5
-    num_vessels: int = 8
-    num_coordinators: int = 1
-    # Each port has docks_per_port berths.  Default is 1 to create genuine
-    # congestion pressure (5 docks for 8 vessels, guaranteeing queuing).
-    # Previous defaults of 2 or 3 resulted in near-zero queue lengths and
-    # dock utilisation of ~0.12, leaving no congestion signal to learn from.
-    docks_per_port: int = 1
+    num_ports: int = 3
+    num_vessels: int = 10
+    num_coordinators: int = 2
+    # Each port has docks_per_port berths.  With 3 ports × 2 docks = 6 berths
+    # for 10 vessels (~72% utilization), ports face real scheduling decisions
+    # with a 9-action space (service∈{0,1,2} × accept∈{0,1,2}).
+    docks_per_port: int = 2
     # Forecast horizons
     medium_horizon_days: int = 5
     short_horizon_hours: int = 12
     forecast_source: str = "ground_truth"
     # Asynchronous cadence (simulation steps)
-    coord_decision_interval_steps: int = 12
+    coord_decision_interval_steps: int = 4
     vessel_decision_interval_steps: int = 1
     port_decision_interval_steps: int = 2
     message_latency_steps: int = 1
@@ -36,46 +35,47 @@ class HMARLConfig:
     # Vessel reward = -fuel_weight*fuel - delay_weight*delay - emission_weight*co2
     #                 - transit_time_weight*transit - schedule_delay_weight*schedule_delay
     #                 + arrival_reward*arrived + on_time_arrival_reward*on_time
-    # transit_time_weight is intentionally high (8.0) to strongly discourage
-    # fuel-wasting detours; schedule_delay_weight mirrors it for deadline adherence.
-    fuel_weight: float = 1.0
+    # Vessel reward per step = bonuses − penalties.  A ~15-step trip at
+    # nominal speed costs fuel(1.0×2.0×15) + transit(0.5×15) = ~37.5 in
+    # Reward rebalance: prioritise throughput over cost minimisation.
+    # Fuel reduced from 1.0→0.2 so transit is net-positive with arrival
+    # bonuses.  Transit time penalty removed (fuel already covers movement
+    # cost).  Port accept/serve rewards increased to encourage admission.
+    fuel_weight: float = 0.2
     delay_weight: float = 1.5
-    # emission_weight was 0.7 but emission_factor=3.114 means the effective
-    # penalty on the same fuel burn is 2.18× fuel_weight — a double penalty.
-    # Set to 0.0; fuel_weight alone captures consumption cost.  Coordinator
-    # retains a small emission_weight for system-level carbon signal.
     emission_weight: float = 0.0
-    # Transit cost per hour at sea.  At nominal speed (12 kn) fuel_cost ≈
-    # 3.5/hr, so 2.5 keeps a meaningful travel disincentive without the
-    # previous 2.3× dominance over fuel.
-    transit_time_weight: float = 2.5
-    arrival_reward: float = 15.0
-    on_time_arrival_reward: float = 20.0
+    transit_time_weight: float = 0.0
+    arrival_reward: float = 40.0
+    on_time_arrival_reward: float = 40.0
     schedule_delay_weight: float = 3.0
-    dock_idle_weight: float = 0.5
-    port_accept_reward: float = 1.5
-    port_reject_penalty: float = 1.0
-    port_service_reward: float = 2.0
-    coordinator_fuel_weight: float = 0.25
-    coordinator_queue_weight: float = 0.75
-    coordinator_emission_weight: float = 0.2
-    coordinator_delay_weight: float = 3.0
-    coordinator_schedule_delay_weight: float = 4.0
-    coordinator_accept_reward: float = 2.0
-    coordinator_reject_penalty: float = 2.0
-    coordinator_service_reward: float = 6.0
-    coordinator_idle_dock_weight: float = 0.0  # redundant with utilization_reward (idle = docks - occupied)
-    coordinator_utilization_reward: float = 2.0
-    coordinator_queue_imbalance_weight: float = 0.5  # penalise std(queue) across ports (anti-herding)
+    # Idle-dock penalty prevents the reject-everything local optimum.
+    # Action-conditional: only applied when the port had demand it could
+    # have served (accepted + rejected + served > 0).  Without demand,
+    # idle docks are not the port's fault and the penalty is zero.
+    dock_idle_weight: float = 5.0
+    port_accept_reward: float = 5.0
+    port_reject_penalty: float = 3.0
+    port_service_reward: float = 5.0
+    coordinator_fuel_weight: float = 0.15
+    coordinator_queue_weight: float = 2.25
+    coordinator_emission_weight: float = 0.0
+    coordinator_delay_weight: float = 4.5
+    coordinator_schedule_delay_weight: float = 12.0
+    coordinator_accept_reward: float = 6.0
+    coordinator_reject_penalty: float = 6.0
+    coordinator_service_reward: float = 18.0
+    coordinator_idle_dock_weight: float = 0.0
+    coordinator_utilization_reward: float = 6.0
+    coordinator_queue_imbalance_weight: float = 1.5
     # Directive compliance: bonus when vessels follow coordinator's per-vessel
     # destination assignment.  Closes the credit-assignment gap between
     # coordinator actions and vessel behaviour.
-    coordinator_compliance_weight: float = 1.5
+    coordinator_compliance_weight: float = 4.5
     on_time_tolerance_hours: float = 2.0
-    # Tightened from 1.0 to 0.25 so that schedule_delay_weight (8.0) is
-    # actually triggered — the old 1.0h slack was too generous and made
-    # the schedule_delay component effectively dormant.
-    requested_arrival_slack_hours: float = 0.25
+    # Relaxed from 0.25 to 1.5 so on-time arrivals are achievable.  With
+    # 1.5h slack, moderate queue wait is tolerated but bad routing is
+    # penalised via schedule_delay_weight (3.0).
+    requested_arrival_slack_hours: float = 1.5
     # Physics
     # fuel_rate_coeff: fuel consumption in tonnes per (knot^3 * hour).
     # Cubic speed-fuel law approximates propeller hydrodynamics (Harvald 1983).

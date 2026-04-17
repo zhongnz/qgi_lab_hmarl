@@ -43,8 +43,10 @@ def compute_vessel_metrics(vessels: list[VesselState]) -> dict[str, float]:
     if scheduled_arrivals > 0.0:
         on_time_rate = on_time_arrivals / scheduled_arrivals
     else:
-        on_time_count = sum(1 for v in vessels if v.delay_hours < 2.0)
-        on_time_rate = on_time_count / len(vessels) if vessels else 0.0
+        # No scheduled arrivals → on-time rate is undefined; return 0.
+        # The previous fallback (delay_hours < 2.0) was misleading: idle
+        # vessels with no trips counted as "on time".
+        on_time_rate = 0.0
     stalled_vessels = float(sum(bool(getattr(v, "stalled", False)) for v in vessels))
     return {
         "avg_speed": avg_speed,

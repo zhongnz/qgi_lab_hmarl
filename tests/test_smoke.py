@@ -79,16 +79,19 @@ class SmokeTests(unittest.TestCase):
 
         np.testing.assert_allclose(state_1, state_2, atol=1e-14)
 
-    def test_async_latency_delays_dispatch(self) -> None:
+    def test_intra_step_delivery_enables_fast_dispatch(self) -> None:
+        """With intra-step delivery, coordinator→vessel→port completes in one
+        step; the port's slot response is delivered at the start of the next
+        step, so the vessel dispatches at step 1."""
         cfg = get_default_config(
             num_ports=2,
             num_vessels=2,
             num_coordinators=2,
             rollout_steps=8,
-            coord_decision_interval_steps=3,
+            coord_decision_interval_steps=1,
             vessel_decision_interval_steps=1,
             port_decision_interval_steps=1,
-            message_latency_steps=2,
+            message_latency_steps=1,
         )
         env = MaritimeEnv(config=cfg, seed=42)
         env.reset()
@@ -111,18 +114,20 @@ class SmokeTests(unittest.TestCase):
                 {"target_speed": cfg["nominal_speed"], "request_arrival_slot": True},
             ],
             "ports": [
-                {"service_rate": 1, "accept_requests": 0},
-                {"service_rate": 1, "accept_requests": 1},
+                {"service_rate": 1, "accept_requests": 2},
+                {"service_rate": 1, "accept_requests": 2},
             ],
         }
 
         at_sea_history = []
-        for _ in range(5):
+        for _ in range(3):
             env.step(fixed_actions)
             at_sea_history.append(env.vessels[0].at_sea)
 
-        self.assertEqual(at_sea_history[:4], [False, False, False, False])
-        self.assertTrue(at_sea_history[4])
+        # Step 0: coord→vessel→port pipeline completes, response queued for t=1
+        self.assertFalse(at_sea_history[0])
+        # Step 1: response delivered, vessel dispatches
+        self.assertTrue(at_sea_history[1])
 
     def test_run_experiment_supports_multi_coordinator_rollout(self) -> None:
         cfg = get_default_config(
@@ -216,6 +221,7 @@ class SmokeTests(unittest.TestCase):
         cfg = get_default_config(
             num_ports=2,
             num_vessels=1,
+            num_coordinators=1,
             docks_per_port=3,
             rollout_steps=20,
         )
@@ -319,6 +325,7 @@ class SmokeTests(unittest.TestCase):
             config=get_default_config(
                 num_ports=2,
                 num_vessels=1,
+                num_coordinators=1,
                 rollout_steps=1,
                 episode_mode="single_mission",
                 mission_success_on="arrival",

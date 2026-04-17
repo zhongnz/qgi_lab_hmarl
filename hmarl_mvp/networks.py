@@ -81,7 +81,7 @@ class ContinuousActor(nn.Module):
     def forward(self, obs: torch.Tensor) -> torch.distributions.Normal:
         """Return a Normal distribution over actions."""
         mean = self.mean_net(obs)
-        std = self.log_std.exp().expand_as(mean)
+        std = self.log_std.clamp(-2.0, 0.5).exp().expand_as(mean)
         return torch.distributions.Normal(mean, std)
 
     def get_action(
@@ -313,11 +313,10 @@ class ActorCritic(nn.Module):
 
 
 class AttentionCoordinatorActor(nn.Module):
-    """Attention-based coordinator actor for variable fleet sizes.
+    """Attention-based coordinator actor with per-vessel action heads.
 
     Processes vessel and port features as entity sets using multi-head
-    self-attention, producing a permutation-equivariant representation
-    that generalises across fleet sizes.
+    self-attention, then outputs independent per-vessel port assignments.
 
     The coordinator observation is split into:
     - Global features (5 dims: step + port-level aggregates)
@@ -325,8 +324,9 @@ class AttentionCoordinatorActor(nn.Module):
     - Per-port features (medium_horizon_days + 5 dims each × num_ports)
     - Optional weather matrix (num_ports × num_ports)
 
-    Entity tokens are processed through self-attention, then aggregated
-    via mean-pooling before the action head.
+    After the transformer, each vessel token is fed through a shared
+    action head that outputs logits over ``num_ports``.  Actions are
+    sampled independently per vessel (factored action space).
     """
 
     def __init__(
@@ -378,8 +378,8 @@ class AttentionCoordinatorActor(nn.Module):
             encoder_layer, num_layers=num_layers
         )
 
-        # Action head: from aggregated representation to logits
-        self.action_head = nn.Linear(embed_dim, num_actions)
+        # Per-vessel action head: each vessel token → logits over num_ports
+        self.per_vessel_head = nn.Linear(embed_dim, num_ports)
 
     def _split_obs(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Split flat coordinator observation into entity groups."""
@@ -410,31 +410,47 @@ class AttentionCoordinatorActor(nn.Module):
             global_feat,
         )
 
+    def _get_per_vessel_logits(
+        self, obs: torch.Tensor, action_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return per-vessel logits of shape ``(B, V, num_ports)``."""
+        vessel_ents, port_ents, global_feat = self._split_obs(obs)
+
+        vessel_tokens = self.vessel_encoder(vessel_ents)   # (B, V, E)
+        port_tokens = self.port_encoder(port_ents)         # (B, P, E)
+        global_token = self.global_encoder(global_feat).unsqueeze(1)  # (B, 1, E)
+
+        tokens = torch.cat([global_token, vessel_tokens, port_tokens], dim=1)
+        attended = self.transformer(tokens)
+
+        # Extract vessel tokens (indices 1..V after the global token)
+        vessel_attended = attended[:, 1 : 1 + self.num_vessels, :]  # (B, V, E)
+        logits = self.per_vessel_head(vessel_attended)  # (B, V, num_ports)
+
+        if action_mask is not None:
+            # action_mask: (B, V, P) per-vessel or (B, P) shared
+            if action_mask.ndim == 2:
+                mask = action_mask.unsqueeze(1).expand_as(logits)
+            else:
+                mask = action_mask.expand_as(logits)
+            all_masked = ~mask.any(dim=-1, keepdim=True)
+            safe_mask = mask | all_masked.expand_as(mask)
+            logits = logits.masked_fill(~safe_mask, float("-inf"))
+
+        return logits
+
     def forward(
         self,
         obs: torch.Tensor,
         action_mask: torch.Tensor | None = None,
     ) -> torch.distributions.Categorical:
-        """Return a Categorical distribution over actions."""
-        vessel_ents, port_ents, global_feat = self._split_obs(obs)
+        """Return per-vessel Categorical distributions.
 
-        # Encode each entity type to common embedding
-        vessel_tokens = self.vessel_encoder(vessel_ents)   # (B, V, E)
-        port_tokens = self.port_encoder(port_ents)         # (B, P, E)
-        global_token = self.global_encoder(global_feat).unsqueeze(1)  # (B, 1, E)
-
-        # Concatenate all tokens and run through transformer
-        tokens = torch.cat([global_token, vessel_tokens, port_tokens], dim=1)
-        attended = self.transformer(tokens)
-
-        # Aggregate via mean pooling
-        pooled = attended.mean(dim=1)  # (B, E)
-
-        logits = self.action_head(pooled)
-        if action_mask is not None:
-            all_masked = ~action_mask.any(dim=-1, keepdim=True)
-            safe_mask = action_mask | all_masked.expand_as(action_mask)
-            logits = logits.masked_fill(~safe_mask, float("-inf"))
+        The returned ``Categorical`` has ``logits`` of shape
+        ``(B, V, num_ports)`` so that ``dist.sample()`` yields
+        ``(B, V)`` and ``dist.log_prob(actions)`` expects ``(B, V)``.
+        """
+        logits = self._get_per_vessel_logits(obs, action_mask)
         return torch.distributions.Categorical(logits=logits)
 
     def get_action(
@@ -443,12 +459,21 @@ class AttentionCoordinatorActor(nn.Module):
         deterministic: bool = False,
         action_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample per-vessel actions and return joint log-prob.
+
+        Returns:
+            actions: ``(B, V)`` — per-vessel port indices.
+            log_prob: ``(B,)`` — sum of per-vessel log probs.
+        """
         dist = self.forward(obs, action_mask=action_mask)
         if deterministic:
-            action = dist.probs.argmax(dim=-1)
+            actions = dist.probs.argmax(dim=-1)  # (B, V)
         else:
-            action = dist.sample()
-        return action, dist.log_prob(action)
+            actions = dist.sample()  # (B, V)
+        # Joint log-prob = sum of independent per-vessel log-probs
+        per_vessel_lp = dist.log_prob(actions)  # (B, V)
+        log_prob = per_vessel_lp.sum(dim=-1)  # (B,)
+        return actions, log_prob
 
     def evaluate(
         self,
@@ -456,10 +481,24 @@ class AttentionCoordinatorActor(nn.Module):
         actions: torch.Tensor,
         action_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate per-vessel actions, returning joint log-prob and entropy.
+
+        Args:
+            actions: ``(B, V)`` — per-vessel port indices.
+
+        Returns:
+            log_prob: ``(B,)`` — sum of per-vessel log probs.
+            entropy: ``(B,)`` — sum of per-vessel entropies.
+        """
         dist = self.forward(obs, action_mask=action_mask)
-        log_prob = dist.log_prob(actions.long().squeeze(-1))
-        entropy = dist.entropy()
-        return log_prob, entropy
+        acts = actions.long()
+        if acts.dim() == 1:
+            acts = acts.unsqueeze(0)
+        if acts.dim() == 3:
+            acts = acts.squeeze(-1)
+        per_vessel_lp = dist.log_prob(acts)  # (B, V)
+        per_vessel_ent = dist.entropy()  # (B, V)
+        return per_vessel_lp.sum(dim=-1), per_vessel_ent.sum(dim=-1)
 
 
 class EncodedCritic(nn.Module):
@@ -676,7 +715,7 @@ class RecurrentContinuousActor(nn.Module):
         # Use last timestep for action
         last = out[:, -1, :]         # (B, H)
         mean = self.mean_head(last)
-        std = self.log_std.exp().expand_as(mean)
+        std = self.log_std.clamp(-2.0, 0.5).exp().expand_as(mean)
         return torch.distributions.Normal(mean, std), new_hidden
 
     def get_action(
@@ -799,7 +838,6 @@ def build_actor_critics(
             vessel_entity_dim=7,
             port_entity_dim=port_entity_dim,
             global_feature_dim=1,
-            num_actions=coordinator_actions,
             embed_dim=c_hd[0] if c_hd else 64,
             weather_enabled=weather_enabled,
         )

@@ -168,6 +168,19 @@ class MessageBus:
                 counts[port_id] += 1
         return counts
 
+    def count_inflight_requests(self, port_id: int, up_to_step: int) -> int:
+        """Count arrival requests enqueued for *port_id* due by *up_to_step*.
+
+        These are requests in the arrival-request queue that have not yet been
+        delivered to the port's pending list.  Used by the port mask to
+        anticipate backlog that will arrive before the port next acts.
+        """
+        count = 0
+        for deliver_step, _vid, dest, _rat in self._arrival_request_queue:
+            if dest == port_id and deliver_step <= up_to_step:
+                count += 1
+        return count
+
     # -- Delivery ------------------------------------------------------------
 
     def deliver_due(self, current_step: int) -> dict[int, dict[str, Any]]:

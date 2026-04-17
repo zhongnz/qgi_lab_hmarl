@@ -168,10 +168,18 @@ class PortRewardTests(unittest.TestCase):
         reward = compute_port_reward(port, self.cfg)
         self.assertEqual(reward, 0.0)
 
-    def test_empty_port_penalizes_idle_docks(self) -> None:
+    def test_empty_port_no_demand_no_idle_penalty(self) -> None:
+        """With no demand, idle docks are not the port's fault → no penalty."""
         port = PortState(port_id=0, queue=0, docks=3, occupied=0)
         reward = compute_port_reward(port, self.cfg)
-        expected = -(self.cfg["dock_idle_weight"] * 3)
+        self.assertAlmostEqual(reward, 0.0)
+
+    def test_empty_port_with_demand_penalizes_idle_docks(self) -> None:
+        """With rejected demand, idle docks are penalized."""
+        port = PortState(port_id=0, queue=0, docks=3, occupied=0)
+        reward = compute_port_reward(port, self.cfg, rejected_requests=1.0)
+        # idle = 3 * 5.0 = 15.0, reject = 1 * 3.0 = 3.0
+        expected = -(self.cfg["dock_idle_weight"] * 3 + self.cfg["port_reject_penalty"] * 1)
         self.assertAlmostEqual(reward, expected)
 
     def test_queue_increases_penalty(self) -> None:
@@ -512,7 +520,8 @@ class VesselMetricTests(unittest.TestCase):
         self.assertAlmostEqual(m["total_fuel_used"], 60.0)  # 20+40
         self.assertAlmostEqual(m["total_emissions_co2"], 20.0)
         self.assertAlmostEqual(m["avg_delay_hours"], 2.0)
-        self.assertAlmostEqual(m["on_time_rate"], 0.5)  # vessel 0 < 2h
+        # No scheduled arrivals → on_time_rate is 0 (no fallback).
+        self.assertAlmostEqual(m["on_time_rate"], 0.0)
 
     def test_cumulative_fuel_used_survives_refuel(self) -> None:
         vessel = VesselState(

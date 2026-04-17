@@ -61,9 +61,23 @@ class FleetCoordinatorPolicy:
                 "emission_budget": 50.0,
             }
         if self.mode == "reactive":
-            dest_port = int(np.argmin([p.queue for p in ports])) if ports else 0
+            queues = [p.queue for p in ports]
+            n_ports = len(ports)
+            dest_port = int(np.argmin(queues)) if ports else 0
+            # Per-vessel routing: avoid same-port dispatch.
+            per_vessel_dest: dict[int, int] = {}
+            for v in vessels:
+                best = dest_port
+                if best == v.location and not v.at_sea:
+                    sorted_ports = sorted(range(n_ports), key=lambda i: queues[i])
+                    for alt in sorted_ports:
+                        if alt != v.location:
+                            best = alt
+                            break
+                per_vessel_dest[v.vessel_id] = best
             return {
                 "dest_port": dest_port,
+                "per_vessel_dest": per_vessel_dest,
                 "departure_window_hours": 0,
                 "emission_budget": 50.0,
             }
@@ -191,12 +205,16 @@ class PortPolicy:
             conservative during rough conditions.
         """
         if self.mode == "independent":
-            return {"service_rate": 1, "accept_requests": int(max(incoming_requests, 0))}
+            # Accept up to dock capacity; env caps at actual backlog.
+            return {"service_rate": 1, "accept_requests": int(port_state.docks)}
         if self.mode == "reactive":
             service_rate = min(port_state.docks, max(port_state.queue, 1))
+            # Accept up to available dock capacity (free berths + queue headroom).
+            free_berths = max(port_state.docks - port_state.occupied, 0)
+            accept = max(free_berths, 1)  # at least 1 to keep things moving
             return {
                 "service_rate": int(service_rate),
-                "accept_requests": int(max(incoming_requests, 0)),
+                "accept_requests": int(accept),
             }
         pressure = float(short_forecast_row.mean())
         if pressure > 4.0:
@@ -207,7 +225,11 @@ class PortPolicy:
             base_service_rate = min(port_state.docks, port_state.occupied + 1)
 
         service_rate = int(base_service_rate)
-        accept_cap = int(max(incoming_requests, 0))
+        # Express willingness to accept up to dock capacity; env caps at
+        # actual backlog.  With intra-step delivery, requests arrive and are
+        # processed in the same step, so the pre-step incoming_requests count
+        # may underestimate the actual backlog.
+        accept_cap = int(port_state.docks)
 
         # Rough inbound weather can increase ETA uncertainty. In forecast mode,
         # keep one reservation slot in reserve (when possible) while still
@@ -229,5 +251,5 @@ class PortPolicy:
                     )
         return {
             "service_rate": int(service_rate),
-            "accept_requests": int(min(incoming_requests, accept_cap)),
+            "accept_requests": int(accept_cap),
         }

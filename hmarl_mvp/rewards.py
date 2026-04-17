@@ -15,9 +15,12 @@ Vessel reward (per step):
 Port reward (per step):
     ``r_P(t) = port_accept_reward * accepted_t + port_service_reward * served_t
                  - port_reject_penalty * rejected_t
-                 - (queue_t * dt_hours + dock_idle_weight * idle_docks_t)``
+                 - (queue_t * dt_hours + dock_idle_weight * idle_docks_t * 1[demand_t > 0])``
     Penalises both accumulated waiting time and wasted berth capacity while
-    rewarding prompt admissions and actual berth service starts.
+    rewarding prompt admissions and actual berth service starts.  The idle
+    dock penalty is **action-conditional**: it only fires when the port had
+    demand it could have served, removing uncontrollable variance from steps
+    where no vessels arrived.
 
 Coordinator reward (per step):
     ``r_C(t) = step_accept_reward_t + step_served_reward_t + utilization_reward_t
@@ -104,7 +107,13 @@ def compute_port_reward_breakdown(
     dt_hours = float(config.get("dt_hours", 1.0))
     wait_penalty = float(port.queue) * dt_hours
     idle_docks = max(port.docks - port.occupied, 0)
-    idle_penalty = config["dock_idle_weight"] * idle_docks
+    # Action-conditional idle penalty: only penalise idle docks when this
+    # step had demand the port could have served (vessels arrived, were
+    # served, or were rejected).  Without demand the port cannot fill its
+    # berths, so the penalty would be pure uncontrollable noise that
+    # destroys the value function's explained variance.
+    step_had_demand = (served_vessels + accepted_requests + rejected_requests) > 0
+    idle_penalty = config["dock_idle_weight"] * idle_docks if step_had_demand else 0.0
     accept_bonus = config.get("port_accept_reward", 0.0) * float(max(accepted_requests, 0.0))
     reject_penalty = config.get("port_reject_penalty", 0.0) * float(max(rejected_requests, 0.0))
     service_bonus = config.get("port_service_reward", 0.0) * float(max(served_vessels, 0.0))

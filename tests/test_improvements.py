@@ -39,11 +39,11 @@ class TestEntropyCoeffDefault(unittest.TestCase):
 
 
 class TestSlackHoursDefault(unittest.TestCase):
-    """requested_arrival_slack_hours default should be 0.25 (tightened)."""
+    """requested_arrival_slack_hours default should be 1.5 (relaxed for achievable deadlines)."""
 
-    def test_default_is_025(self) -> None:
+    def test_default_is_1_5(self) -> None:
         cfg = HMARLConfig()
-        self.assertAlmostEqual(cfg.requested_arrival_slack_hours, 0.25)
+        self.assertAlmostEqual(cfg.requested_arrival_slack_hours, 1.5)
 
 
 # ---------------------------------------------------------------
@@ -206,14 +206,12 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
         self.vessel_entity_dim = 7
         self.medium_horizon_days = 5
         self.port_entity_dim = self.medium_horizon_days + 5
-        self.num_actions = 5
         self.actor = AttentionCoordinatorActor(
             num_vessels=self.num_vessels,
             num_ports=self.num_ports,
             vessel_entity_dim=self.vessel_entity_dim,
             port_entity_dim=self.port_entity_dim,
             global_feature_dim=1,
-            num_actions=self.num_actions,
             embed_dim=32,
             num_heads=2,
             num_layers=1,
@@ -221,7 +219,7 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
         )
 
     def test_forward_shape(self) -> None:
-        """Forward pass returns correct distribution."""
+        """Forward pass returns per-vessel distribution."""
         obs_dim = (
             1  # global feature
             + self.num_ports * self.num_ports  # weather
@@ -230,7 +228,8 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
         )
         obs = torch.randn(4, obs_dim)
         dist = self.actor(obs)
-        self.assertEqual(dist.probs.shape, (4, self.num_actions))
+        # Per-vessel: (B, V, P) probs
+        self.assertEqual(dist.probs.shape, (4, self.num_vessels, self.num_ports))
 
     def test_get_action(self) -> None:
         obs_dim = (
@@ -241,7 +240,8 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
         )
         obs = torch.randn(2, obs_dim)
         action, log_prob = self.actor.get_action(obs)
-        self.assertEqual(action.shape, (2,))
+        # Per-vessel actions: (B, V), joint log-prob: (B,)
+        self.assertEqual(action.shape, (2, self.num_vessels))
         self.assertEqual(log_prob.shape, (2,))
 
     def test_evaluate(self) -> None:
@@ -252,8 +252,9 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
             + self.num_vessels * self.vessel_entity_dim
         )
         obs = torch.randn(4, obs_dim)
-        actions = torch.randint(0, self.num_actions, (4,))
+        actions = torch.randint(0, self.num_ports, (4, self.num_vessels))
         lp, ent = self.actor.evaluate(obs, actions)
+        # Joint log-prob and entropy: (B,)
         self.assertEqual(lp.shape, (4,))
         self.assertEqual(ent.shape, (4,))
 
@@ -265,11 +266,12 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
             + self.num_vessels * self.vessel_entity_dim
         )
         obs = torch.randn(2, obs_dim)
-        mask = torch.zeros(2, self.num_actions, dtype=torch.bool)
-        mask[:, 0] = True  # only action 0 valid
+        # Per-port mask (same for all vessels): only port 0 valid
+        mask = torch.zeros(2, self.num_ports, dtype=torch.bool)
+        mask[:, 0] = True
         dist = self.actor(obs, action_mask=mask)
-        # All probability should be on action 0
-        self.assertAlmostEqual(dist.probs[0, 0].item(), 1.0, places=4)
+        # All probability should be on port 0 for every vessel
+        self.assertAlmostEqual(dist.probs[0, 0, 0].item(), 1.0, places=4)
 
     def test_without_weather(self) -> None:
         actor = AttentionCoordinatorActor(
@@ -278,7 +280,6 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
             vessel_entity_dim=7,
             port_entity_dim=10,
             global_feature_dim=1,
-            num_actions=3,
             embed_dim=16,
             num_heads=2,
             num_layers=1,
@@ -287,7 +288,7 @@ class TestAttentionCoordinatorActor(unittest.TestCase):
         obs_dim = 1 + 3 * 10 + 4 * 7
         obs = torch.randn(2, obs_dim)
         dist = actor(obs)
-        self.assertEqual(dist.probs.shape, (2, 3))
+        self.assertEqual(dist.probs.shape, (2, 4, 3))
 
 
 # ---------------------------------------------------------------
